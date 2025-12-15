@@ -572,7 +572,7 @@ maxctrl call command mariadbmon workload-replay \
 
 ## 🔮 Évolutions Futures Planifiées
 
-### Version 1.1 - Q1 2026 (Prévu)
+### Version 1.1 - (Prévu)
 
 **Ajouts prévus** :
 - [ ] Exercices pratiques interactifs
@@ -581,14 +581,14 @@ maxctrl call command mariadbmon workload-replay \
 - [ ] Labs hands-on avec Docker
 - [ ] Projets fil rouge complets
 
-### Version 1.2 - Q2 2026 (Prévu)
+### Version 1.2 - (Prévu)
 
-**Intégration MariaDB 12.x** (si release Q4 2026) :
+**Intégration MariaDB 12.x**  :
 - [ ] Nouvelles fonctionnalités 12.0-12.3
 - [ ] Migration 11.8 → 12.3
 - [ ] Mise à jour roadmap
 
-### Version 2.0 - Q3-Q4 2026 (Vision)
+### Version 2.0 - (Vision)
 
 **Expansion contenu** :
 - [ ] Chapitre 21 : DevOps avancé (GitOps, IaC)
