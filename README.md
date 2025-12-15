@@ -78,18 +78,20 @@ Cette formation s'adresse à différents profils. Choisissez votre parcours :
 
 ### Les 10 Parties
 
-| # | Partie | Modules | Niveau | Sujets clés |
-|---|--------|---------|--------|-------------|
-| **1** | Introduction et Fondamentaux | 1-2 | 🌱 Débutant | Installation, SQL de base, types de données, CRUD |
-| **2** | Requêtes SQL Intermédiaires et Avancées | 3-4 | 🌱 Débutant | Agrégations, jointures, window functions, JSON |
-| **3** | Index, Transactions et Performance | 5-6 | 🌿 Intermédiaire | B-Tree, ACID, isolation, MVCC, EXPLAIN |
-| **4** | Moteurs de Stockage et Programmation Serveur | 7-9 | 🌿 Intermédiaire | InnoDB, ColumnStore, procédures, triggers, vues |
-| **5** | Sécurité et Administration | 10-12 | 🌳 Avancé | Utilisateurs, SSL/TLS, audit, backup, restauration |
-| **6** | Réplication et Haute Disponibilité | 13-14 | 🌳 Avancé | Master-Slave, GTID, Galera, MaxScale |
-| **7** | Performance et Tuning | 15 | 🌳 Avancé | Buffer pool, slow queries, partitionnement |
-| **8** | DevOps, Cloud et Automatisation | 16 | 🌳 Avancé | Docker, Kubernetes, Ansible, CI/CD, monitoring |
-| **9** | Intégration et Fonctionnalités Avancées | 17-18 | 🌳 Avancé | APIs, ORM, encryption, **MariaDB Vector** 🆕 |
-| **10** | Migration, Compatibilité et Architectures | 19-20 | 🌳 Avancé | Migration MySQL, microservices, RAG |
+| # | Partie | Intro | Modules | Niveau | Sujets clés |
+|---|--------|-------|---------|--------|-------------|
+| **1** | Introduction et Fondamentaux | [📄](/partie-01-introduction-fondamentaux.md) | 1-2 | 🌱 Débutant | Installation, SQL de base, types de données, CRUD |
+| **2** | Requêtes SQL Intermédiaires et Avancées | [📄](/partie-02-requetes-sql-intermediaires-avancees.md) | 3-4 | 🌱 Débutant | Agrégations, jointures, window functions, JSON |
+| **3** | Index, Transactions et Performance | [📄](/partie-03-index-transactions-performance.md) | 5-6 | 🌿 Intermédiaire | B-Tree, ACID, isolation, MVCC, EXPLAIN |
+| **4** | Moteurs de Stockage et Programmation Serveur | [📄](/partie-04-moteurs-stockage-programmation.md) | 7-9 | 🌿 Intermédiaire | InnoDB, ColumnStore, procédures, triggers, vues |
+| **5** | Sécurité et Administration | [📄](/partie-05-securite-administration.md) | 10-12 | 🌳 Avancé | Utilisateurs, SSL/TLS, audit, backup, restauration |
+| **6** | Réplication et Haute Disponibilité | [📄](/partie-06-replication-haute-disponibilite.md) | 13-14 | 🌳 Avancé | Master-Slave, GTID, Galera, MaxScale |
+| **7** | Performance et Tuning | [📄](/partie-07-performance-tuning.md) | 15 | 🌳 Avancé | Buffer pool, slow queries, partitionnement |
+| **8** | DevOps, Cloud et Automatisation | [📄](/partie-08-devops-cloud-automatisation.md) | 16 | 🌳 Avancé | Docker, Kubernetes, Ansible, CI/CD, monitoring |
+| **9** | Intégration et Fonctionnalités Avancées | [📄](/partie-09-integration-fonctionnalites-avancees.md) | 17-18 | 🌳 Avancé | APIs, ORM, encryption, **MariaDB Vector** 🆕 |
+| **10** | Migration, Compatibilité et Architectures | [📄](/partie-10-migration-architectures.md) | 19-20 | 🌳 Avancé | Migration MySQL, microservices, RAG |
+
+> 💡 **Note** : Chaque partie dispose d'une **page d'introduction** (📄) présentant les objectifs, prérequis, durée estimée, et compétences acquises. Consultez-les avant de plonger dans les modules détaillés !
 
 ### 🆕 Nouveautés MariaDB 11.8 LTS
 
@@ -173,22 +175,37 @@ formation-mariadb/
 ├── 📄 SOMMAIRE.md                  # Table des matières complète
 ├── 📄 LICENSE                      # Licence CC BY-NC-SA 4.0
 │
-├── 📂 partie-01-introduction-fondamentaux/
-│   ├── 01-introduction-fondamentaux/
-│   └── 02-bases-du-sql/
+├── 📄 partie-01-introduction-fondamentaux.md          # 🆕 Intro Partie 1
+├── 📄 partie-02-requetes-sql-intermediaires-avancees.md
+├── 📄 partie-03-index-transactions-performance.md
+├── 📄 partie-04-moteurs-stockage-programmation.md
+├── 📄 partie-05-securite-administration.md
+├── 📄 partie-06-replication-haute-disponibilite.md
+├── 📄 partie-07-performance-tuning.md
+├── 📄 partie-08-devops-cloud-automatisation.md
+├── 📄 partie-09-integration-fonctionnalites-avancees.md
+├── 📄 partie-10-migration-architectures.md             # 🆕 Intro Partie 10
 │
-├── 📂 partie-02-requetes-sql-intermediaires-avancees/
-│   ├── 03-requetes-sql-intermediaires/
-│   └── 04-concepts-avances-sql/
-│
-├── 📂 partie-03-index-transactions-performance/
-├── 📂 partie-04-moteurs-stockage-programmation/
-├── 📂 partie-05-securite-administration/
-├── 📂 partie-06-replication-haute-disponibilite/
-├── 📂 partie-07-performance-tuning/
-├── 📂 partie-08-devops-cloud-automatisation/
-├── 📂 partie-09-integration-fonctionnalites-avancees/
-├── 📂 partie-10-migration-architectures/
+├── 📂 01-introduction-fondamentaux/        # Contenu détaillé Partie 1
+├── 📂 02-bases-du-sql/
+├── 📂 03-requetes-sql-intermediaires/
+├── 📂 04-concepts-avances-sql/
+├── 📂 05-index-performance/
+├── 📂 06-transactions-mvcc/
+├── 📂 07-moteurs-stockage/
+├── 📂 08-types-donnees-json/
+├── 📂 09-programmation-serveur/
+├── 📂 10-securite-utilisateurs/
+├── 📂 11-administration-configuration/
+├── 📂 12-sauvegarde-restauration/
+├── 📂 13-replication/
+├── 📂 14-haute-disponibilite/
+├── 📂 15-performance-tuning/
+├── 📂 16-devops-automatisation/
+├── 📂 17-integration-developpement/
+├── 📂 18-fonctionnalites-avancees/
+├── 📂 19-migration-compatibilite/
+├── 📂 20-cas-usage-architectures/
 │
 ├── 📂 annexes/
 │   ├── glossaire/
@@ -368,7 +385,7 @@ Merci à :
 [![Star on GitHub](https://img.shields.io/github/stars/NDXDeveloper/formation-mariadb?style=social)](https://github.com/NDXDeveloper/formation-mariadb)
 [![Follow](https://img.shields.io/github/followers/NDXDeveloper?style=social)](https://github.com/NDXDeveloper)
 
-**[⬆ Retour en haut](#-formation-complète-mariadb-118-lts)**
+**[⬆ Retour en haut](#-formation-mariadb-118-lts)**
 
 ![Made with](https://img.shields.io/badge/Made%20with-☕%20and%20❤️-blue)
 
