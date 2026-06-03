@@ -2,72 +2,58 @@
 
 # Partie 1 : Introduction et Fondamentaux (Débutant)
 
-> **Niveau** : Débutant   
-> **Durée estimée** : 2-3 jours  
+> **Niveau** : Débutant  
+> **Durée estimée** : ~2 jours  
 > **Prérequis** : Aucun — Cette partie est votre porte d'entrée dans le monde de MariaDB
 
 ---
 
 ## 🎯 Bienvenue dans votre parcours MariaDB !
 
-Cette première partie constitue les **fondations essentielles** de votre apprentissage de MariaDB 11.8 LTS. Que vous soyez développeur, administrateur système en devenir, ou simplement curieux de découvrir les bases de données relationnelles, vous êtes au bon endroit !
+Cette première partie constitue les **fondations essentielles** de votre apprentissage de **MariaDB 12.3 LTS**. Que vous soyez développeur, administrateur système en devenir, ou simplement curieux de découvrir les bases de données relationnelles, vous êtes au bon endroit !
 
 L'objectif de cette partie est de vous donner une **compréhension solide et progressive** de MariaDB : ce qu'il est, comment il fonctionne, et comment commencer à l'utiliser efficacement. Nous aborderons les concepts fondamentaux sans supposer aucune connaissance préalable, tout en vous préparant aux chapitres plus avancés de la formation.
 
-À l'issue de cette partie, vous serez capable de **créer vos premières bases de données, écrire des requêtes SQL simples et intermédiaires**, et comprendre l'écosystème MariaDB dans son ensemble. Vous aurez acquis les bases nécessaires pour progresser sereinement vers des sujets plus techniques.
+À l'issue de cette partie, vous serez capable de **créer vos premières bases de données, écrire des requêtes SQL simples** (sélectionner, insérer, modifier et supprimer des données) et **comprendre l'écosystème MariaDB** dans son ensemble. Vous aurez acquis les bases nécessaires pour aborder sereinement les requêtes intermédiaires et avancées de la **Partie 2**.
 
 ---
 
-## 📚 Les trois modules de cette partie
+## 📚 Les deux chapitres de cette partie
 
-### Module 1 : Introduction et Fondamentaux
+### Chapitre 1 : Introduction et Fondamentaux
 **9 sections | Durée : ~1 jour**
 
-Ce premier module vous introduit à MariaDB de manière progressive et accessible. Vous découvrirez :
+Ce premier chapitre vous introduit à MariaDB de manière progressive et accessible. Vous découvrirez :
 - **Qu'est-ce que MariaDB ?** Une présentation claire du système de gestion de bases de données
-- **L'histoire et les différences avec MySQL** : Comprendre les origines et l'évolution de MariaDB
-- **Les cas d'usage réels** : Où et pourquoi utilise-t-on MariaDB en production
-- **L'architecture générale** : Comment fonctionne un SGBD relationnel
-- **La politique de versions** : Le modèle LTS (Long Term Support) et les releases rolling
-- **Le cycle de support** : 3 ans pour les versions LTS comme la 11.8 🆕
-- **La roadmap** : Vers MariaDB 12.x et au-delà
-- **Installation et configuration** : Mettre en place votre premier serveur MariaDB
+- **L'histoire et les différences avec MySQL** : comprendre les origines et l'évolution de MariaDB
+- **Les cas d'usage réels** : où et pourquoi utilise-t-on MariaDB en production
+- **L'architecture générale** : comment fonctionne un SGBD relationnel
+- **La politique de versions** : le modèle LTS (*Long Term Support*) et les *rolling releases*
+- **Le cycle de support** : 3 ans pour les LTS récentes (11.8, 12.3)
+- **La roadmap** : de la 12.3 LTS vers la série 13.x
+- **Installation et configuration** : mettre en place votre premier serveur MariaDB
 - **Les outils d'administration** : CLI, HeidiSQL, DBeaver, phpMyAdmin
 
-💡 **Point fort** : Une approche pratique qui vous permet d'installer et de commencer à utiliser MariaDB dès les premières heures.
+💡 **Point fort** : une approche pratique qui vous permet d'installer et de commencer à utiliser MariaDB dès les premières heures.
 
 ---
 
-### Module 2 : Bases du SQL
+### Chapitre 2 : Bases du SQL
 **8 sections | Durée : ~1 jour**
 
-Le langage SQL est le cœur de votre interaction avec MariaDB. Ce module vous enseigne les fondamentaux :
-- **Introduction au SQL** : Comprendre ce langage universel des bases de données
-- **Types de données** : Numériques, texte, temporels, binaires, et types spécifiques MariaDB (JSON, UUID, INET6)
-- **Création et gestion des bases de données** : Vos premiers `CREATE DATABASE`
-- **Tables et contraintes** : Structure, clés primaires, clés étrangères, contraintes d'intégrité
-- **Insertion de données** : `INSERT`, `LOAD DATA` et meilleures pratiques
+Le langage SQL est le cœur de votre interaction avec MariaDB. Ce chapitre vous en enseigne les fondamentaux :
+- **Introduction au SQL** : comprendre ce langage universel et ses sous-langages (DDL, DML, DQL, DCL, TCL)
+- **Types de données** : numériques, texte, temporels, binaires, types spécifiques MariaDB (`JSON`, `UUID`, `INET6`, `VECTOR`) et le type `XMLTYPE` 🆕
+- **Création et gestion des bases de données** : vos premiers `CREATE DATABASE`
+- **Création et modification de tables** : `CREATE`, `ALTER`, `DROP`
+- **Contraintes** : clés primaires, clés étrangères, `UNIQUE`, `NOT NULL`, `DEFAULT`, `CHECK`
+- **Insertion de données** : `INSERT`, `INSERT ... SELECT`, `LOAD DATA`
 - **Requêtes de sélection simples** : `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`
 - **Mise à jour et suppression** : `UPDATE`, `DELETE`, `TRUNCATE`
 
-💡 **Point fort** : Des exemples SQL commentés et testables pour chaque concept, vous permettant d'expérimenter immédiatement.
+💡 **Point fort** : des exemples SQL commentés et testables pour chaque concept, vous permettant d'expérimenter immédiatement.
 
----
-
-### Module 3 : Requêtes SQL Intermédiaires
-**8 sections | Durée : ~1 jour**
-
-Une fois les bases acquises, ce module vous fait progresser vers des requêtes plus sophistiquées :
-- **Fonctions d'agrégation** : `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
-- **Regroupement de données** : `GROUP BY` et `HAVING`
-- **Jointures** : `INNER JOIN`, `LEFT JOIN`, `RIGHT JOIN`, `CROSS JOIN`, self-joins
-- **Sous-requêtes** : Requêtes imbriquées et leur utilisation stratégique
-- **Opérateurs ensemblistes** : `UNION`, `INTERSECT`, `EXCEPT`
-- **Fonctions de chaînes** : Manipulation de texte
-- **Fonctions de dates** : Gestion du temps et des timestamps
-- **Expressions conditionnelles** : `CASE`, `IF`, `COALESCE`, `NULLIF`
-
-💡 **Point fort** : Des cas d'usage réels qui montrent comment ces techniques s'appliquent dans des situations professionnelles concrètes.
+> ℹ️ Les **requêtes intermédiaires** (agrégations, regroupements, jointures, sous-requêtes…) ne relèvent pas de cette première partie : elles ouvrent la **Partie 2 — Requêtes SQL Intermédiaires et Avancées** (chapitre 3).
 
 ---
 
@@ -77,7 +63,7 @@ Une fois les bases acquises, ce module vous fait progresser vers des requêtes p
 
 ### Connaissances théoriques
 - ✅ **Comprendre** ce qu'est MariaDB et son positionnement dans l'écosystème des bases de données
-- ✅ **Expliquer** la différence entre MariaDB et MySQL
+- ✅ **Expliquer** les différences entre MariaDB et MySQL
 - ✅ **Identifier** les cas d'usage appropriés pour MariaDB
 - ✅ **Comprendre** l'architecture d'un SGBD relationnel
 - ✅ **Choisir** entre versions LTS et rolling selon vos besoins
@@ -87,11 +73,9 @@ Une fois les bases acquises, ce module vous fait progresser vers des requêtes p
 - ✅ **Utiliser** les outils d'administration (CLI, clients graphiques)
 - ✅ **Créer et gérer** des bases de données et des tables
 - ✅ **Maîtriser** les types de données MariaDB et choisir le plus approprié
-- ✅ **Écrire** des requêtes SQL simples et intermédiaires
-- ✅ **Insérer, modifier et supprimer** des données efficacement
-- ✅ **Utiliser** les jointures pour croiser des données de plusieurs tables
-- ✅ **Appliquer** des fonctions d'agrégation et regroupements
-- ✅ **Manipuler** des chaînes de caractères et des dates
+- ✅ **Définir des contraintes** pour garantir l'intégrité des données
+- ✅ **Écrire** des requêtes `SELECT` simples (filtrer, trier, paginer)
+- ✅ **Insérer, modifier et supprimer** des données efficacement et en toute sécurité
 
 ### Autonomie
 - ✅ **Naviguer** dans la documentation officielle MariaDB
@@ -111,34 +95,35 @@ Cette première partie est **essentielle et commune à tous les parcours** de fo
 | ⚙️ **DevOps/Cloud** | ⭐⭐⭐ Obligatoire | Prérequis pour l'automatisation et l'orchestration |
 | 🤖 **IA/ML Engineer** | ⭐⭐⭐ Obligatoire | Fondamentaux avant MariaDB Vector et RAG |
 
-💡 **Conseil** : Même si vous êtes pressé d'arriver aux fonctionnalités avancées (Vector, Galera, Kubernetes...), **ne sautez pas cette partie**. Les concepts abordés ici sont la clé pour comprendre et maîtriser efficacement les chapitres suivants.
+💡 **Conseil** : même si vous êtes pressé d'arriver aux fonctionnalités avancées (Vector, Galera, Kubernetes…), **ne sautez pas cette partie**. Les concepts abordés ici sont la clé pour comprendre et maîtriser efficacement les chapitres suivants.
 
 ---
 
-## 🆕 Nouveautés MariaDB 11.8 pour débutants
+## Ce que MariaDB 12.3 LTS vous apporte
 
-Même en tant que débutant, vous profiterez immédiatement de plusieurs améliorations majeures introduites dans MariaDB 11.8 LTS :
+Dès vos débuts, vous profitez des atouts de la version de référence de cette formation, **MariaDB 12.3 LTS** (GA fin mai 2026, supportée jusqu'en **juin 2029**).
 
-### 🎉 Améliorations ergonomiques
+### 🎉 Du confort dès l'installation (acquis hérités de la 11.8)
 
-- **Charset UTF-8 par défaut** : Plus besoin de configurer manuellement l'encodage — le support complet d'Unicode (utf8mb4) avec collations UCA 14.0.0 est actif dès l'installation
-- **TLS/SSL activé par défaut** : Vos connexions sont sécurisées automatiquement, sans configuration supplémentaire
-- **Extension TIMESTAMP jusqu'en 2106** : Le problème Y2038 est résolu ! Vos applications peuvent gérer des dates jusqu'au 22ème siècle
+- **Jeu de caractères `utf8mb4` par défaut** : plus besoin de configurer manuellement l'encodage — le support complet d'Unicode (collations UCA 14.0.0), émojis compris, est actif dès l'installation.
+- **TLS/SSL en « zéro-configuration »** : la prise en charge du chiffrement des connexions est intégrée et prête à l'emploi, sans paramétrage manuel.
+- **`TIMESTAMP` au-delà de 2038** : le problème de l'an 2038 (Y2038) est résolu, la plage s'étendant désormais jusqu'en **2106**.
 
-### 🔧 Améliorations de stabilité
+### 🔧 Stabilité et support
 
-- **Support LTS de 3 ans** : MariaDB 11.8 bénéficie d'un support jusqu'en 2028, garantissant stabilité et mises à jour de sécurité
-- **Installation simplifiée** : Processus d'installation amélioré sur toutes les plateformes (Linux, Windows, macOS)
-- **Documentation enrichie** : Ressources et exemples encore plus accessibles pour les débutants
+- **LTS supportée 3 ans** : la 12.3 est maintenue jusqu'en **juin 2029** (la **11.8**, LTS précédente, l'est jusqu'en 2028).
+- **Installation simplifiée** sur toutes les plateformes (Linux, Windows, macOS, Docker).
+- **Documentation riche** et exemples accessibles aux débutants.
 
-### 🚀 Fonctionnalités avancées accessibles
+### 🚀 Des nouveautés 12.x que vous croiserez plus loin
 
-Bien que cette partie se concentre sur les fondamentaux, sachez que MariaDB 11.8 introduit des fonctionnalités puissantes que vous découvrirez plus tard :
-- **MariaDB Vector** : Recherche vectorielle pour l'IA (Partie 9)
-- **Types JSON avancés** : Manipulation moderne de données structurées (Partie 2)
-- **Performance optimisée** : Améliorations InnoDB et index HNSW (Parties 3 et 5)
+Bien que cette partie se concentre sur les fondamentaux, MariaDB 12.3 apporte des fonctionnalités puissantes que vous découvrirez plus tard :
+- **Binlog réécrit, intégré à InnoDB** : jusqu'à ~4× plus rapide en écriture (Partie 5).
+- **Optimizer Hints** : contrôle fin du plan d'exécution des requêtes (Partie 7).
+- **Compatibilité Oracle/MySQL renforcée** : `caching_sha2_password`, fonctions `TO_DATE`/`TO_CHAR`, type `XMLTYPE`… (Partie 10).
+- **MariaDB Vector** : recherche vectorielle pour l'IA et le RAG (Partie 9).
 
-💡 **Bonne nouvelle** : Tous les exemples de cette formation sont testés et validés sur MariaDB 11.8 LTS, vous apprenez donc sur la version la plus moderne et stable !
+💡 **Bonne nouvelle** : les exemples SQL de cette formation sont pensés et validés pour **MariaDB 12.3 LTS** — vous apprenez donc sur la dernière version stable et durablement supportée.
 
 ---
 
@@ -146,29 +131,29 @@ Bien que cette partie se concentre sur les fondamentaux, sachez que MariaDB 11.8
 
 Cette première partie est conçue pour être **progressive, encourageante et pratique**. N'hésitez pas à :
 
-- ⏸️ **Prendre votre temps** : Mieux vaut bien comprendre chaque concept que de se précipiter
-- 🔬 **Expérimenter** : Testez tous les exemples SQL fournis, modifiez-les, cassez-les, réparez-les
-- 📖 **Consulter la documentation** : Les liens vers la documentation officielle sont là pour approfondir
-- ❓ **Poser des questions** : La communauté MariaDB est accueillante et réactive
+- ⏸️ **Prendre votre temps** : mieux vaut bien comprendre chaque concept que de se précipiter.
+- 🔬 **Expérimenter** : testez tous les exemples SQL fournis, modifiez-les, cassez-les, réparez-les.
+- 📖 **Consulter la documentation** : les liens vers la documentation officielle sont là pour approfondir.
+- ❓ **Poser des questions** : la communauté MariaDB est accueillante et réactive.
 
 Chaque section inclut :
-- 🎯 Des objectifs d'apprentissage clairs
-- 📝 Des explications progressives
-- 💻 Des exemples SQL commentés et testables
-- 💡 Des conseils pratiques
-- ⚠️ Des pièges courants à éviter
-- ✅ Un résumé des points clés
+- 🎯 des objectifs d'apprentissage clairs ;
+- 📝 des explications progressives ;
+- 💻 des exemples SQL commentés et testables ;
+- 💡 des conseils pratiques ;
+- ⚠️ des pièges courants à éviter ;
+- ✅ un résumé des points clés.
 
-**Bienvenue dans l'univers de MariaDB — Votre aventure commence maintenant !** 🎉
+**Bienvenue dans l'univers de MariaDB — votre aventure commence maintenant !** 🎉
 
 ---
 
 ## ➡️ Prochaine étape
 
-**Module 1 : Introduction et Fondamentaux** → Commencez par la section 1.1 "Qu'est-ce que MariaDB ?" pour découvrir les bases de ce puissant système de gestion de bases de données.
+**Chapitre 1 : Introduction et Fondamentaux** → commencez par la section 1.1 « Qu'est-ce que MariaDB ? » pour découvrir les bases de ce puissant système de gestion de bases de données.
 
 ---
 
-**MariaDB** : Version 11.8 LTS
+**MariaDB** : Version 12.3 LTS (GA fin mai 2026, support jusqu'en juin 2029) — LTS précédente : 11.8
 
 ⏭️ [Introduction et Fondamentaux](/01-introduction-fondamentaux/README.md)

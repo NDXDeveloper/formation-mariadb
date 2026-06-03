@@ -2,665 +2,97 @@
 
 # 2.1 Introduction au langage SQL
 
-> **Niveau** : Débutant
-> **Durée estimée** : 1-1.5 heures
-> **Prérequis** : Comprendre les concepts de base de données relationnelles (tables, lignes, colonnes)
+> **Chapitre 2 : Bases du SQL** · Niveau : Débutant  
+> Version de référence : **MariaDB 12.3 LTS**
 
-## 🎯 Objectifs d'apprentissage
+## Qu'est-ce que le SQL ?
 
-À l'issue de cette section, vous serez capable de :
-- Comprendre ce qu'est le SQL et son rôle dans les bases de données relationnelles
-- Identifier les différentes catégories de commandes SQL (DDL, DML, DCL, TCL)
-- Reconnaître la syntaxe de base d'une commande SQL
-- Appliquer les conventions de nommage et bonnes pratiques
-- Écrire vos premières commandes SQL simples
+SQL, pour *Structured Query Language* (langage de requête structuré), est le langage normalisé qui permet de dialoguer avec une base de données relationnelle. C'est par son intermédiaire que l'on définit la structure des données, qu'on les insère, qu'on les interroge, qu'on les modifie et qu'on en gère les accès. Sous MariaDB, comme sous tout SGBD relationnel, chaque interaction avec les données passe, directement ou indirectement, par du SQL — y compris lorsqu'un ORM ou une interface graphique le génère pour vous.
 
----
+La caractéristique fondamentale du SQL est d'être un langage **déclaratif** : on décrit *ce que l'on veut obtenir*, et non *comment l'obtenir*. En écrivant une requête, on n'indique pas au serveur l'ordre dans lequel parcourir les tables ni les index à emprunter ; on exprime un résultat souhaité, et c'est l'**optimiseur** de MariaDB qui détermine la meilleure stratégie d'exécution (sujet approfondi au chapitre 5). Cette approche distingue le SQL des langages impératifs classiques (C, Java, Python…), dans lesquels le développeur décrit pas à pas la suite des opérations à effectuer.
 
-## Introduction
+Le SQL repose sur le **modèle relationnel**, présenté au chapitre 1 : les données y sont organisées en tables (relations), composées de lignes (enregistrements) et de colonnes (attributs). L'essentiel de ce chapitre consiste précisément à apprendre à créer ces structures puis à agir sur leur contenu.
 
-Le **SQL (Structured Query Language)** est le langage universel pour interagir avec les bases de données relationnelles. Créé dans les années 1970 chez IBM, il est devenu le standard incontournable pour manipuler des données structurées.
+## Un bref historique
 
-### Pourquoi SQL est-il si important ?
+Le SQL est né au début des années 1970 dans les laboratoires d'IBM, dans le cadre du projet de recherche System R. Conçu par Donald Chamberlin et Raymond Boyce, il s'appelait à l'origine SEQUEL (*Structured English Query Language*) avant d'être renommé SQL pour des raisons de marque déposée. Son objectif était d'offrir un moyen pratique d'interroger les bases relationnelles théorisées quelques années plus tôt par Edgar F. Codd.
 
-Le SQL est :
-- **Standardisé** : Normalisé par l'ISO/ANSI, il fonctionne sur presque tous les SGBD
-- **Déclaratif** : Vous décrivez *ce que* vous voulez, pas *comment* l'obtenir
-- **Puissant** : Permet de manipuler des millions de lignes en quelques lignes de code
-- **Universel** : Utilisé dans tous les domaines (finance, santé, e-commerce, IA...)
+Le langage a été normalisé une première fois par l'ANSI en 1986, puis par l'ISO en 1987. Plusieurs révisions ont suivi et continuent d'enrichir le standard : SQL-92 (longtemps la version de référence), SQL:1999 (requêtes récursives et déclencheurs), SQL:2003 (fonctions de fenêtrage et séquences), SQL:2011 (tables temporelles), SQL:2016 (prise en charge native du JSON) et SQL:2023 (nouvelles fonctions JSON et requêtes de graphes de propriétés). MariaDB implémente l'essentiel de ces apports : on retrouvera les requêtes récursives et les *window functions* au chapitre 4, les tables temporelles au chapitre 18, et le JSON aux chapitres 4 et 18.
 
-💡 **Bon à savoir** : Bien que standardisé, chaque SGBD (MariaDB, PostgreSQL, Oracle) apporte ses propres extensions. MariaDB reste très proche du standard SQL tout en offrant des fonctionnalités avancées.
+## Un standard, plusieurs dialectes
 
----
+Bien qu'il existe une norme ISO, aucun SGBD ne l'applique à la lettre, et chacun y ajoute ses propres extensions. On parle ainsi de *dialectes* SQL : celui de MariaDB, hérité de MySQL, diffère sur certains points de ceux de PostgreSQL, d'Oracle ou de SQL Server. La syntaxe de base — `SELECT`, `INSERT`, `JOIN`, etc. — reste très largement portable d'un système à l'autre, mais les types de données, les fonctions intégrées, la gestion des dates ou le comportement face aux valeurs `NULL` peuvent varier.
 
-## Histoire et standards SQL
+MariaDB pousse la souplesse plus loin que la plupart de ses concurrents grâce à la variable `sql_mode`, qui ajuste finement le comportement du serveur : rigueur de la validation des données, interprétation des guillemets, compatibilité avec d'autres SGBD… MariaDB propose même un **mode Oracle**, qui active une partie de la syntaxe PL/SQL et de nombreuses fonctions de compatibilité — un atout précieux pour les migrations, détaillé au chapitre 19. La variable `sql_mode` fait l'objet de la section 11.3.
 
-### Chronologie
+## Les sous-langages du SQL
 
-| Année | Version | Nouveautés principales |
-|-------|---------|------------------------|
-| 1986 | SQL-86 | Premier standard ANSI |
-| 1992 | SQL-92 | Base du SQL moderne (JOIN, etc.) |
-| 1999 | SQL:1999 | Déclencheurs, récursivité |
-| 2003 | SQL:2003 | XML, window functions |
-| 2008 | SQL:2008 | TRUNCATE, MERGE |
-| 2011 | SQL:2011 | Données temporelles |
-| 2016 | SQL:2016 | JSON, pattern matching |
+On a coutume de regrouper les instructions SQL en plusieurs catégories selon leur rôle. Cette classification n'a pas de portée syntaxique stricte, mais elle aide à structurer son apprentissage.
 
-**MariaDB 11.8** implémente la majorité des fonctionnalités SQL:2016 et ajoute ses propres extensions (VECTOR, JSON amélioré, etc.).
+| Sous-langage | Rôle | Commandes principales |
+|---|---|---|
+| **DDL** (*Data Definition Language*) | Définir et modifier la structure des objets (bases, tables…) | `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `RENAME` |
+| **DML** (*Data Manipulation Language*) | Manipuler les données contenues dans les tables | `INSERT`, `UPDATE`, `DELETE` |
+| **DQL** (*Data Query Language*) | Interroger les données (souvent rattaché au DML) | `SELECT` |
+| **DCL** (*Data Control Language*) | Gérer les droits et les accès | `GRANT`, `REVOKE` |
+| **TCL** (*Transaction Control Language*) | Délimiter et contrôler les transactions | `START TRANSACTION` / `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT` |
 
-### Dialectes SQL
+Ce chapitre se concentre sur le DDL (sections 2.3 à 2.5) et le DML/DQL (sections 2.6 à 2.8). Le DCL est traité au chapitre 10 (sécurité) et le TCL au chapitre 6 (transactions). À noter : `TRUNCATE` est rangé ici dans le DDL car, sous MariaDB, vider une table de cette manière constitue une opération de définition (validation implicite, réinitialisation de l'`AUTO_INCREMENT`, impossibilité de revenir en arrière) ; il est néanmoins abordé en section 2.8 aux côtés de `DELETE`, dont il partage la finalité.
 
-Bien que standardisé, le SQL existe en plusieurs "dialectes" :
-- **MySQL/MariaDB** : Focus performance et web
-- **PostgreSQL** : Conformité stricte aux standards
-- **Oracle PL/SQL** : Orienté entreprise
-- **SQL Server T-SQL** : Écosystème Microsoft
+## Conventions de syntaxe sous MariaDB
 
-🆕 **MariaDB 11.8** : Améliore la compatibilité avec le standard SQL tout en conservant la compatibilité avec MySQL.
+**Terminaison des instructions.** Chaque instruction se termine par un point-virgule (`;`). Dans le client en ligne de commande `mariadb`, ce séparateur indique la fin de la commande et en déclenche l'exécution ; on peut aussi utiliser `\g` (équivalent du `;`) ou `\G` pour un affichage vertical, plus lisible lorsque les lignes comportent de nombreuses colonnes.
 
----
+**Sensibilité à la casse.** Les mots-clés et les noms de fonctions sont insensibles à la casse : `SELECT`, `select` et `SeLeCt` sont équivalents. Par convention de lisibilité, on écrit les mots-clés en majuscules et les noms d'objets en minuscules. En revanche, les **noms de tables et de bases** sont, sous Linux, sensibles à la casse par défaut (le comportement dépend du système de fichiers et de la variable `lower_case_table_names`), tandis que les noms de colonnes, d'index et d'alias ne le sont jamais. C'est un point de vigilance lors d'une migration entre Windows et Linux.
 
-## Les catégories de commandes SQL
-
-Le SQL se divise en plusieurs catégories selon le type d'opération effectuée.
-
-### 1. DDL - Data Definition Language (Définition)
-
-**Rôle** : Créer, modifier ou supprimer la structure des objets de la base de données.
-
-| Commande | Description | Exemple |
-|----------|-------------|---------|
-| `CREATE` | Créer un objet (base, table, index) | `CREATE TABLE users (...)` |
-| `ALTER` | Modifier la structure d'un objet | `ALTER TABLE users ADD email VARCHAR(255)` |
-| `DROP` | Supprimer un objet | `DROP TABLE users` |
-| `TRUNCATE` | Vider une table (plus rapide que DELETE) | `TRUNCATE TABLE logs` |
-| `RENAME` | Renommer un objet | `RENAME TABLE old_name TO new_name` |
+**Commentaires.** MariaDB reconnaît trois formes de commentaires :
 
 ```sql
--- Exemple DDL : Création d'une table
-CREATE TABLE produits (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    nom VARCHAR(100) NOT NULL,
-    prix DECIMAL(10,2),
-    stock INT DEFAULT 0
-);
+-- commentaire sur une ligne (un espace est requis après les deux tirets)
+# commentaire sur une ligne (extension MariaDB/MySQL)
+/* commentaire
+   pouvant s'étendre sur plusieurs lignes */
 ```
 
-💡 **Important** : Les commandes DDL sont généralement **auto-commit**, c'est-à-dire qu'elles ne peuvent pas être annulées avec `ROLLBACK`.
+Il existe par ailleurs des « commentaires exécutables » de la forme `/*! ... */`, dont le contenu n'est interprété que par MariaDB/MySQL : ils permettent d'écrire du SQL compatible avec d'autres outils tout en activant des fonctionnalités spécifiques.
 
----
+**Chaînes, nombres et identifiants.** Les chaînes de caractères s'entourent de guillemets simples (`'Paris'`) ; un guillemet simple interne se double (`'l''adresse'`) ou s'échappe par un antislash (`'l\'adresse'`). Les nombres s'écrivent sans guillemets (`42`, `3.14`) et les dates sous forme de chaîne au format ISO (`'2026-06-03'`). Par défaut, MariaDB accepte aussi les guillemets doubles pour délimiter une chaîne, mais ce comportement change si le mode `ANSI_QUOTES` est actif : les guillemets doubles servent alors, comme dans le standard, à délimiter des identifiants. Pour entourer un identifiant (nom de table ou de colonne) contenant des caractères spéciaux ou correspondant à un mot réservé, MariaDB utilise les accents graves (*backticks*), par exemple `` `order` `` ou `` `nom complet` ``.
 
-### 2. DML - Data Manipulation Language (Manipulation)
+**La valeur `NULL`.** La valeur spéciale `NULL` représente l'**absence** de valeur ; elle se distingue de zéro comme de la chaîne vide. Sa manipulation obéit à une logique ternaire particulière, traitée en détail à la section 4.6.
 
-**Rôle** : Manipuler les données à l'intérieur des tables.
+**Mise en forme.** Le SQL est insensible aux espaces : tabulations, espaces et sauts de ligne supplémentaires sont ignorés. On en profite pour indenter et aérer les requêtes, ce qui améliore nettement leur lisibilité sans rien changer à leur exécution.
 
-| Commande | Description | Exemple |
-|----------|-------------|---------|
-| `SELECT` | Consulter/lire des données | `SELECT * FROM users` |
-| `INSERT` | Ajouter de nouvelles lignes | `INSERT INTO users VALUES (...)` |
-| `UPDATE` | Modifier des lignes existantes | `UPDATE users SET email = ...` |
-| `DELETE` | Supprimer des lignes | `DELETE FROM users WHERE id = 5` |
+## Un premier aperçu
+
+L'exemple suivant illustre, en quelques lignes, comment les sous-langages se combinent en pratique : on définit une structure (DDL), on y insère une donnée (DML), puis on l'interroge (DQL).
 
 ```sql
--- Exemple DML : Insertion de données
-INSERT INTO produits (nom, prix, stock)
-VALUES ('Ordinateur portable', 899.99, 15);
-
--- Exemple DML : Consultation
-SELECT nom, prix
-FROM produits
-WHERE stock > 0;
-
--- Exemple DML : Mise à jour
-UPDATE produits
-SET prix = prix * 0.9
-WHERE stock > 50;
-
--- Exemple DML : Suppression
-DELETE FROM produits
-WHERE stock = 0 AND prix < 10;
-```
-
-💡 **Astuce** : Les commandes DML peuvent être annulées avec `ROLLBACK` si elles sont dans une transaction.
-
----
-
-### 3. DCL - Data Control Language (Contrôle)
-
-**Rôle** : Gérer les permissions et la sécurité.
-
-| Commande | Description | Exemple |
-|----------|-------------|---------|
-| `GRANT` | Donner des privilèges à un utilisateur | `GRANT SELECT ON db.* TO 'user'@'localhost'` |
-| `REVOKE` | Retirer des privilèges | `REVOKE INSERT ON db.* FROM 'user'@'localhost'` |
-
-```sql
--- Exemple DCL : Attribution de droits
--- Créer un utilisateur en lecture seule
-CREATE USER 'lecteur'@'localhost' IDENTIFIED BY 'motdepasse';
-
--- Lui donner uniquement le droit de lecture
-GRANT SELECT ON formation_mariadb.* TO 'lecteur'@'localhost';
-
--- Retirer un droit
-REVOKE SELECT ON formation_mariadb.logs FROM 'lecteur'@'localhost';
-```
-
-⚠️ **Sécurité** : Les commandes DCL doivent être utilisées avec précaution. Un mauvais `GRANT` peut exposer vos données.
-
----
-
-### 4. TCL - Transaction Control Language (Transactions)
-
-**Rôle** : Gérer les transactions pour garantir l'intégrité des données (ACID).
-
-| Commande | Description | Exemple |
-|----------|-------------|---------|
-| `START TRANSACTION` / `BEGIN` | Démarrer une transaction | `START TRANSACTION;` |
-| `COMMIT` | Valider la transaction | `COMMIT;` |
-| `ROLLBACK` | Annuler la transaction | `ROLLBACK;` |
-| `SAVEPOINT` | Créer un point de sauvegarde | `SAVEPOINT sp1;` |
-
-```sql
--- Exemple TCL : Transaction bancaire
-START TRANSACTION;
-
--- Débiter le compte A
-UPDATE comptes SET solde = solde - 100 WHERE id = 1;
-
--- Créditer le compte B
-UPDATE comptes SET solde = solde + 100 WHERE id = 2;
-
--- Si tout est OK, valider
-COMMIT;
-
--- Sinon, annuler
--- ROLLBACK;
-```
-
-💡 **ACID** : Les transactions garantissent les propriétés **A**tomicité, **C**ohérence, **I**solation, **D**urabilité (voir chapitre 6).
-
----
-
-## Syntaxe de base du SQL
-
-### Structure d'une commande SQL
-
-Une commande SQL suit généralement cette structure :
-
-```sql
-VERBE [MODIFICATEUR] OBJET [CLAUSES] [CONDITIONS] [OPTIONS];
-```
-
-**Exemple décomposé :**
-
-```sql
-SELECT nom, prix                    -- VERBE + colonnes
-FROM produits                       -- OBJET (table)
-WHERE categorie = 'électronique'   -- CONDITION
-ORDER BY prix DESC                  -- CLAUSE de tri
-LIMIT 10;                          -- OPTION de limitation
-```
-
-### Règles syntaxiques importantes
-
-1. **Point-virgule** : Termine une commande SQL (`;`)
-2. **Insensible à la casse** : `SELECT` = `select` = `Select`
-3. **Espaces blancs** : Ignorés (sauf dans les chaînes)
-4. **Commentaires** :
-   - Une ligne : `-- Commentaire`
-   - Multiligne : `/* Commentaire */`
-   - MySQL/MariaDB : `# Commentaire`
-
-```sql
--- Commentaire sur une ligne
-
-/*
-   Commentaire
-   sur plusieurs lignes
-*/
-
-SELECT
-    id,           -- Identifiant unique
-    nom,          -- Nom du produit
-    prix          -- Prix en euros
-FROM produits;    # Table des produits
-```
-
----
-
-## Conventions de nommage et bonnes pratiques
-
-### Conventions pour les identifiants
-
-Les noms d'objets (bases, tables, colonnes) doivent suivre ces règles :
-
-✅ **Bonnes pratiques :**
-- Utiliser des **noms descriptifs** : `clients` plutôt que `c`
-- Préférer le **snake_case** : `date_creation` plutôt que `dateCreation`
-- Utiliser le **singulier ou pluriel** de façon cohérente : `client` ou `clients`
-- Éviter les **mots réservés SQL** : `user`, `order`, `table`
-- Limiter à **64 caractères** maximum (MariaDB)
-
-❌ **À éviter :**
-- Caractères spéciaux : `@`, `#`, `$`, espaces
-- Accents : `réservé`, `numéro`
-- Débuter par un chiffre : `2024_ventes`
-
-```sql
--- ✅ BONS exemples
-CREATE TABLE clients (
-    client_id INT PRIMARY KEY,
-    nom_complet VARCHAR(100),
-    date_inscription DATE
+-- Définition de la structure (DDL)
+CREATE TABLE produit (
+    id       INT AUTO_INCREMENT PRIMARY KEY,
+    nom      VARCHAR(100)  NOT NULL,
+    prix     DECIMAL(10,2) NOT NULL,
+    cree_le  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ❌ MAUVAIS exemples (mais syntaxiquement corrects)
-CREATE TABLE `2024-données` (
-    `N°` INT,
-    `Prénom&Nom` VARCHAR(100),
-    `date création` DATE
-);
+-- Ajout d'une donnée (DML)
+INSERT INTO produit (nom, prix) VALUES ('Clavier mécanique', 89.90);
+
+-- Interrogation (DQL)
+SELECT id, nom, prix
+FROM produit
+WHERE prix < 100
+ORDER BY prix DESC;
 ```
 
-💡 **Astuce** : Si vous devez utiliser un mot réservé ou des caractères spéciaux, entourez-le de backticks : `` `order` ``, `` `first-name` ``
+Chacune de ces instructions sera reprise et détaillée dans les sections suivantes : les types de données (`INT`, `VARCHAR`, `DECIMAL`, `TIMESTAMP`) en 2.2, la création de tables en 2.4, les contraintes (`PRIMARY KEY`, `NOT NULL`) en 2.5, l'insertion en 2.6 et la sélection (`SELECT`, `WHERE`, `ORDER BY`) en 2.7.
+
+## En résumé
+
+Le SQL est un langage déclaratif et normalisé, organisé en sous-langages (DDL, DML, DQL, DCL, TCL) qui en couvrent les différents usages. MariaDB en propose un dialecte hérité de MySQL, largement portable mais doté d'extensions propres et d'une variable `sql_mode` capable d'en moduler le comportement, jusqu'à un mode de compatibilité Oracle. Quelques conventions de syntaxe — point-virgule terminal, insensibilité à la casse des mots-clés, formes de commentaires, guillemets simples pour les chaînes et accents graves pour les identifiants — suffisent pour aborder sereinement les sections suivantes, qui passent à la pratique du langage.
 
 ---
 
-### Style de code SQL
-
-Pour améliorer la lisibilité :
-
-**Style recommandé :**
-
-```sql
--- Mots-clés en MAJUSCULES
--- Identifiants en minuscules
--- Indentation claire
-
-SELECT
-    c.nom_client,
-    c.email,
-    COUNT(co.commande_id) AS nombre_commandes,
-    SUM(co.montant_total) AS total_achats
-FROM clients AS c
-INNER JOIN commandes AS co
-    ON c.client_id = co.client_id
-WHERE co.date_commande >= '2024-01-01'
-GROUP BY c.client_id
-HAVING total_achats > 1000
-ORDER BY total_achats DESC
-LIMIT 10;
-```
-
-**Points clés :**
-- Mots-clés SQL en **MAJUSCULES** (SELECT, FROM, WHERE)
-- Noms de tables/colonnes en **minuscules**
-- **Une clause par ligne** pour les requêtes complexes
-- **Indentation** pour montrer la hiérarchie
-- **Alias explicites** : `AS c`, `AS nombre_commandes`
-
----
-
-## Types de requêtes SQL
-
-### Requêtes de définition (DDL)
-
-Créent la structure :
-
-```sql
--- Créer une base de données
-CREATE DATABASE ma_boutique
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
--- Utiliser une base de données
-USE ma_boutique;
-
--- Créer une table
-CREATE TABLE categories (
-    categorie_id INT PRIMARY KEY AUTO_INCREMENT,
-    nom VARCHAR(50) UNIQUE NOT NULL,
-    description TEXT
-);
-```
-
----
-
-### Requêtes de manipulation (DML)
-
-Travaillent avec les données :
-
-```sql
--- INSERT : Ajouter des données
-INSERT INTO categories (nom, description)
-VALUES ('Électronique', 'Appareils électroniques et accessoires');
-
--- SELECT : Lire des données
-SELECT * FROM categories;
-
--- UPDATE : Modifier des données
-UPDATE categories
-SET description = 'Tous les appareils électroniques'
-WHERE nom = 'Électronique';
-
--- DELETE : Supprimer des données
-DELETE FROM categories
-WHERE categorie_id = 5;
-```
-
----
-
-### Requêtes de contrôle (DCL)
-
-Gèrent les permissions :
-
-```sql
--- Créer un utilisateur
-CREATE USER 'dev_readonly'@'localhost'
-IDENTIFIED BY 'P@ssw0rd!';
-
--- Donner des droits de lecture
-GRANT SELECT ON ma_boutique.*
-TO 'dev_readonly'@'localhost';
-
--- Appliquer les changements
-FLUSH PRIVILEGES;
-```
-
----
-
-## MariaDB et le standard SQL
-
-### Conformité aux standards
-
-MariaDB 11.8 respecte la majorité du standard SQL:2016 :
-
-✅ **Fonctionnalités SQL standard supportées :**
-- Requêtes relationnelles complètes (JOIN, UNION, etc.)
-- Sous-requêtes et requêtes corrélées
-- Window Functions (ROW_NUMBER, RANK, etc.)
-- Common Table Expressions (CTE) avec WITH
-- Transactions ACID complètes
-- Contraintes d'intégrité référentielle
-
-🆕 **Extensions MariaDB 11.8 :**
-- Type **VECTOR** pour l'IA/ML (non standard)
-- Fonctions JSON étendues
-- System-Versioned Tables (tables temporelles)
-- Support **RETURNING** pour INSERT/UPDATE/DELETE
-- Plugin-based authentication
-
-```sql
--- Exemple d'extension MariaDB : RETURNING
--- Retourne les lignes insérées immédiatement
-INSERT INTO produits (nom, prix)
-VALUES ('Nouveau produit', 49.99)
-RETURNING produit_id, nom, prix;
-
--- Résultat immédiat :
--- produit_id | nom              | prix
--- 101        | Nouveau produit  | 49.99
-```
-
----
-
-### Différences avec d'autres SGBD
-
-| Fonctionnalité | MariaDB | PostgreSQL | MySQL | SQL Server |
-|----------------|---------|------------|-------|------------|
-| **AUTO_INCREMENT** | ✅ Oui | `SERIAL` | ✅ Oui | `IDENTITY` |
-| **Backticks** | ✅ `` `table` `` | `"table"` | ✅ `` `table` `` | `[table]` |
-| **LIMIT** | ✅ `LIMIT 10` | ✅ `LIMIT 10` | ✅ `LIMIT 10` | `TOP 10` |
-| **Chaînes** | `'simple'` ou `"double"` | `'simple'` uniquement | `'simple'` ou `"double"` | `'simple'` uniquement |
-| **Concat** | `CONCAT()` | ` | |` ou `CONCAT()` | `CONCAT()` | `+` |
-
-💡 **Portabilité** : Si vous écrivez du SQL destiné à plusieurs SGBD, respectez le standard strict (guillemets simples, pas de backticks, etc.).
-
----
-
-## Exemples pratiques : Premiers pas
-
-### Exemple 1 : Créer une base et se connecter
-
-```sql
--- Créer une nouvelle base de données
-CREATE DATABASE IF NOT EXISTS librairie
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
--- Afficher toutes les bases
-SHOW DATABASES;
-
--- Se positionner sur la base
-USE librairie;
-
--- Vérifier la base active
-SELECT DATABASE();
-```
-
-**Résultat attendu :**
-```
-+------------+
-| DATABASE() |
-+------------+
-| librairie  |
-+------------+
-```
-
----
-
-### Exemple 2 : Créer une première table
-
-```sql
--- Table simple pour stocker des livres
-CREATE TABLE livres (
-    -- Clé primaire auto-incrémentée
-    livre_id INT PRIMARY KEY AUTO_INCREMENT,
-
-    -- Titre du livre (obligatoire)
-    titre VARCHAR(200) NOT NULL,
-
-    -- ISBN unique
-    isbn VARCHAR(13) UNIQUE,
-
-    -- Prix avec 2 décimales
-    prix DECIMAL(6,2) CHECK (prix >= 0),
-
-    -- Nombre d'exemplaires en stock
-    stock INT DEFAULT 0,
-
-    -- Date d'ajout au catalogue
-    date_ajout DATE DEFAULT (CURRENT_DATE)
-);
-
--- Afficher la structure de la table
-DESCRIBE livres;
--- ou : SHOW COLUMNS FROM livres;
-```
-
-**Résultat de DESCRIBE :**
-```
-+------------+--------------+------+-----+------------+----------------+
-| Field      | Type         | Null | Key | Default    | Extra          |
-+------------+--------------+------+-----+------------+----------------+
-| livre_id   | int(11)      | NO   | PRI | NULL       | auto_increment |
-| titre      | varchar(200) | NO   |     | NULL       |                |
-| isbn       | varchar(13)  | YES  | UNI | NULL       |                |
-| prix       | decimal(6,2) | YES  |     | NULL       |                |
-| stock      | int(11)      | YES  |     | 0          |                |
-| date_ajout | date         | YES  |     | curdate()  |                |
-+------------+--------------+------+-----+------------+----------------+
-```
-
----
-
-### Exemple 3 : Insérer et consulter des données
-
-```sql
--- Insérer un livre
-INSERT INTO livres (titre, isbn, prix, stock)
-VALUES ('Le Seigneur des Anneaux', '9782266154345', 29.90, 12);
-
--- Insérer plusieurs livres en une fois
-INSERT INTO livres (titre, isbn, prix, stock) VALUES
-    ('1984', '9782072730013', 8.40, 25),
-    ('Le Petit Prince', '9782070408504', 5.90, 50),
-    ('Harry Potter', '9782070584628', 22.90, 8);
-
--- Consulter tous les livres
-SELECT * FROM livres;
-
--- Consulter uniquement certaines colonnes
-SELECT titre, prix, stock
-FROM livres;
-
--- Consulter avec un filtre
-SELECT titre, prix
-FROM livres
-WHERE prix < 10;
-
--- Consulter avec tri
-SELECT titre, stock
-FROM livres
-ORDER BY stock DESC;
-```
-
-**Résultat de la dernière requête :**
-```
-+--------------------+-------+
-| titre              | stock |
-+--------------------+-------+
-| Le Petit Prince    | 50    |
-| 1984               | 25    |
-| Le Seigneur...     | 12    |
-| Harry Potter       | 8     |
-+--------------------+-------+
-```
-
----
-
-## Client MariaDB en ligne de commande
-
-### Connexion et commandes de base
-
-```bash
-# Se connecter au serveur MariaDB
-mariadb -u root -p
-
-# Se connecter directement à une base
-mariadb -u root -p librairie
-
-# Exécuter une commande SQL depuis le shell
-mariadb -u root -p -e "SELECT DATABASE();"
-
-# Exécuter un script SQL
-mariadb -u root -p < script.sql
-```
-
-### Commandes internes du client
-
-Une fois connecté au client `mariadb`, ces commandes sont disponibles :
-
-| Commande | Description | Exemple |
-|----------|-------------|---------|
-| `\h` ou `help` | Afficher l'aide | `\h` |
-| `\s` ou `status` | État du serveur | `\s` |
-| `\u` | Changer de base | `\u librairie` |
-| `\q` ou `exit` | Quitter | `\q` |
-| `\c` | Annuler la commande courante | `\c` |
-| `\G` | Affichage vertical | `SELECT * FROM livres\G` |
-| `source` | Exécuter un fichier SQL | `source backup.sql` |
-
-```sql
--- Exemple d'affichage vertical avec \G
-SELECT * FROM livres WHERE livre_id = 1\G
-
--- Résultat :
--- *************************** 1. row ***************************
---   livre_id: 1
---      titre: Le Seigneur des Anneaux
---       isbn: 9782266154345
---       prix: 29.90
---      stock: 12
--- date_ajout: 2025-12-12
-```
-
----
-
-## Gestion des erreurs SQL
-
-### Erreurs courantes pour les débutants
-
-```sql
--- ❌ ERREUR : Table inexistante
-SELECT * FROM livreees;
--- ERROR 1146: Table 'librairie.livreees' doesn't exist
-
--- ❌ ERREUR : Colonne inexistante
-SELECT author FROM livres;
--- ERROR 1054: Unknown column 'author' in 'field list'
-
--- ❌ ERREUR : Syntaxe invalide
-SELECT * FORM livres;
--- ERROR 1064: You have an error in your SQL syntax
-
--- ❌ ERREUR : Division par zéro
-SELECT prix / 0 FROM livres;
--- Résultat : NULL (pas d'erreur, mais attention !)
-
--- ❌ ERREUR : Violation de contrainte
-INSERT INTO livres (livre_id, titre)
-VALUES (1, 'Doublon');
--- ERROR 1062: Duplicate entry '1' for key 'PRIMARY'
-```
-
-💡 **Astuce** : Lisez toujours le numéro et le message d'erreur. Ils vous guident vers le problème.
-
----
-
-## ✅ Points clés à retenir
-
-- Le **SQL** est le langage universel pour les bases de données relationnelles
-- **Quatre catégories** principales :
-  - **DDL** : Structure (CREATE, ALTER, DROP)
-  - **DML** : Données (SELECT, INSERT, UPDATE, DELETE)
-  - **DCL** : Sécurité (GRANT, REVOKE)
-  - **TCL** : Transactions (COMMIT, ROLLBACK)
-- Le SQL est **déclaratif** : on décrit *quoi*, pas *comment*
-- MariaDB respecte le **standard SQL** tout en offrant des extensions
-- Conventions : **mots-clés en MAJUSCULES**, **identifiants en snake_case**
-- Les commandes DDL sont **auto-commit** (pas de ROLLBACK possible)
-- Toujours **terminer par un point-virgule** (`;`)
-
----
-
-## 🔗 Ressources et références
-
-### Documentation officielle MariaDB
-- [📖 SQL Statements Structure](https://mariadb.com/kb/en/sql-statements-structure/)
-- [📖 SQL Language Structure](https://mariadb.com/kb/en/sql-language-structure/)
-- [📖 Comment Syntax](https://mariadb.com/kb/en/comment-syntax/)
-- [📖 Identifier Names](https://mariadb.com/kb/en/identifier-names/)
-
-### Standards SQL
-- [ISO/IEC 9075 (SQL Standard)](https://www.iso.org/standard/63555.html)
-- [SQL Tutorial - W3Schools](https://www.w3schools.com/sql/)
-
-### Outils
-- [DB Fiddle](https://www.db-fiddle.com/) - Tester du SQL en ligne
-- [SQLFormat](https://sqlformat.org/) - Formater du code SQL
-
----
-
-## ➡️ Section suivante
-
-**[2.2 Types de données MariaDB](/02-bases-du-sql/02-types-de-donnees.md)**
-
-Découvrez en détail tous les types de données disponibles dans MariaDB 11.8 : numériques (INT, DECIMAL, FLOAT), texte (VARCHAR, TEXT), temporels (DATE, DATETIME, TIMESTAMP), binaires (BLOB) et types spécifiques MariaDB (JSON, UUID, VECTOR 🆕).
-
----
-
+← [Chapitre 2 — Bases du SQL](README.md) · Section suivante : [2.2 Types de données MariaDB](02-types-de-donnees.md) →
 
 ⏭️ [Types de données MariaDB](/02-bases-du-sql/02-types-de-donnees.md)
