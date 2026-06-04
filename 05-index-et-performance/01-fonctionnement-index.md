@@ -1,868 +1,217 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 5.1 Fonctionnement des index : Structure B-Tree
+# 5.1 — Fonctionnement des index : la structure B-Tree
 
-> **Niveau** : Intermédiaire
-> **Durée estimée** : 2-3 heures
-
-> **Prérequis** :
-> - Compréhension des structures de données de base (arbres, listes)
-> - Notions de complexité algorithmique (O notation)
-> - Bases SQL (CREATE TABLE, SELECT)
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-- Comprendre l'architecture interne d'un index B-Tree et son fonctionnement
-- Expliquer pourquoi le B-Tree est la structure de données privilégiée pour les bases de données
-- Analyser comment les opérations de recherche, insertion et suppression fonctionnent dans un B-Tree
-- Comprendre la notion de pages, de facteur de remplissage et de fragmentation
-- Anticiper le comportement d'un index B-Tree en production et optimiser son utilisation
+> **Chapitre 5 — Index et Performance** · Section 5.1  
+> Version de référence : **MariaDB 12.3 LTS**
 
 ---
 
-## Introduction
+## Le problème : le balayage complet de table
 
-Le **B-Tree** (Balanced Tree - Arbre Équilibré) est la structure de données fondamentale utilisée par MariaDB pour organiser les index. Inventé en 1972 par Rudolf Bayer et Edward McCreight, le B-Tree a été spécifiquement conçu pour optimiser les accès disque dans les systèmes de bases de données.
+Considérons une requête anodine sur une table de clients :
 
-### Pourquoi le B-Tree ?
-
-Contrairement aux structures de données classiques comme les arbres binaires de recherche (BST) ou les arbres AVL, le B-Tree possède des caractéristiques uniques qui le rendent idéal pour les bases de données :
-
-| Caractéristique | B-Tree | Arbre Binaire | Impact |
-|-----------------|--------|---------------|--------|
-| **Nombre d'enfants** | Plusieurs centaines | 2 maximum | Moins de niveaux = moins d'I/O |
-| **Équilibrage** | Toujours équilibré | Peut dégénérer | Performances prévisibles |
-| **Remplissage** | Haute densité | Faible densité | Meilleure utilisation mémoire |
-| **Localité** | Excellente | Faible | Cache CPU efficace |
-| **I/O** | Optimisé pour le disque | Optimisé pour la RAM | Adapté aux contraintes réelles |
-
-💡 **L'insight clé** : En base de données, l'opération la plus coûteuse est la lecture sur disque. Le B-Tree minimise le nombre d'accès disque en regroupant beaucoup de clés par nœud, réduisant ainsi la hauteur de l'arbre.
-
+```sql
+SELECT * FROM clients WHERE email = 'alice@example.fr';
 ```
-Exemple concret :
-- Arbre binaire pour 1 million de clés : ~20 niveaux = 20 I/O
-- B-Tree (200 clés/nœud) pour 1 million de clés : 3-4 niveaux = 3-4 I/O
 
-Gain : 5x moins d'accès disque !
-```
+En l'absence d'index sur la colonne `email`, MariaDB n'a aucun moyen de savoir *où* se trouve la ligne recherchée. Il doit donc lire **chaque ligne de la table**, une par une, et comparer son adresse e-mail à la valeur cible. C'est un *full table scan* (balayage complet), et son coût est **proportionnel au nombre de lignes** : on parle d'une complexité en O(*n*). Sur une table de mille lignes, c'est instantané ; sur une table de cinquante millions de lignes, c'est une catastrophe de performance.
+
+Un index résout précisément ce problème. Grâce à lui, la même recherche ne coûte plus O(*n*) mais **O(log *n*)** : quelques accès suffisent, quel que soit le volume de la table. C'est cette transformation — d'un coût linéaire à un coût logarithmique — qui fait des index le levier de performance le plus puissant d'une base relationnelle. Pour comprendre comment elle est possible, il faut examiner la structure de données qui se cache derrière la quasi-totalité des index de MariaDB : l'arbre **B-Tree**.
 
 ---
 
-## Architecture d'un B-Tree
+## Qu'est-ce qu'un index, concrètement ?
 
-### Structure générale
+Un index est une **structure de données auxiliaire**, généralement distincte de la table elle-même, qui maintient une copie **ordonnée** d'une ou plusieurs colonnes, associée à un moyen de localiser rapidement la ligne complète correspondante.
 
-Un B-Tree est un **arbre équilibré** où :
-- Tous les chemins de la racine aux feuilles ont la même longueur
-- Chaque nœud contient plusieurs clés (pas seulement une)
-- Les clés sont triées dans l'ordre croissant
-- Chaque nœud a entre ⌈m/2⌉ et m enfants (sauf la racine)
+Le mot-clé est *ordonnée*. C'est parce que les valeurs sont triées que l'on peut les rechercher sans tout parcourir — exactement comme on retrouve un mot dans un dictionnaire papier sans en lire toutes les pages. L'index est cet ordre matérialisé et maintenu en permanence par le moteur de stockage, à chaque écriture.
 
-```
-Représentation visuelle d'un B-Tree d'ordre 5 :
-
-                    [50|100]
-                   /    |    \
-                  /     |     \
-        [10|20|30]  [60|75]  [120|150|180]
-        /  |  |  \   /   \    /   |   |   \
-     [5] [15][25][40][55][80][110][130][160][200]
-```
-
-### Propriétés fondamentales
-
-Un B-Tree d'**ordre m** respecte ces règles :
-
-1. **Chaque nœud contient au maximum m-1 clés**
-2. **Chaque nœud (sauf la racine) contient au minimum ⌈m/2⌉-1 clés**
-3. **Tous les nœuds feuilles sont au même niveau**
-4. **Les clés dans un nœud sont triées**
-5. **Un nœud avec k clés a k+1 enfants**
-
-⚠️ **Note** : MariaDB utilise en réalité une variante appelée **B+Tree** où seules les feuilles contiennent les données complètes, et les nœuds internes ne contiennent que des clés de routage.
-
-### Pages et blocs
-
-Dans MariaDB/InnoDB, un B-Tree est organisé en **pages** :
-
-```sql
--- Taille de page par défaut : 16 KB
-SHOW VARIABLES LIKE 'innodb_page_size';
-```
-
-**Caractéristiques d'une page InnoDB** :
-- Taille : 16 KB par défaut (configurable : 4KB, 8KB, 16KB, 32KB, 64KB)
-- Contient : En-tête (38 bytes) + enregistrements + espace libre
-- Capacité : ~100-500 enregistrements selon la taille des clés
-
-```
-Structure d'une page InnoDB :
-
-┌─────────────────────────────────────────┐
-│ FIL Header (38 bytes)                   │  Métadonnées de la page
-├─────────────────────────────────────────┤
-│ Index Header (36 bytes)                 │  Informations sur l'index
-├─────────────────────────────────────────┤
-│ FSEG Header (20 bytes)                  │  Gestion des segments
-├─────────────────────────────────────────┤
-│                                         │
-│ Enregistrements (Records)               │  Les clés et pointeurs
-│                                         │
-├─────────────────────────────────────────┤
-│ Espace libre                            │  Pour nouvelles insertions
-├─────────────────────────────────────────┤
-│ Page Directory                          │  Index interne à la page
-├─────────────────────────────────────────┤
-│ FIL Trailer (8 bytes)                   │  Checksum
-└─────────────────────────────────────────┘
-     Total : 16 KB (16384 bytes)
-```
-
-💡 **Implication pratique** : Une page entière est lue lors d'un accès disque, même pour récupérer une seule clé. C'est pourquoi regrouper plusieurs clés par page est si efficace.
+Reste à choisir *comment* organiser ces valeurs triées pour que la recherche soit efficace, y compris quand les données changent sans cesse. La réponse retenue par InnoDB — et par l'immense majorité des SGBD — est l'arbre B-Tree.
 
 ---
 
-## B-Tree vs B+Tree : La variante de MariaDB
+## L'arbre équilibré (B-Tree)
 
-### Différences fondamentales
+### « B » ne signifie pas « binaire »
 
-MariaDB (via InnoDB) utilise un **B+Tree**, une variante optimisée du B-Tree :
+Première précision essentielle : le « B » de B-Tree **ne veut pas dire « binaire »**. On l'interprète le plus souvent comme *balanced* (équilibré). La structure a été décrite par Rudolf Bayer et Edward McCreight en 1972, spécifiquement pour les systèmes qui stockent leurs données sur disque.
 
-| Aspect | B-Tree classique | B+Tree (MariaDB) |
-|--------|------------------|------------------|
-| **Données dans nœuds internes** | Oui | Non (uniquement clés) |
-| **Données dans feuilles** | Oui | Oui (toutes les données) |
-| **Lien entre feuilles** | Non | Oui (doubly-linked list) |
-| **Parcours séquentiel** | Nécessite traversée | Direct via liste chaînée |
-| **Espace nœuds internes** | Moins de clés | Plus de clés (plus efficace) |
+Contrairement à un arbre binaire, où chaque nœud n'a que deux enfants, un nœud de B-Tree peut en avoir **plusieurs centaines, voire plus d'un millier**. Cette particularité, on le verra, est ce qui rend l'arbre si efficace pour une base de données.
 
-```
-B+Tree utilisé par InnoDB :
+### Anatomie d'un B-Tree
 
-         Nœuds internes          [50|100|150]
-         (clés uniquement)      /    |    |    \
-                               /     |    |     \
-         Feuilles            [10-45]→[50-95]→[100-145]→[150-200]
-         (clés + données)    ←──────doubly-linked list──────→
-```
+Un B-Tree est composé de trois sortes de nœuds :
 
-### Avantages du B+Tree pour les bases de données
+- **La racine** (*root*) : le point d'entrée unique de l'arbre. Toute recherche y commence.
+- **Les nœuds de branchement** (*branch* ou *internal nodes*) : les nœuds intermédiaires. Ils ne contiennent pas les données utiles, mais des **clés de séparation** et des pointeurs vers les nœuds enfants. Leur rôle est d'aiguiller la recherche.
+- **Les feuilles** (*leaf nodes*) : le niveau le plus bas de l'arbre. Ce sont elles qui contiennent les **entrées indexées** (et, selon la variante, les données ou des pointeurs vers les données).
 
-**1. Parcours séquentiel optimisé**
-
-```sql
--- Requête de plage : très efficace avec B+Tree
-SELECT * FROM orders
-WHERE order_date BETWEEN '2025-01-01' AND '2025-01-31';
-
--- Le moteur :
--- 1. Trouve la première clé (2025-01-01) via l'arbre
--- 2. Parcourt séquentiellement les feuilles chaînées
--- 3. S'arrête à la dernière clé (2025-01-31)
-```
-
-Avec un B+Tree, le **range scan** devient une opération de liste chaînée O(k) où k est le nombre de résultats, au lieu de k recherches individuelles O(log n).
-
-**2. Nœuds internes plus compacts**
-
-Sans données, les nœuds internes peuvent contenir plus de clés :
+Voici une représentation schématique d'un index sur des valeurs entières :
 
 ```
-Exemple avec clé INT (4 bytes) + pointeur (6 bytes) :
-- Page 16 KB
-- En-têtes : ~100 bytes
-- Espace utile : ~16 000 bytes
+Niveau 0 — racine                    [ 50 | 100 ]
+                                     /      |      \
+                              < 50      50 – 99     ≥ 100
+                               /           |           \
+Niveau 1 — branches      [20 | 35]     [60 | 80]    [120 | 160]
+                          / | \          / | \         /  |  \
+Niveau 2 — feuilles (valeurs triées, chaînées entre elles) :
 
-B-Tree classique avec données (50 bytes/enregistrement) :
-→ ~300 entrées par page
-
-B+Tree sans données dans nœuds internes :
-→ ~1600 entrées par page
-
-Résultat : Arbre moins profond = moins d'I/O !
+   [5, 10] <─> [20, 35] <─> [55, 60] <─> [70, 80] <─> [120, 160] ...
+    \________________________ ordre croissant ________________________/
 ```
 
-**3. Cachabilité améliorée**
+### La propriété fondamentale : l'équilibre
 
-Les nœuds internes (sans données) tiennent plus facilement en mémoire (InnoDB Buffer Pool), réduisant les I/O :
+Ce qui caractérise un B-Tree, c'est que **toutes les feuilles se trouvent exactement à la même profondeur**. L'arbre est *équilibré*. Cette propriété garantit que le nombre d'étapes pour atteindre n'importe quelle valeur est **constant et prévisible** : que l'on cherche la plus petite ou la plus grande clé, on traverse toujours le même nombre de niveaux.
 
-```sql
--- Vérifier le ratio de hit du buffer pool
-SHOW STATUS LIKE 'Innodb_buffer_pool_read%';
+Pour préserver cet équilibre, l'arbre se **réorganise automatiquement** à chaque insertion ou suppression. C'est cette autogestion qui a un coût en écriture, sur lequel nous reviendrons.
 
--- Innodb_buffer_pool_reads : Lectures depuis disque
--- Innodb_buffer_pool_read_requests : Total de lectures
+### Pourquoi l'arbre est large et peu profond
 
--- Ratio optimal : > 99% (presque toutes les lectures en cache)
-```
+Le grand nombre d'enfants par nœud (le *fan-out*) a une conséquence décisive : l'arbre est **très large mais très peu profond**. Or la profondeur (la *hauteur* de l'arbre) détermine le nombre d'accès nécessaires à une recherche.
+
+À titre d'illustration, avec quelques centaines à un millier d'entrées par nœud :
+
+| Hauteur de l'arbre | Nombre d'entrées indexables (ordre de grandeur) |
+|--------------------|--------------------------------------------------|
+| 2 niveaux | ~ centaines de milliers |
+| 3 niveaux | ~ centaines de millions |
+| 4 niveaux | ~ plusieurs milliards |
+
+Autrement dit, **trois ou quatre accès suffisent** pour localiser une ligne dans une table de plusieurs centaines de millions d'enregistrements. C'est tout le secret du O(log *n*) : la base du logarithme est si grande que le résultat reste minuscule, même pour des volumes considérables.
 
 ---
 
-## Opérations sur un B-Tree
+## B-Tree ou B+Tree ? Une nuance qui compte
 
-### Recherche (SELECT)
+Dans le langage courant — et dans la documentation SQL — on parle d'« index B-Tree ». Mais ce qu'InnoDB implémente réellement est une variante optimisée : le **B+Tree**. La distinction mérite d'être comprise, car elle explique plusieurs comportements de MariaDB.
 
-La recherche dans un B-Tree suit un chemin de la racine aux feuilles :
+| Aspect | B-Tree classique | B+Tree (utilisé par InnoDB) |
+|--------|------------------|------------------------------|
+| Localisation des données | À **tous** les niveaux (racine, branches, feuilles) | **Uniquement dans les feuilles** |
+| Rôle des nœuds internes | Stockent des données *et* aiguillent | Aiguillent uniquement (clés de routage) |
+| Feuilles | Indépendantes | **Chaînées entre elles** (liste doublement chaînée) |
 
-```sql
--- Recherche simple par égalité
-SELECT * FROM users WHERE user_id = 12345;
-```
+Cette organisation procure deux avantages majeurs pour une base de données :
 
-**Algorithme de recherche** :
+1. **Des nœuds internes plus compacts.** Comme ils ne contiennent que des clés de routage, ils tiennent davantage d'entrées par page. Le *fan-out* augmente, l'arbre est encore plus plat, et les recherches encore plus rapides.
 
-```
-1. Commencer à la racine
-2. Tant que pas dans une feuille :
-   a. Trouver la clé k[i] où valeur_recherchée < k[i]
-   b. Suivre le pointeur vers l'enfant i
-3. Dans la feuille, recherche binaire pour trouver la valeur exacte
-4. Retourner les données associées
-```
+2. **Des parcours de plage (*range scans*) ultra-efficaces.** Pour répondre à une requête comme `WHERE date BETWEEN '2026-01-01' AND '2026-03-31'`, MariaDB descend **une seule fois** jusqu'à la première feuille concernée, puis **suit le chaînage horizontal** entre feuilles pour lire toutes les valeurs suivantes, sans jamais remonter dans l'arbre. C'est ce qui rend le B+Tree excellent pour `BETWEEN`, les comparaisons `>` / `<`, et les tris `ORDER BY`.
 
-**Exemple pas à pas pour user_id = 12345** :
-
-```
-Niveau 0 (Racine) : [10000|20000|30000]
-                     → 12345 < 20000 → Branche 2
-
-Niveau 1 :          [11000|13000|15000]
-                     → 12345 > 11000 ET < 13000 → Branche 2
-
-Niveau 2 (Feuille) : [12100|12345|12580|12890]
-                     → Recherche binaire → Trouvé à position 2
-                     → Retourner les données
-```
-
-**Complexité** : O(log_m n) où m est l'ordre de l'arbre et n le nombre de clés.
-
-Avec m=200 et n=1 million :
-```
-log₂₀₀(1 000 000) ≈ 2.6 → 3 accès disque maximum !
-```
-
-### Insertion (INSERT)
-
-L'insertion maintient l'équilibre de l'arbre en divisant les nœuds pleins :
-
-```sql
--- Insertion simple
-INSERT INTO products (product_id, name, price)
-VALUES (5025, 'Widget Pro', 29.99);
-```
-
-**Algorithme d'insertion** :
-
-```
-1. Rechercher la feuille appropriée pour la nouvelle clé
-2. Si la feuille a de l'espace :
-   → Insérer la clé à la position triée
-3. Si la feuille est pleine (m-1 clés) :
-   → Split : diviser en 2 feuilles
-   → Promouvoir la clé médiane au parent
-   → Récursivement, remonter les splits si nécessaire
-```
-
-**Exemple de split** :
-
-```
-Avant insertion de 55 (ordre 5, max 4 clés) :
-
-Parent :           [50]
-                    |
-Feuille :      [40|45|50|60]  ← Pleine !
-
-Après insertion et split :
-
-Parent :           [50|55]       ← Clé médiane promue
-                   /    \
-Feuilles :    [40|45] [55|60]   ← Divisée en 2
-```
-
-💡 **Fill Factor** : Pour limiter les splits fréquents, InnoDB ne remplit pas complètement les pages lors de la création initiale d'index (typiquement 93%).
-
-### Suppression (DELETE)
-
-La suppression peut nécessiter des fusions de nœuds pour maintenir l'équilibre :
-
-```sql
--- Suppression
-DELETE FROM products WHERE product_id = 5025;
-```
-
-**Algorithme de suppression** :
-
-```
-1. Rechercher et supprimer la clé dans la feuille
-2. Si la feuille a assez de clés (≥ ⌈m/2⌉-1) :
-   → Terminé
-3. Si la feuille a trop peu de clés :
-   → Emprunter une clé du frère adjacent (redistribution)
-   → OU fusionner avec un frère (merge)
-   → Récursivement, remonter les merges si nécessaire
-```
-
-**Exemple de fusion** :
-
-```
-Avant suppression de 45 :
-
-Parent :           [50|60]
-                   /   |   \
-Feuilles :    [40|45] [55] [65|70]
-
-Après suppression et fusion (trop peu de clés dans feuille 1) :
-
-Parent :           [60]
-                   /    \
-Feuilles :    [40|55]  [65|70]  ← Fusion des 2 premières
-```
-
-⚠️ **Fragmentation** : Des suppressions répétées peuvent créer des pages sous-remplies, dégradant les performances. Solution : `OPTIMIZE TABLE`.
+Dans la suite de cette formation, par commodité, on continuera de parler d'« index B-Tree » comme le fait MariaDB — en gardant à l'esprit qu'il s'agit techniquement d'un B+Tree.
 
 ---
 
-## Facteur de remplissage (Fill Factor)
+## Le rôle des pages et des accès disque
 
-### Concept et impact
+La véritable raison d'être du B-Tree est de **minimiser les accès au disque**, qui sont des ordres de grandeur plus lents que les accès à la mémoire.
 
-Le **fill factor** détermine combien d'espace d'une page est utilisé lors de la création ou reconstruction d'un index :
+InnoDB n'organise pas ses données ligne par ligne, mais par **pages** d'une taille fixe de **16 Ko par défaut** (paramètre `innodb_page_size`). Chaque nœud de l'arbre — racine, branche ou feuille — correspond exactement à **une page**. Lire un nœud revient donc à charger une page, soit depuis le disque, soit, le plus souvent, depuis le **Buffer Pool** (le cache mémoire d'InnoDB).
 
-```sql
--- Exemple : Fill factor implicite lors de la création
-CREATE INDEX idx_created_at ON orders(created_at);
-
--- InnoDB laisse ~7% d'espace libre par défaut
--- Page 16 KB → ~15 KB utilisés, ~1 KB libre
-```
-
-**Pourquoi ne pas remplir à 100% ?**
-
-| Fill Factor | Avantages | Inconvénients |
-|-------------|-----------|---------------|
-| **100%** | Compacité maximale | Splits fréquents sur INSERT |
-| **93% (défaut)** | Équilibre optimal | Espace gaspillé minimal |
-| **70%** | Peu de splits | Beaucoup d'espace gaspillé |
-
-### Cas d'usage du Fill Factor
-
-**1. Index sur données append-only (logs, séries temporelles)**
-
-```sql
--- Données toujours insérées à la fin (ordre chronologique)
-CREATE TABLE logs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    timestamp DATETIME,
-    message TEXT,
-    INDEX idx_timestamp (timestamp)
-);
-
--- Ici, fill factor élevé est optimal (peu de splits)
--- Car les insertions se font toujours "à droite" de l'arbre
-```
-
-**2. Index sur données aléatoires (UUIDs, hashs)**
-
-```sql
--- UUIDs : insertions partout dans l'arbre
-CREATE TABLE sessions (
-    session_id CHAR(36) PRIMARY KEY, -- UUID
-    user_id INT,
-    data JSON
-);
-
--- Ici, fill factor plus faible (85-90%) pour anticiper les splits
-```
-
-💡 **Configuration InnoDB** :
-
-```sql
--- Fill factor lors de la construction d'index (11.8+)
--- innodb_fill_factor n'est pas directement configurable
--- Mais innodb_max_purge_lag influence le comportement
-SHOW VARIABLES LIKE 'innodb_fill_factor';
-```
+Comme l'arbre est plat (hauteur 3 à 4), une recherche ne réclame que quelques lectures de page. Mieux : les niveaux supérieurs — la racine et les premières branches — sont consultés à *chaque* requête et résident donc pratiquement en permanence dans le Buffer Pool. En pratique, seules les feuilles génèrent éventuellement une lecture disque. C'est pourquoi une recherche par index est, du point de vue de l'utilisateur, quasi instantanée.
 
 ---
 
-## Fragmentation et maintenance
+## Index clusterisé et index secondaire dans InnoDB
 
-### Types de fragmentation
+InnoDB applique le B+Tree d'une manière particulière, qu'il est indispensable de comprendre car elle conditionne la conception des schémas.
 
-**1. Fragmentation interne** : Espace inutilisé à l'intérieur des pages
+### L'index clusterisé EST la table
+
+Dans InnoDB, **la table elle-même est un B+Tree**, ordonné selon la **clé primaire**. C'est l'*index clusterisé* (*clustered index*). Sa particularité : les **feuilles contiennent les lignes complètes**, et non de simples pointeurs. La clé primaire ne se contente donc pas d'identifier une ligne — elle détermine l'**organisation physique** des données sur le disque.
+
+Que se passe-t-il en l'absence de clé primaire explicite ? InnoDB applique une cascade de règles :
+
+1. il utilise le premier index `UNIQUE` dont toutes les colonnes sont `NOT NULL` ;
+2. à défaut, il génère une **clé cachée** interne de 6 octets (un identifiant de ligne, ou *ROWID*).
+
+Définir une clé primaire explicite reste donc toujours préférable.
+
+### Les index secondaires pointent vers la clé primaire
+
+Tout autre index (sur `email`, sur `nom`, etc.) est un *index secondaire* : un B+Tree distinct dont les feuilles ne contiennent **pas** la ligne complète, mais les **colonnes indexées suivies de la valeur de la clé primaire**.
+
+La conséquence est capitale. Pour répondre à une requête qui réclame des colonnes absentes de l'index secondaire, InnoDB effectue **deux traversées** :
 
 ```
-Page partiellement remplie après suppressions :
-
-┌─────────────────────────────────────┐
-│ [10] [25] [__] [50] [__] [75] [__]  │  ← Trous dans la page
-└─────────────────────────────────────┘
+Index secondaire (idx_email)                Index clusterisé (= la table, PK = id)
+┌────────────────────────────┐              ┌──────────────────────────────────────────┐
+│ email (trié)  │ id (PK)    │              │ id (trié) │ ...toutes les colonnes...    │
+├───────────────┼────────────┤              ├───────────┼──────────────────────────────┤
+│ alice@ex.fr   │   42       │ ───┐         │   41      │ ...                          │
+│ bob@ex.fr     │   17       │    └───────► │   42      │ nom, email, ville, solde, ...│
+│ ...           │   ...      │              │   43      │ ...                          │
+└───────────────┴────────────┘              └───────────┴──────────────────────────────┘
+   1) on localise l'email ici                  2) puis on retrouve la ligne via l'id (PK)
 ```
 
-**2. Fragmentation externe** : Pages logiquement consécutives physiquement dispersées
+Cette seconde traversée — le **retour à la table** (*bookmark lookup*) — a deux implications pratiques majeures :
 
-```
-Ordre logique :  Page1 → Page2 → Page3 → Page4
-Ordre physique:  Page1 → Page4 → Page2 → Page3
-
-→ I/O aléatoires au lieu de séquentiels
-```
-
-### Détecter la fragmentation
-
-```sql
--- Vérifier l'état des tables
-SHOW TABLE STATUS LIKE 'orders'\G
-
--- Indicateurs clés :
--- Data_free : Espace inutilisé (fragmentation interne)
--- Data_length : Taille totale des données
-```
-
-**Calcul du taux de fragmentation** :
-
-```sql
-SELECT
-    table_name,
-    data_length,
-    data_free,
-    ROUND(data_free / (data_length + data_free) * 100, 2) AS fragmentation_pct
-FROM information_schema.TABLES
-WHERE table_schema = 'mydb'
-AND data_length > 0
-ORDER BY fragmentation_pct DESC;
-```
-
-**Interprétation** :
-- < 5% : Excellent, pas d'action nécessaire
-- 5-15% : Acceptable, surveiller
-- 15-30% : Optimisation recommandée
-- > 30% : Optimisation urgente
-
-### Défragmentation
-
-```sql
--- Option 1 : OPTIMIZE TABLE (reconstruction complète)
-OPTIMIZE TABLE orders;
-
--- Équivalent à :
-ALTER TABLE orders ENGINE=InnoDB;
-
--- Option 2 : ALTER TABLE avec ALGORITHM=INPLACE (11.8+)
-ALTER TABLE orders FORCE, ALGORITHM=INPLACE;
-```
-
-⚠️ **Précautions** :
-- `OPTIMIZE TABLE` verrouille la table (peut être long)
-- Nécessite de l'espace disque libre (2x la taille de la table)
-- À faire en maintenance programmée pour grandes tables
-
-💡 **Alternative pour grandes tables** :
-
-```sql
--- gh-ost ou pt-online-schema-change pour défragmentation sans downtime
-pt-online-schema-change \
-  --alter "ENGINE=InnoDB" \
-  --execute \
-  h=localhost,D=mydb,t=orders
-```
+- **Les index couvrants sont précieux.** Si un index secondaire contient déjà *toutes* les colonnes nécessaires à la requête, la seconde traversée devient inutile : MariaDB répond directement depuis l'index. C'est le principe de l'*index covering* et de l'*index-only scan*, traités en [section 5.9](09-index-covering.md).
+- **Une clé primaire large pénalise tout le schéma.** Puisque chaque index secondaire **réplique la valeur de la clé primaire** dans ses feuilles, une PK volumineuse (par exemple une longue chaîne, ou un UUID stocké en texte) alourdit *tous* les index secondaires de la table. C'est un argument fort en faveur de clés primaires **compactes**.
 
 ---
 
-## Pages et gestion de la mémoire
+## Le coût caché : insertions, suppressions et éclatements de pages
 
-### Buffer Pool et pages
+L'efficacité en lecture d'un index a une contrepartie : son **maintien en écriture**. Maintenir l'ordre et l'équilibre de l'arbre représente un travail à chaque modification.
 
-L'**InnoDB Buffer Pool** cache les pages d'index en RAM :
+- **Insertion.** La nouvelle entrée doit être placée dans la feuille appropriée pour préserver l'ordre. Si cette feuille est déjà pleine, elle subit un **éclatement de page** (*page split*) : la page se scinde en deux, ce qui peut se propager vers les nœuds supérieurs.
+- **Suppression.** L'entrée est retirée ; les pages devenues trop vides peuvent être fusionnées.
 
-```sql
--- Taille du buffer pool (à configurer selon RAM disponible)
-SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
+L'impact des éclatements dépend fortement de la **nature des clés insérées** :
 
--- Recommandation : 60-80% de la RAM serveur
-SET GLOBAL innodb_buffer_pool_size = 8589934592; -- 8 GB
-```
+| Type d'insertion | Comportement | Conséquence |
+|------------------|--------------|-------------|
+| **Séquentielle** (ex. `AUTO_INCREMENT`) | Les valeurs s'ajoutent toujours « à la fin » | Peu d'éclatements, pages bien remplies, arbre compact |
+| **Aléatoire** (ex. UUIDv4 en clé primaire) | Les insertions sont dispersées dans tout l'arbre | Nombreux éclatements, fragmentation, pages à moitié vides, arbre plus volumineux |
 
-**Gestion LRU (Least Recently Used)** :
+C'est l'une des raisons pour lesquelles on privilégie des **clés primaires croissantes** : un `AUTO_INCREMENT`, ou, lorsqu'un identifiant non séquentiel est requis, un UUID **ordonné dans le temps** (UUIDv7) plutôt qu'un UUIDv4 purement aléatoire.
 
-```
-Buffer Pool divisé en 2 zones :
-
-┌──────────────────────────────────┐
-│ Young Zone (37%)                 │  Pages récemment accédées
-│ ─────────────────────────────────│
-│ Old Zone (63%)                   │  Pages moins accédées
-└──────────────────────────────────┘
-
-→ Les nouvelles pages entrent dans Old Zone
-→ Si réaccédées rapidement → promues vers Young Zone
-→ Évite de polluer le cache avec des full scans
-```
-
-### Pages et I/O
-
-```sql
--- Statistiques I/O du buffer pool
-SHOW STATUS LIKE 'Innodb_buffer_pool%';
-
--- Métriques clés :
--- Innodb_buffer_pool_reads : Lectures depuis disque (cold reads)
--- Innodb_buffer_pool_read_requests : Lectures totales (hot + cold)
--- Innodb_buffer_pool_read_ahead : Lectures anticipées
--- Innodb_buffer_pool_pages_dirty : Pages modifiées non encore écrites
-```
-
-**Calcul du hit ratio** :
-
-```sql
-SELECT
-    (1 - (Innodb_buffer_pool_reads / Innodb_buffer_pool_read_requests)) * 100
-    AS hit_ratio
-FROM (
-    SELECT
-        VARIABLE_VALUE AS Innodb_buffer_pool_reads
-    FROM information_schema.GLOBAL_STATUS
-    WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads'
-) reads,
-(
-    SELECT
-        VARIABLE_VALUE AS Innodb_buffer_pool_read_requests
-    FROM information_schema.GLOBAL_STATUS
-    WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'
-) requests;
-
--- Objectif : > 99%
-```
-
-### Read-Ahead : Préchargement intelligent
-
-InnoDB précharge des pages en anticipation :
-
-```sql
--- Configuration du read-ahead
-SHOW VARIABLES LIKE 'innodb_read_ahead_threshold';
-
--- Valeur par défaut : 56 (sur 64 pages d'une extent)
--- Si 56 pages d'une extent sont lues séquentiellement,
--- InnoDB précharge automatiquement l'extent suivante
-```
-
-**Types de read-ahead** :
-
-1. **Linear read-ahead** : Détecte les lectures séquentielles
-2. **Random read-ahead** : Désactivé par défaut (peu efficace)
-
-```sql
--- Désactiver random read-ahead (recommandé)
-SET GLOBAL innodb_random_read_ahead = OFF;
-```
+La fragmentation qui s'accumule au fil des écritures peut être résorbée par une opération de maintenance comme `OPTIMIZE TABLE`, abordée au [chapitre 11](../11-administration-configuration/06-maintenance-tables.md).
 
 ---
 
-## Hauteur de l'arbre et performance
+## Ce que le B-Tree fait bien… et ce qu'il ne sait pas faire
 
-### Calcul de la hauteur
+Parce que ses entrées sont **triées**, un index B-Tree est performant pour toute opération qui tire parti de cet ordre, mais inopérant lorsque l'ordre ne sert à rien.
 
-La **hauteur d'un B-Tree** détermine directement le nombre d'I/O nécessaires pour une recherche.
+**Opérations bien servies par un index B-Tree :**
 
-**Formule** : hauteur ≈ log_m(n) où m = nombre de clés par page, n = nombre total de clés
+- **Égalité** : `WHERE col = ?`
+- **Plages** : `WHERE col BETWEEN ? AND ?`, ainsi que `>`, `<`, `>=`, `<=`
+- **Préfixe** : `WHERE col LIKE 'abc%'` (le début est connu)
+- **Tri et regroupement** : `ORDER BY col` et `GROUP BY col` peuvent éviter une opération de tri explicite, puisque l'index fournit déjà les valeurs en ordre
+- **Valeurs extrêmes** : recherche du minimum ou du maximum
 
-```sql
--- Exemple concret : Table avec 10 millions de lignes
--- Clé primaire INT (4 bytes)
--- Pointeur vers ligne (6 bytes)
--- Page 16 KB
+**Situations où l'index B-Tree est inutile ou inutilisable :**
 
--- Calcul du nombre de clés par page :
--- Espace utile : 16 KB - 100 bytes (headers) ≈ 16 000 bytes
--- Taille par entrée : 4 + 6 = 10 bytes
--- Clés par page : 16 000 / 10 = 1600
+- **Joker en tête** : `WHERE col LIKE '%abc'` — l'ordre alphabétique n'aide en rien, puisqu'on ignore le début de la valeur.
+- **Fonction ou expression appliquée à la colonne** : `WHERE YEAR(date_creation) = 2026` empêche l'usage d'un index sur `date_creation`. La solution consiste soit à réécrire la condition sous forme de plage (`date_creation >= '2026-01-01' AND date_creation < '2027-01-01'`), soit à indexer une **colonne générée** dédiée ([section 18.4](../18-fonctionnalites-avancees/04-virtual-generated-columns.md)).
+- **Très faible sélectivité** : sur une colonne ne comportant que quelques valeurs distinctes (un booléen, par exemple), un index apporte peu : l'optimiseur jugera souvent le balayage complet plus économique.
 
--- Hauteur de l'arbre :
--- log₁₆₀₀(10 000 000) ≈ 2.14 → 3 niveaux
-
--- Donc : Maximum 3 I/O pour n'importe quelle recherche !
-```
-
-### Évolution avec la taille
-
-| Nombre de lignes | Clés par page | Hauteur | I/O max |
-|------------------|---------------|---------|---------|
-| 1 000 | 1600 | 1 | 1 |
-| 100 000 | 1600 | 2 | 2 |
-| 10 000 000 | 1600 | 3 | 3 |
-| 1 000 000 000 | 1600 | 4 | 4 |
-
-💡 **Insight** : Même avec 1 milliard de lignes, seulement 4 I/O sont nécessaires ! C'est la puissance du B-Tree.
-
-### Impact de la taille de clé
-
-Plus la clé est grande, moins on peut mettre de clés par page :
-
-```sql
--- Comparaison : INT vs VARCHAR(255)
-
--- INT (4 bytes) : ~1600 clés/page → 3 niveaux pour 10M lignes
--- VARCHAR(255) (255 bytes) : ~60 clés/page → 4 niveaux pour 10M lignes
-
--- Conclusion : Préférer des clés compactes !
-```
-
-**Recommandations** :
-- ✅ Utiliser INT/BIGINT pour clés primaires
-- ✅ Éviter VARCHAR(255) comme clé primaire si possible
-- ✅ Envisager des clés composites intelligemment ordonnées
-- ❌ Éviter TEXT/BLOB comme clé
+Notons enfin que le B-Tree est le **type d'index par défaut** dans InnoDB ; on peut l'expliciter avec la clause `USING BTREE`. D'autres structures existent pour des besoins spécifiques — Hash, Full-Text, Spatial (R-Tree) — et seront présentées en [section 5.2](02-types-index.md), tandis que l'index vectoriel HNSW fait l'objet de la [section 5.3](03-index-vector-hnsw.md).
 
 ---
 
-## Comparaison de complexité
-
-### Complexité algorithmique des opérations
-
-| Opération | B-Tree | Table non indexée | Gain |
-|-----------|--------|-------------------|------|
-| **Recherche égalité** | O(log n) | O(n) | Exponentiel |
-| **Recherche plage** | O(log n + k) | O(n) | Significatif |
-| **Insertion** | O(log n) | O(1) | Perte acceptable |
-| **Suppression** | O(log n) | O(n) | Gain important |
-| **Parcours trié** | O(n) | O(n log n) | Évite le tri |
-
-*n = nombre total de lignes, k = nombre de résultats*
-
-### Exemples de performance réelle
-
-```sql
--- Table : 5 millions de lignes
-
--- 1. Recherche sans index
-SELECT * FROM orders WHERE customer_id = 12345;
--- Temps : 4.2 secondes (full scan)
--- I/O : 5 000 000 lectures
-
--- 2. Recherche avec index B-Tree
-CREATE INDEX idx_customer ON orders(customer_id);
-SELECT * FROM orders WHERE customer_id = 12345;
--- Temps : 0.003 secondes
--- I/O : 3 lectures (hauteur de l'arbre) + récupération données
-
--- 3. Range scan avec index
-SELECT * FROM orders
-WHERE order_date BETWEEN '2025-01-01' AND '2025-01-31';
--- Sans index : 4.5 secondes (full scan)
--- Avec index : 0.12 secondes (3 I/O arbre + scan séquentiel feuilles)
-```
+> ### 📝 À retenir  
+>  
+> - Un index transforme une recherche linéaire (**O(*n*)**) en recherche logarithmique (**O(log *n*)**) grâce à une structure de données **ordonnée**.  
+> - Le **B-Tree** est un arbre **équilibré** (toutes les feuilles à la même profondeur) au **fort *fan-out***, donc **large et peu profond** : 3 à 4 accès suffisent pour des centaines de millions de lignes.  
+> - InnoDB utilise en réalité un **B+Tree** : données dans les feuilles, feuilles **chaînées** entre elles, ce qui rend les **parcours de plage** très efficaces.  
+> - Chaque nœud est une **page** (16 Ko par défaut) ; les niveaux hauts résident en mémoire (**Buffer Pool**), d'où une recherche quasi instantanée.  
+> - Dans InnoDB, l'**index clusterisé est la table** (organisée par la clé primaire) ; les **index secondaires** stockent la **clé primaire**, d'où un éventuel **retour à la table** — à éviter via les index couvrants (5.9) et les **clés primaires compactes**.  
+> - Les index ont un **coût en écriture** (éclatements de pages) : préférer des **clés primaires croissantes** pour limiter la fragmentation.
 
 ---
 
-## Limitations et considérations
+## 🧭 Navigation
 
-### Quand le B-Tree est moins efficace
-
-**1. Faible sélectivité**
-
-```sql
--- Colonne avec peu de valeurs distinctes
-SELECT * FROM users WHERE gender = 'M';
--- Si 50% des utilisateurs sont 'M', l'index n'aide pas beaucoup
--- L'optimiseur peut préférer un full scan !
-```
-
-**2. Recherches avec wildcards au début**
-
-```sql
--- Index inutilisable
-SELECT * FROM products WHERE name LIKE '%widget%';
-
--- Index utilisable
-SELECT * FROM products WHERE name LIKE 'widget%';
-```
-
-**3. Fonctions sur colonnes indexées**
-
-```sql
--- Index non utilisé
-SELECT * FROM orders WHERE YEAR(order_date) = 2025;
-
--- Index utilisé
-SELECT * FROM orders
-WHERE order_date BETWEEN '2025-01-01' AND '2025-12-31';
-```
-
-### Overhead de maintenance
-
-**Impact sur les écritures** :
-
-```sql
--- Sans index
-INSERT INTO logs (message) VALUES ('Test'); -- 1 écriture
-
--- Avec 3 index
-INSERT INTO logs (timestamp, level, message) VALUES (NOW(), 'INFO', 'Test');
--- 1 écriture table + 3 écritures index = 4 écritures !
-
--- Chaque index ralentit les INSERT/UPDATE/DELETE
-```
-
-**Recommandation** : Maximum 3-5 index par table pour les tables OLTP avec beaucoup d'écritures.
-
----
-
-## Cas pratiques et exemples
-
-### Exemple 1 : Index sur clé primaire auto-incrémentée
-
-```sql
-CREATE TABLE orders (
-    order_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    customer_id INT,
-    order_date DATETIME,
-    total DECIMAL(10,2)
-);
-
--- Le PRIMARY KEY crée automatiquement un B-Tree clustered index
--- Les insertions sont toujours à la fin → pas de splits (optimal)
--- L'arbre grandit "par la droite"
-```
-
-**Structure après 1 million d'insertions** :
-
-```
-Nœuds internes "à gauche" : [1-500k|500k-1M]
-                                    |
-Feuille "active" :              [999001|999002|...|1000000]
-                                 ↑ Toutes les insertions ici
-```
-
-### Exemple 2 : Index sur UUID (contre-exemple)
-
-```sql
-CREATE TABLE sessions (
-    session_id CHAR(36) PRIMARY KEY, -- UUID v4 (aléatoire)
-    user_id INT,
-    created_at DATETIME
-);
-
--- Problème : UUID aléatoires → insertions partout dans l'arbre
--- → Splits fréquents, fragmentation, performances dégradées
-
--- Solution : UUID v7 (timebased) ou BIGINT auto-incrementé
-```
-
-### Exemple 3 : Index composite optimisé
-
-```sql
--- Requête fréquente
-SELECT * FROM orders
-WHERE customer_id = ?
-AND status = 'pending'
-ORDER BY order_date DESC
-LIMIT 10;
-
--- Index optimal (ordre important !)
-CREATE INDEX idx_optimized
-ON orders(customer_id, status, order_date);
-
--- Pourquoi cet ordre ?
--- 1. customer_id : plus sélectif, filtre d'abord
--- 2. status : filtre secondaire
--- 3. order_date : permet le tri sans opération supplémentaire
-```
-
----
-
-## Monitoring et diagnostic
-
-### Analyser l'utilisation des index
-
-```sql
--- Statistiques d'utilisation (Performance Schema)
-SELECT
-    object_schema AS db,
-    object_name AS table_name,
-    index_name,
-    count_star AS accesses
-FROM performance_schema.table_io_waits_summary_by_index_usage
-WHERE object_schema = 'mydb'
-AND index_name IS NOT NULL
-ORDER BY count_star DESC;
-```
-
-### Visualiser la structure d'un index
-
-```sql
--- Informations sur l'index
-SHOW INDEX FROM orders;
-
--- Colonnes importantes :
--- - Cardinality : Nombre de valeurs uniques estimées
--- - Sub_part : Longueur de préfixe indexé (si applicable)
--- - Index_type : BTREE, HASH, FULLTEXT...
-```
-
-### Estimer la taille de l'index
-
-```sql
-SELECT
-    index_name,
-    ROUND(stat_value * @@innodb_page_size / 1024 / 1024, 2) AS size_mb
-FROM mysql.innodb_index_stats
-WHERE database_name = 'mydb'
-AND table_name = 'orders'
-AND stat_name = 'size'
-ORDER BY stat_value DESC;
-```
-
----
-
-## ✅ Points clés à retenir
-
-- 🌲 **Le B-Tree est la structure optimale** pour les bases de données grâce à sa faible hauteur et son équilibrage automatique
-- 📄 **MariaDB utilise un B+Tree** où les données sont uniquement dans les feuilles, chaînées pour les range scans
-- 📦 **Les pages de 16 KB** sont l'unité de base : une page entière est lue lors d'un accès disque
-- 🎯 **Complexité O(log n)** : Même avec des milliards de lignes, seulement 3-4 I/O maximum
-- ⚖️ **Fill factor** : InnoDB laisse ~7% d'espace libre pour anticiper les insertions futures
-- 🔧 **Fragmentation** : Surveillez avec `SHOW TABLE STATUS` et défragmentez avec `OPTIMIZE TABLE`
-- 💾 **Buffer Pool** : Cache intelligent LRU qui maintient les pages chaudes en mémoire (hit ratio > 99%)
-- 📏 **Taille de clé** : Plus la clé est compacte, plus de clés par page, moins de niveaux, moins d'I/O
-- 🚀 **Auto-increment** : Optimal pour clé primaire car insertions toujours "à droite" (pas de splits)
-- ⚠️ **UUID aléatoires** : Dégradent les performances (splits partout) → préférer UUID v7 ou BIGINT
-- 📊 **Hauteur = Performance** : 3 niveaux pour 10M lignes, 4 niveaux pour 1 milliard
-- 🎪 **Trade-off** : B-Tree accélère les lectures mais ralentit légèrement les écritures
-
----
-
-## 🔗 Ressources et références
-
-### Documentation officielle MariaDB
-
-- [📖 InnoDB Indexes](https://mariadb.com/kb/en/innodb-indexes/)
-- [📖 Storage Engine Index Types](https://mariadb.com/kb/en/storage-engine-index-types/)
-- [📖 InnoDB Page Structure](https://mariadb.com/kb/en/innodb-page-structure/)
-- [📖 OPTIMIZE TABLE](https://mariadb.com/kb/en/optimize-table/)
-- [📖 InnoDB Buffer Pool](https://mariadb.com/kb/en/innodb-buffer-pool/)
-
-### Ressources externes
-
-- [Use The Index, Luke! - Anatomy of an Index](https://use-the-index-luke.com/sql/anatomy)
-- [MySQL Internals Manual - InnoDB](https://dev.mysql.com/doc/internals/en/innodb.html)
-- [B-tree vs B+tree (Stack Overflow)](https://stackoverflow.com/questions/870218/b-trees-b-trees-difference)
-
-### Articles techniques
-
-- [Understanding InnoDB clustered indexes](https://www.percona.com/blog/understanding-innodb-clustered-indexes/)
-- [How InnoDB Lost its Advantage](https://www.xaprb.com/blog/2010/01/09/how-innodb-lost-its-advantage/)
-
----
-
-## ➡️ Section suivante
-
-**[5.2 Types d'index](./02-types-index.md)**
-
-Maintenant que vous comprenez le fonctionnement interne du B-Tree, explorons les autres types d'index disponibles dans MariaDB : Hash pour l'égalité stricte, Full-Text pour la recherche textuelle, Spatial pour les données géographiques, et découvrez les index VECTOR/HNSW pour la recherche vectorielle et l'IA (nouveauté MariaDB 11.8 LTS 🆕).
-
----
-
+- ⬅️ Section précédente : [Introduction du chapitre 5](README.md)
+- ➡️ Section suivante : [5.2 Types d'index](02-types-index.md)
+- 📂 Chapitre : [5. Index et Performance](README.md)
+- 🏠 [Retour au sommaire](../SOMMAIRE.md)
 
 ⏭️ [Types d'index](/05-index-et-performance/02-types-index.md)

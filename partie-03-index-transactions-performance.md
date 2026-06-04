@@ -20,9 +20,9 @@ Ces compétences sont **non négociables pour toute personne travaillant sérieu
 
 ---
 
-## 📚 Les deux modules de cette partie
+## 📚 Les deux chapitres de cette partie
 
-### Module 5 : Index et Performance
+### Chapitre 5 : Index et Performance
 **10 sections | Durée : ~1,5 jour**
 
 Ce module est le cœur de l'optimisation des performances en MariaDB. Vous y découvrirez :
@@ -36,7 +36,7 @@ Ce module est le cœur de l'optimisation des performances en MariaDB. Vous y dé
 - **B-Tree** : L'index standard pour la majorité des cas d'usage (égalité, plages, tri)
 - **Hash** : Optimisé pour les recherches par égalité stricte
 - **Full-Text** : Recherche textuelle avancée avec pertinence
-- **Spatial** : Index géographiques pour données géospatiales (PostGIS-like)
+- **Spatial** : Index géographiques (R-Tree) pour données géospatiales conformes à la norme **OGC**
 - 🆕 **VECTOR (HNSW)** : Le game-changer pour l'IA — recherche vectorielle haute performance pour embeddings, RAG, et applications ML
 
 #### ⚡ Stratégies d'optimisation
@@ -54,8 +54,8 @@ Ce module est le cœur de l'optimisation des performances en MariaDB. Vous y dé
 
 ---
 
-### Module 6 : Transactions et Concurrence
-**8 sections | Durée : ~1,5 jour**
+### Chapitre 6 : Transactions et Concurrence
+**9 sections | Durée : ~1,5 jour**
 
 Ce module vous enseigne comment garantir la **cohérence et l'intégrité des données** dans un environnement multi-utilisateurs :
 
@@ -73,8 +73,10 @@ Comprendre le compromis fondamental entre cohérence et performance :
 
 Chaque niveau a ses **cas d'usage spécifiques** et ses implications en production.
 
+- **Snapshot Isolation** : par défaut (`innodb_snapshot_isolation`, activé depuis MariaDB 11.6 — donc en 12.3), `REPEATABLE READ` applique une véritable isolation par instantané qui **protège contre les mises à jour perdues** en signalant les conflits par une erreur plutôt que de les écraser silencieusement
+
 #### 🔐 Gestion de la concurrence
-- **Verrous** : `LOCK TABLES`, `SELECT FOR UPDATE`, `SELECT FOR SHARE` — quand et comment les utiliser
+- **Verrous** : `LOCK TABLES`, `SELECT FOR UPDATE`, `LOCK IN SHARE MODE` — quand et comment les utiliser
 - **MVCC** : Multi-Version Concurrency Control, le mécanisme magique d'InnoDB
 - **Deadlocks** : Comprendre, détecter, prévenir et résoudre les interblocages
 - **Transactions distribuées (XA)** : Coordination de transactions entre plusieurs ressources
@@ -83,11 +85,11 @@ Chaque niveau a ses **cas d'usage spécifiques** et ses implications en producti
 
 ---
 
-## 🆕 Nouveauté majeure MariaDB 11.8 : Index VECTOR (HNSW)
+## La recherche vectorielle : index VECTOR (HNSW)
 
 ### La révolution de la recherche vectorielle
 
-MariaDB 11.8 LTS introduit une fonctionnalité qui change la donne pour les applications d'IA et de machine learning : **l'index VECTOR basé sur l'algorithme HNSW** (Hierarchical Navigable Small Worlds).
+Introduite en MariaDB 11.7, stabilisée dans la 11.8 LTS et encore optimisée dans la série 12.x (calcul de distance au niveau du moteur de stockage, estimation par extrapolation), l'**index VECTOR basé sur l'algorithme HNSW** (Hierarchical Navigable Small Worlds) change la donne pour les applications d'IA et de machine learning.
 
 #### Qu'est-ce qu'un index VECTOR ?
 
@@ -99,7 +101,7 @@ CREATE TABLE documents (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255),
     content TEXT,
-    embedding VECTOR(1536),  -- Embeddings OpenAI Ada (1536 dimensions)
+    embedding VECTOR(1536) NOT NULL,  -- Embeddings OpenAI Ada (1536 dimensions)
     VECTOR INDEX idx_embedding (embedding)
 );
 
@@ -130,7 +132,7 @@ L'index VECTOR ouvre la porte à des architectures modernes :
 
 💡 **Impact stratégique** : MariaDB devient une solution **tout-en-un** pour les applications modernes : données relationnelles + recherche vectorielle + JSON + recherche full-text, le tout dans un seul système cohérent.
 
-Cette fonctionnalité positionne MariaDB comme un **choix de premier plan pour les architectures orientées IA** en 2025 et au-delà.
+Cette fonctionnalité positionne MariaDB comme un **choix de premier plan pour les architectures orientées IA**.
 
 ---
 
@@ -156,7 +158,7 @@ Cette fonctionnalité positionne MariaDB comme un **choix de premier plan pour l
 
 ### Gestion de la concurrence
 - ✅ **Comprendre** le fonctionnement de MVCC dans InnoDB
-- ✅ **Utiliser** les bons types de verrous (`FOR UPDATE`, `FOR SHARE`)
+- ✅ **Utiliser** les bons types de verrous (`FOR UPDATE`, `LOCK IN SHARE MODE`)
 - ✅ **Détecter** et résoudre les deadlocks
 - ✅ **Prévenir** les problèmes de concurrence dès la conception
 - ✅ **Diagnostiquer** les problèmes de performance liés aux verrous
@@ -242,21 +244,21 @@ CREATE INDEX idx_customer_id ON orders(customer_id);
 
 #### ❌ Scénario 3 : La perte de mise à jour silencieuse
 ```sql
--- Niveau d'isolation inapproprié (READ UNCOMMITTED)
+-- Read-modify-write concurrent SANS verrouillage explicite
 -- Transaction A lit balance=1000, calcule 1000-100=900, écrit 900
 -- Transaction B lit balance=1000, calcule 1000-200=800, écrit 800
--- Résultat : Balance=800 au lieu de 700 (une opération perdue)
+-- Résultat : Balance=800 au lieu de 700 (la mise à jour de A est perdue)
 ```
-**Impact** : Incohérence financière, potentiellement réglementaire.
+**Impact** : Incohérence financière, potentiellement réglementaire. Ce conflit n'est évité ni par `READ COMMITTED` ni par `REPEATABLE READ` : la parade est le verrouillage explicite `SELECT … FOR UPDATE` — et depuis MariaDB 11.6 (donc en 12.3), l'isolation par instantané activée par défaut **signale ce conflit par une erreur** au lieu de l'écraser silencieusement (cf. Chapitre 6).
 
-#### ✅ Scénario 4 : Recherche sémantique moderne (nouveau 11.8)
+#### ✅ Scénario 4 : Recherche sémantique moderne (index VECTOR)
 ```sql
--- Base vectorielle avec MariaDB 11.8
+-- Base vectorielle avec MariaDB (index VECTOR/HNSW)
 CREATE TABLE knowledge_base (
     id INT PRIMARY KEY,
     question TEXT,
     answer TEXT,
-    embedding VECTOR(768),
+    embedding VECTOR(768) NOT NULL,
     VECTOR INDEX (embedding)
 );
 
@@ -372,12 +374,12 @@ Les index et transactions sont des **concepts universels en bases de données**.
 
 ## ➡️ Prochaine étape
 
-**Module 5 : Index et Performance** → Découvrez la structure B-Tree, les différents types d'index (dont le révolutionnaire VECTOR), et comment diagnostiquer et optimiser les performances avec `EXPLAIN`.
+**Chapitre 5 : Index et Performance** → Découvrez la structure B-Tree, les différents types d'index (dont VECTOR pour l'IA), et comment diagnostiquer et optimiser les performances avec `EXPLAIN`.
 
 Bienvenue dans le monde de la performance professionnelle ! 🚀
 
 ---
 
-**MariaDB** : Version 11.8 LTS
+**MariaDB** : Version 12.3 LTS
 
 ⏭️ [Index et Performance](/05-index-et-performance/README.md)
