@@ -1,379 +1,81 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# Chapitre 3 : Requêtes SQL Intermédiaires
+# 3. Requêtes SQL Intermédiaires
 
-> **Niveau** : Intermédiaire
-> **Durée estimée** : 8-12 heures
-> **Prérequis** : Chapitre 2 (Bases du SQL), maîtrise des requêtes SELECT simples, WHERE, ORDER BY, LIMIT
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de ce chapitre, vous serez capable de :
-- Utiliser les fonctions d'agrégation pour calculer des statistiques sur vos données
-- Regrouper et filtrer des résultats avec GROUP BY et HAVING
-- Maîtriser tous les types de jointures (INNER, LEFT, RIGHT, CROSS, Self-Join)
-- Écrire des sous-requêtes et requêtes imbriquées complexes
-- Combiner des résultats avec les opérateurs ensemblistes (UNION, INTERSECT, EXCEPT)
-- Manipuler efficacement les chaînes de caractères et les dates
-- Utiliser les expressions conditionnelles pour enrichir vos requêtes
+> **Partie 2 : Requêtes SQL Intermédiaires et Avancées** · Niveau : *Intermédiaire*  
+> Version de référence : **MariaDB 12.3 LTS**
 
 ---
 
 ## Introduction
 
-Les **requêtes SQL intermédiaires** constituent une étape cruciale dans votre progression vers la maîtrise de MariaDB. Alors que les requêtes de base permettent de sélectionner, filtrer et trier des données simples, ce chapitre vous ouvre les portes de l'**analyse de données** et des **relations complexes** entre tables.
+La [Partie 1](../partie-01-introduction-fondamentaux.md) vous a permis de créer des bases et des tables, d'y insérer des données et d'écrire vos premières requêtes de lecture avec `SELECT`, `WHERE`, `ORDER BY` et `LIMIT`. Vous savez désormais *stocker* et *retrouver* des lignes. Ce chapitre marque une étape : passer de la simple consultation à la **véritable interrogation des données**, c'est-à-dire produire de l'information à partir de tables brutes.
 
-### Pourquoi ce niveau est important ?
+Les requêtes intermédiaires constituent le cœur du SQL que l'on écrit au quotidien, que l'on soit développeur ou DBA. On y apprend à **résumer** des données (agrégation), à les **regrouper** selon des critères, à **combiner** plusieurs tables entre elles (jointures), à **imbriquer** des requêtes les unes dans les autres (sous-requêtes), à **réunir** des ensembles de résultats, et enfin à **transformer** les valeurs à la volée — textes, dates et expressions conditionnelles. Ces techniques se combinent ensuite librement : une requête réelle mêle souvent jointures, agrégats et conditions dans une même instruction.
 
-En environnement de production, la majorité des requêtes métier nécessitent :
-- **L'agrégation de données** : Calculer des totaux, moyennes, compter des occurrences
-- **Le regroupement** : Analyser les données par catégories, périodes, segments
-- **Les jointures** : Croiser les informations de plusieurs tables pour obtenir une vue cohérente
-- **Les transformations** : Formater, nettoyer et enrichir les données à la volée
-
-Ces compétences sont indispensables pour tout développeur travaillant avec des bases de données relationnelles, et constituent la base des requêtes d'analyse métier.
-
-### Ce que vous allez apprendre
-
-Ce chapitre est structuré en **8 sections progressives** qui s'appuient les unes sur les autres :
-
-#### 📊 **Section 3.1 : Fonctions d'agrégation**
-Les cinq fonctions essentielles (COUNT, SUM, AVG, MIN, MAX) pour transformer des ensembles de lignes en valeurs synthétiques. Vous apprendrez à calculer des statistiques simples et à comprendre comment MariaDB traite les valeurs NULL dans les agrégations.
-
-#### 📦 **Section 3.2 : Regroupement de données**
-GROUP BY et HAVING vous permettent de segmenter vos analyses. Vous découvrirez la différence fondamentale entre WHERE (filtre avant regroupement) et HAVING (filtre après regroupement), ainsi que les règles de composition des clauses GROUP BY.
-
-#### 🔗 **Section 3.3 : Jointures**
-Le cœur du modèle relationnel ! Cette section détaillée couvre :
-- **INNER JOIN** : L'intersection, pour ne garder que les correspondances
-- **LEFT/RIGHT JOIN** : Les jointures externes pour préserver toutes les lignes d'un côté
-- **CROSS JOIN** : Le produit cartésien pour toutes les combinaisons possibles
-- **Self-Join** : La technique avancée pour joindre une table à elle-même
-
-Chaque type est illustré avec des schémas conceptuels et des cas d'usage réels.
-
-#### 🎯 **Section 3.4 : Sous-requêtes**
-Les requêtes imbriquées permettent de résoudre des problèmes complexes en plusieurs étapes logiques. Vous maîtriserez les sous-requêtes scalaires, les sous-requêtes dans les clauses WHERE et FROM, ainsi que les opérateurs IN, EXISTS, ANY et ALL.
-
-#### ⚡ **Section 3.5 : Opérateurs ensemblistes**
-UNION, INTERSECT et EXCEPT (MariaDB 10.3+) permettent de combiner les résultats de plusieurs requêtes. Vous comprendrez quand utiliser UNION vs UNION ALL, et comment ces opérateurs diffèrent des jointures.
-
-#### 🔤 **Section 3.6 : Fonctions de chaînes**
-Manipulation de texte avec CONCAT, SUBSTRING, REPLACE, UPPER, LOWER, TRIM, LENGTH, et bien d'autres. Ces fonctions sont essentielles pour le nettoyage et la transformation de données textuelles.
-
-#### 📅 **Section 3.7 : Fonctions de dates**
-Travailler avec les types temporels : extraction de parties de dates (YEAR, MONTH, DAY), calculs d'intervalles (DATE_ADD, DATE_SUB, DATEDIFF), formatage (DATE_FORMAT), et conversions. Indispensable pour les analyses temporelles.
-
-#### 🎭 **Section 3.8 : Expressions conditionnelles**
-CASE, IF, IFNULL, COALESCE et NULLIF permettent d'ajouter de la logique conditionnelle directement dans vos requêtes SQL, pour créer des colonnes calculées complexes et gérer élégamment les valeurs NULL.
+Ce chapitre prépare directement le terrain pour la [Partie 3](../partie-03-index-transactions-performance.md), où l'on s'intéressera aux index et à la performance : bien comprendre *comment* une requête lit les données est le préalable indispensable pour, plus tard, la rendre rapide.
 
 ---
 
-## 🎓 Approche pédagogique de ce chapitre
+## Objectifs pédagogiques
 
-### Progression graduelle
-Chaque section introduit des concepts en partant du plus simple pour aller vers le plus complexe. Les exemples s'appuient sur un **schéma de base de données cohérent** utilisé tout au long du chapitre.
+À l'issue de ce chapitre, vous serez capable de :
 
-### Schéma de référence : E-commerce
-
-Nous utiliserons un schéma simplifié de commerce en ligne pour tous les exemples :
-
-```sql
--- Clients
-CREATE TABLE clients (
-    id_client INT PRIMARY KEY AUTO_INCREMENT,
-    nom VARCHAR(100) NOT NULL,
-    email VARCHAR(150) UNIQUE,
-    ville VARCHAR(100),
-    pays VARCHAR(50),
-    date_inscription DATE
-);
-
--- Produits
-CREATE TABLE produits (
-    id_produit INT PRIMARY KEY AUTO_INCREMENT,
-    nom_produit VARCHAR(200) NOT NULL,
-    categorie VARCHAR(50),
-    prix_unitaire DECIMAL(10, 2),
-    stock INT DEFAULT 0
-);
-
--- Commandes
-CREATE TABLE commandes (
-    id_commande INT PRIMARY KEY AUTO_INCREMENT,
-    id_client INT NOT NULL,
-    date_commande DATETIME DEFAULT CURRENT_TIMESTAMP,
-    statut ENUM('en_attente', 'confirmée', 'expédiée', 'livrée', 'annulée'),
-    montant_total DECIMAL(10, 2),
-    FOREIGN KEY (id_client) REFERENCES clients(id_client)
-);
-
--- Détails commandes (table de liaison)
-CREATE TABLE details_commande (
-    id_detail INT PRIMARY KEY AUTO_INCREMENT,
-    id_commande INT NOT NULL,
-    id_produit INT NOT NULL,
-    quantite INT NOT NULL,
-    prix_unitaire DECIMAL(10, 2),
-    FOREIGN KEY (id_commande) REFERENCES commandes(id_commande),
-    FOREIGN KEY (id_produit) REFERENCES produits(id_produit)
-);
-```
-
-Ce schéma représente une situation réelle et permet d'illustrer naturellement les jointures et les agrégations.
-
-### Exemples commentés
-Chaque requête est accompagnée de :
-- **Commentaires SQL** expliquant chaque partie
-- **Résultat attendu** sous forme de tableau
-- **Explication du "pourquoi"** : quand utiliser cette approche
-- **Points d'attention** : pièges courants et optimisations
-
-### Cas d'usage métier
-Les exemples sont tirés de situations concrètes :
-- Calculer le chiffre d'affaires par catégorie
-- Trouver les clients sans commande
-- Analyser les ventes par période
-- Identifier les produits en rupture de stock
-- Détecter les anomalies dans les données
+- **Calculer des valeurs synthétiques** sur un ensemble de lignes avec les fonctions d'agrégation (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`) et comprendre leur comportement face aux valeurs `NULL`.
+- **Regrouper les données** avec `GROUP BY` et **filtrer ces groupes** avec `HAVING`, en distinguant clairement le rôle de `WHERE` (filtre des lignes) de celui de `HAVING` (filtre des groupes).
+- **Combiner plusieurs tables** à l'aide des différents types de jointures et choisir la jointure adaptée à chaque besoin.
+- **Écrire des sous-requêtes** scalaires, ensemblistes et corrélées, et les placer dans les clauses `SELECT`, `FROM` ou `WHERE`.
+- **Réunir des résultats** issus de plusieurs requêtes avec les opérateurs ensemblistes (`UNION`, `INTERSECT`, `EXCEPT`).
+- **Manipuler les chaînes de caractères et les valeurs temporelles** grâce aux fonctions intégrées.
+- **Exprimer une logique conditionnelle** directement en SQL (`CASE`, `IF`, `IFNULL`, `COALESCE`, `NULLIF`).
+- **Identifier les apports de compatibilité Oracle** introduits dans la série 12.x et savoir dans quel contexte ils s'activent.
 
 ---
 
-## 💡 Conseils pour tirer le meilleur parti de ce chapitre
+## Prérequis
 
-### 1. Suivez l'ordre des sections
-Les concepts s'appuient les uns sur les autres. GROUP BY utilise les fonctions d'agrégation, les jointures sont essentielles pour les sous-requêtes complexes, etc.
+Ce chapitre suppose la maîtrise des notions de la [Partie 1](../partie-01-introduction-fondamentaux.md), en particulier :
 
-### 2. Testez les exemples
-Bien que ce cours ne contienne pas d'exercices formels, nous vous encourageons vivement à :
-- Créer les tables d'exemple dans votre environnement local
-- Exécuter chaque requête présentée
-- Modifier légèrement les exemples pour observer le comportement
+- les [types de données MariaDB](../02-bases-du-sql/02-types-de-donnees.md) ;
+- la [création et la modification de tables](../02-bases-du-sql/04-creation-modification-tables.md) ainsi que les [contraintes](../02-bases-du-sql/05-contraintes.md) (notamment les clés étrangères, centrales pour les jointures) ;
+- les [requêtes de sélection simples](../02-bases-du-sql/07-requetes-selection-simples.md) (`SELECT`, `WHERE`, `ORDER BY`, `LIMIT`).
 
-💡 **Astuce** : Utilisez une base de données de test dédiée :
-```sql
-CREATE DATABASE formation_mariadb_intermediaire;
-USE formation_mariadb_intermediaire;
-```
-
-### 3. Utilisez EXPLAIN
-Pour chaque requête complexe (surtout les jointures), prenez l'habitude d'analyser le plan d'exécution :
-```sql
-EXPLAIN SELECT ... FROM ... JOIN ...;
-```
-Cela vous aidera à comprendre comment MariaDB traite votre requête.
-
-### 4. Expérimentez avec vos propres données
-Une fois les concepts maîtrisés avec nos exemples, appliquez-les à vos propres tables et cas d'usage. C'est ainsi que vous ancrerez durablement les connaissances.
-
-### 5. Consultez la documentation officielle
-Chaque section référence la documentation MariaDB. N'hésitez pas à l'explorer pour approfondir un point particulier.
+Une première familiarité avec les valeurs `NULL` est utile. Leur traitement complet relève de la logique ternaire, abordée plus loin au chapitre [4.6 — Gestion des valeurs NULL](../04-concepts-avances-sql/06-gestion-valeurs-null.md).
 
 ---
 
-## ⚠️ Prérequis techniques
+## Plan du chapitre
 
-Avant de commencer ce chapitre, assurez-vous de :
-
-- ✅ Avoir accès à une instance MariaDB 11.4+ (idéalement 11.8 LTS)
-- ✅ Être capable de vous connecter avec le client `mariadb` ou un outil graphique (HeidiSQL, DBeaver)
-- ✅ Maîtriser les commandes de base :
-    - `CREATE DATABASE`, `USE`
-    - `CREATE TABLE`, `INSERT INTO`
-    - `SELECT ... FROM ... WHERE ... ORDER BY ... LIMIT`
-- ✅ Comprendre les concepts de clés primaires et étrangères
-- ✅ Connaître les types de données de base (INT, VARCHAR, DATE, DECIMAL)
-
----
-
-## 🗺️ Plan du chapitre
-
-| Section | Titre | Concepts clés |
-|---------|-------|---------------|
-| **3.1** | Fonctions d'agrégation | COUNT, SUM, AVG, MIN, MAX, gestion des NULL |
-| **3.2** | Regroupement de données | GROUP BY, HAVING, WHERE vs HAVING |
-| **3.3** | Jointures | INNER, LEFT, RIGHT, CROSS, Self-Join |
-| **3.4** | Sous-requêtes | Scalaires, IN, EXISTS, ANY, ALL, FROM |
-| **3.5** | Opérateurs ensemblistes | UNION, UNION ALL, INTERSECT, EXCEPT |
-| **3.6** | Fonctions de chaînes | CONCAT, SUBSTRING, REPLACE, TRIM, etc. |
-| **3.7** | Fonctions de dates | DATE_ADD, DATEDIFF, DATE_FORMAT, extraction |
-| **3.8** | Expressions conditionnelles | CASE, IF, IFNULL, COALESCE, NULLIF |
+| Section | Sujet | Points clés |
+|---------|-------|-------------|
+| [3.1](01-fonctions-agregation.md) | Fonctions d'agrégation | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `DISTINCT`, comportement avec `NULL` |
+| [3.2](02-regroupement-donnees.md) | Regroupement de données | `GROUP BY`, `HAVING`, distinction `WHERE`/`HAVING` |
+| [3.3](03-jointures.md) | Jointures | `INNER`, `LEFT`/`RIGHT`, `CROSS`, self-join, syntaxe `( + )` en mode Oracle 🆕 |
+| [3.4](04-sous-requetes.md) | Sous-requêtes et requêtes imbriquées | sous-requêtes scalaires, `IN`, `EXISTS`, corrélées |
+| [3.5](05-operateurs-ensemblistes.md) | Opérateurs ensemblistes | `UNION` / `UNION ALL`, `INTERSECT`, `EXCEPT` |
+| [3.6](06-fonctions-chaines.md) | Fonctions de chaînes de caractères | concaténation, extraction, recherche, transformation |
+| [3.7](07-fonctions-dates-heures.md) | Fonctions de dates et heures | calcul et formatage de dates, fonctions Oracle `TO_DATE`/`TRUNC`/`TO_NUMBER`/`TO_CHAR` 🆕 |
+| [3.8](08-expressions-conditionnelles.md) | Expressions conditionnelles | `CASE`, `IF`, `IFNULL`, `COALESCE`, `NULLIF` |
 
 ---
 
-## 🎯 Compétences visées en fin de chapitre
+## À propos de la version et des conventions
 
-Après avoir complété ce chapitre, vous serez en mesure de :
+Sauf mention contraire, les exemples de ce chapitre s'appliquent à **MariaDB 12.3 LTS** avec un `sql_mode` par défaut. Deux nouveautés 🆕 de la série 12.x relèvent de la **compatibilité Oracle** et n'entrent en jeu que lorsque le mode Oracle est actif (`SET sql_mode = 'ORACLE'`) :
 
-### Analyse de données
-- ✅ Calculer des statistiques agrégées (totaux, moyennes, comptages)
-- ✅ Segmenter les analyses par catégories avec GROUP BY
-- ✅ Filtrer les résultats agrégés avec HAVING
-- ✅ Réaliser des analyses de cohortes et de tendances
+- la syntaxe historique `( + )` pour les jointures externes ([3.3.5](03.5-oracle-outer-join.md)) ;
+- les fonctions de conversion `TO_DATE`, `TRUNC`, `TO_NUMBER` et `TO_CHAR` (avec le modificateur de format `FM`) ([3.7.1](07.1-fonctions-oracle.md)).
 
-### Jointures de tables
-- ✅ Choisir le type de jointure approprié selon le besoin métier
-- ✅ Comprendre l'impact des jointures sur les performances
-- ✅ Joindre efficacement 3, 4 tables ou plus
-- ✅ Utiliser les self-joins pour des hiérarchies ou comparaisons
+Ces apports s'adressent avant tout aux équipes en cours de migration : ils sont remis en contexte dans la section [19.2.1 — Migration depuis Oracle](../19-migration-compatibilite/02.1-depuis-oracle.md). Dans l'écriture courante de requêtes MariaDB, on privilégiera les fonctions natives présentées dans le reste du chapitre.
 
-### Requêtes complexes
-- ✅ Écrire des sous-requêtes dans WHERE, FROM et SELECT
-- ✅ Combiner des résultats avec UNION et ses variantes
-- ✅ Transformer et nettoyer des données avec les fonctions SQL
-- ✅ Ajouter de la logique conditionnelle dans vos SELECT
-
-### Bonnes pratiques
-- ✅ Écrire des requêtes lisibles et maintenables
-- ✅ Anticiper les problèmes de performance
-- ✅ Gérer correctement les valeurs NULL
-- ✅ Documenter les requêtes complexes
+Pour situer ces nouveautés dans l'ensemble des évolutions de la version, voir l'[Annexe F — Nouveautés MariaDB 12.3 LTS](../annexes/f-nouveautes-12-3/README.md).
 
 ---
 
-## 📊 Différences avec le niveau débutant
+## Navigation
 
-| Aspect | Niveau Débutant (Chapitre 2) | Niveau Intermédiaire (Chapitre 3) |
-|--------|------------------------------|-----------------------------------|
-| **Requêtes** | Une seule table | Plusieurs tables jointes |
-| **Filtrage** | WHERE simple | WHERE + HAVING, sous-requêtes |
-| **Résultats** | Lignes individuelles | Données agrégées et groupées |
-| **Logique** | Conditions simples | Expressions conditionnelles complexes |
-| **Transformations** | Aucune ou minimales | Fonctions de chaînes, dates, calculs |
-| **Complexité** | Requêtes < 5 lignes | Requêtes 10-30 lignes courantes |
-
----
-
-## 🔗 Liens avec les autres chapitres
-
-### En amont
-- **Chapitre 1** : Architecture MariaDB (pour comprendre le traitement des requêtes)
-- **Chapitre 2** : Bases du SQL (fondations indispensables)
-
-### En aval
-- **Chapitre 4** : Concepts Avancés SQL (Window Functions, CTE, JSON)
-- **Chapitre 5** : Index et Performance (optimisation des requêtes complexes)
-- **Chapitre 6** : Transactions (cohérence lors de requêtes multi-tables)
-
----
-
-## 💼 Applications pratiques
-
-Les compétences de ce chapitre sont utilisées quotidiennement pour :
-
-### Développement d'applications
-- Endpoints API retournant des données agrégées
-- Dashboards avec statistiques en temps réel
-- Rapports utilisateurs personnalisés
-- Systèmes de recommandation basés sur l'historique
-
-### Analyse métier
-- Reporting mensuel/trimestriel
-- Calcul de KPI (taux de conversion, panier moyen, etc.)
-- Segmentation client (RFM, cohortes)
-- Analyse de tendances et prévisions
-
-### Administration système
-- Monitoring de la base de données
-- Détection d'anomalies dans les données
-- Audit et conformité
-- Nettoyage et migration de données
-
----
-
-## ⚡ Performance : Un premier aperçu
-
-Bien que le **Chapitre 5** soit dédié à la performance, voici quelques principes à garder en tête dès maintenant :
-
-### Jointures
-- Les jointures avec index sur les colonnes de jointure sont **très rapides**
-- Sans index, les jointures deviennent **coûteuses** (scan complet de tables)
-- Ordre des tables dans la requête peut avoir un impact
-
-### GROUP BY
-- L'utilisation d'index sur les colonnes GROUP BY **améliore drastiquement** les performances
-- Les GROUP BY sur colonnes non indexées nécessitent un tri temporaire (filesort)
-
-### Sous-requêtes
-- Les sous-requêtes corrélées (exécutées pour chaque ligne) peuvent être **lentes**
-- Souvent, une jointure est plus performante qu'une sous-requête
-
-💡 **Bonne pratique** : Utilisez systématiquement `EXPLAIN` pour comprendre l'exécution de vos requêtes complexes.
-
----
-
-## 🆕 Nouveautés MariaDB 11.8 LTS pertinentes
-
-Bien que ce chapitre couvre des concepts SQL standards, MariaDB 11.8 apporte quelques améliorations :
-
-- **Optimiseur amélioré** : Meilleure gestion des jointures complexes
-- **JSON Path Expressions** : Manipulation JSON dans les requêtes (Section 4.7+)
-- **Fonctions de fenêtre optimisées** : Préparation pour le Chapitre 4
-- **Charset UTF8MB4 par défaut** : Gestion native des emojis et caractères internationaux
-- **Cost-based optimizer SSD** : Meilleures estimations de coût pour les requêtes
-
-Ces améliorations rendent vos requêtes intermédiaires **plus rapides et plus fiables** qu'avec les versions antérieures.
-
----
-
-## ✅ Points clés à retenir
-
-Avant de plonger dans les sections détaillées, retenez ces principes fondamentaux :
-
-1. **Les agrégations transforment des ensembles de lignes en valeurs uniques** – COUNT, SUM, AVG sont vos outils d'analyse essentiels
-
-2. **GROUP BY segmente vos données avant agrégation** – Pensez "catégories", "périodes", "segments"
-
-3. **HAVING filtre après agrégation, WHERE filtre avant** – Distinction cruciale pour obtenir les résultats attendus
-
-4. **Les jointures sont au cœur du modèle relationnel** – Maîtrisez-les pour exploiter pleinement votre base de données
-
-5. **INNER JOIN ne garde que les correspondances** – Pour les correspondances complètes entre tables
-
-6. **LEFT/RIGHT JOIN préservent toutes les lignes d'un côté** – Pour détecter les absences et les orphelins
-
-7. **Les sous-requêtes permettent de résoudre des problèmes en étapes** – Diviser pour mieux régner
-
-8. **NULL nécessite une attention particulière** – Les fonctions et opérateurs se comportent différemment avec NULL
-
-9. **La lisibilité est aussi importante que la performance** – Commentez vos requêtes complexes, utilisez des alias explicites
-
-10. **EXPLAIN est votre ami** – Prenez l'habitude d'analyser vos requêtes avant de les mettre en production
-
----
-
-## 🔗 Ressources et références
-
-### Documentation officielle MariaDB
-- [📖 Aggregate Functions](https://mariadb.com/kb/en/aggregate-functions/)
-- [📖 JOIN Syntax](https://mariadb.com/kb/en/join-syntax/)
-- [📖 Subqueries](https://mariadb.com/kb/en/subqueries/)
-- [📖 String Functions](https://mariadb.com/kb/en/string-functions/)
-- [📖 Date and Time Functions](https://mariadb.com/kb/en/date-time-functions/)
-
-### Outils pratiques
-- [SQLFiddle](http://sqlfiddle.com/) : Tester vos requêtes en ligne
-- [DB Fiddle](https://www.db-fiddle.com/) : Alternative moderne
-- [EXPLAIN Analyzer](https://mariadb.org/explain-analyzer/) : Visualiser les plans d'exécution
-
-### Lectures complémentaires
-- SQL Performance Explained (Markus Winand) – Chapitres sur les jointures
-- High Performance MySQL (Baron Schwartz) – S'applique aussi à MariaDB
-
----
-
-## ➡️ Section suivante
-
-**[3.1 Fonctions d'agrégation (COUNT, SUM, AVG, MIN, MAX)](./01-fonctions-agregation.md)**
-
-Dans la première section, nous démarrons avec les **cinq fonctions d'agrégation fondamentales** qui vous permettront de transformer des milliers de lignes en statistiques exploitables. Vous apprendrez comment MariaDB calcule les totaux, moyennes, minimums et maximums, et surtout comment gérer correctement les valeurs NULL dans vos calculs.
-
-Ces fonctions sont la base de toute analyse de données – maîtrisez-les et vous débloquerez 80% des besoins de reporting !
-
----
-
-**Bonne formation ! 🚀**
-
-N'hésitez pas à prendre des notes, à tester les exemples dans votre environnement, et à consulter la documentation officielle pour approfondir les points qui vous intéressent particulièrement.
+- ⬅️ Partie précédente : [Partie 1 — Introduction et Fondamentaux](../partie-01-introduction-fondamentaux.md)
+- ➡️ Section suivante : [3.1 — Fonctions d'agrégation](01-fonctions-agregation.md)
+- ⬆️ Retour au [Sommaire](../SOMMAIRE.md)
 
 ⏭️ [Fonctions d'agrégation (COUNT, SUM, AVG, MIN, MAX)](/03-requetes-sql-intermediaires/01-fonctions-agregation.md)

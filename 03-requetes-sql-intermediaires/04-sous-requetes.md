@@ -2,1033 +2,288 @@
 
 # 3.4 Sous-requêtes et requêtes imbriquées
 
-> **Niveau** : Intermédiaire
-> **Durée estimée** : 3-4 heures
-> **Prérequis** : Sections 3.1 à 3.3, maîtrise des jointures et agrégations
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-- Comprendre les différents types de sous-requêtes et leur utilité
-- Maîtriser les sous-requêtes scalaires, à une colonne et à plusieurs colonnes
-- Utiliser les opérateurs IN, EXISTS, ANY, ALL avec des sous-requêtes
-- Différencier sous-requêtes corrélées et non-corrélées
-- Placer des sous-requêtes dans SELECT, FROM, WHERE et HAVING
-- Optimiser les performances des sous-requêtes
-- Choisir entre sous-requêtes et jointures selon le contexte
-- Résoudre des problèmes complexes en plusieurs étapes logiques
+> **Chapitre 3 : Requêtes SQL Intermédiaires** · Section 3.4  
+> Version de référence : **MariaDB 12.3 LTS**
 
 ---
 
-## Introduction
+## Définition
 
-Les **sous-requêtes** (ou *subqueries*) sont des requêtes SQL **imbriquées** à l'intérieur d'une autre requête. Elles permettent de résoudre des problèmes complexes en les décomposant en **étapes logiques** plus simples.
+Une **sous-requête** (ou *requête imbriquée*) est une instruction `SELECT` placée **à l'intérieur** d'une autre instruction SQL. La requête extérieure (la *requête englobante*) exploite le résultat de la requête intérieure pour produire le sien.
 
-### Le principe
+Les sous-requêtes permettent de décomposer un problème en étapes : « trouver d'abord la moyenne, puis les lignes au-dessus » ; « identifier d'abord les clients ayant commandé, puis les lister ». Beaucoup de questions exprimables par une sous-requête le sont aussi par une jointure ([section 3.3](03-jointures.md)) — nous reviendrons sur ce choix en fin de section.
 
-```sql
--- Requête principale
-SELECT nom, salaire
-FROM employes
-WHERE salaire > (
-    -- Sous-requête : calcule la moyenne
-    SELECT AVG(salaire)
-    FROM employes
-);
-```
+Deux grilles de lecture structurent tout ce qui suit :
 
-**Analogie** : C'est comme résoudre un problème mathématique en plusieurs étapes :
-1. D'abord, calculer la moyenne (sous-requête)
-2. Ensuite, utiliser ce résultat pour filtrer (requête principale)
-
-### Pourquoi utiliser des sous-requêtes ?
-
-| Avantage | Description | Exemple |
-|----------|-------------|---------|
-| **Décomposition logique** | Diviser un problème complexe en étapes | "Clients ayant commandé plus que la moyenne" |
-| **Lisibilité** | Intentions claires, code auto-documenté | Calculer un seuil avant de filtrer |
-| **Réutilisation** | Même calcul utilisé plusieurs fois | Sous-requête dans FROM utilisée en JOIN |
-| **Filtrage avancé** | Conditions basées sur agrégations complexes | WHERE avec EXISTS |
-
-💡 **Quand préférer les sous-requêtes aux jointures ?**
-- Quand la logique métier est plus claire en étapes
-- Pour des calculs intermédiaires (moyennes, totaux)
-- Avec EXISTS pour tester l'existence
-- Pour éviter les doublons dus aux relations 1:N
+1. **Ce que la sous-requête renvoie** : une valeur unique, une ligne, ou un ensemble de lignes ?
+2. **Sa dépendance à la requête englobante** : est-elle autonome (*non corrélée*) ou se réfère-t-elle aux lignes de la requête extérieure (*corrélée*) ?
 
 ---
 
-## Types de sous-requêtes par résultat
+## Rappel du schéma
 
-### 1. Sous-requête scalaire (une seule valeur)
+Les exemples reposent sur les tables de la [section 3.3](03-jointures.md) :
 
-Retourne **une seule ligne, une seule colonne** → une valeur unique.
+**`client`** — Dupont (1), Martin (2), Leroy (3), **Petit (4, sans commande)**  
+**`commande`** — cmd 1→client 1 (120.00), 2→client 2 (80.50), 3→client 1 (200.00), 4→client 3 (80.50), 5→client 2 (150.00)  
+
+---
+
+## Les trois familles de sous-requêtes
+
+| Famille | Renvoie | S'emploie avec |
+|---------|---------|----------------|
+| **Scalaire** | une seule valeur (1 ligne, 1 colonne) | `=`, `<`, `>`, … ; dans `SELECT`, `WHERE`, `HAVING` |
+| **De ligne** | une seule ligne (plusieurs colonnes) | comparaison de n-uplets `(a, b) = (…)` |
+| **De table** | plusieurs lignes | `IN`, `EXISTS`, `ANY`, `ALL` ; dans `FROM` (table dérivée) |
+
+Quant à leur **emplacement**, une sous-requête peut apparaître dans le `WHERE` (le cas le plus fréquent), dans la liste du `SELECT`, dans le `FROM` (table dérivée), ou dans le `HAVING`.
+
+---
+
+## Sous-requête scalaire
+
+Une sous-requête **scalaire** renvoie une valeur unique et s'utilise partout où une valeur est attendue. Exemple : les commandes dont le montant dépasse la **moyenne générale**.
 
 ```sql
--- Produits plus chers que le prix moyen
-SELECT nom_produit, prix_unitaire
-FROM produits
-WHERE prix_unitaire > (
-    SELECT AVG(prix_unitaire)  -- Scalaire : 1 valeur
-    FROM produits
-);
+SELECT id, montant
+FROM commande
+WHERE montant > (SELECT AVG(montant) FROM commande);
 ```
 
-**Utilisation** : Comparaisons avec =, >, <, >=, <=, !=
+| id | montant |
+|----|---------|
+| 3 | 200.00 |
+| 5 | 150.00 |
 
-### 2. Sous-requête à une colonne (liste de valeurs)
+La sous-requête `(SELECT AVG(montant) FROM commande)` renvoie `126.20` (la moyenne des cinq montants, voir [section 3.1](01-fonctions-agregation.md)). Elle est **autonome** : elle ne dépend en rien de la requête englobante et n'est évaluée **qu'une seule fois**. On parle de sous-requête *non corrélée*.
 
-Retourne **plusieurs lignes, une seule colonne** → une liste.
+> ⚠️ Une sous-requête utilisée avec un opérateur de comparaison (`=`, `>`, …) **doit renvoyer au plus une valeur**. Si elle en renvoie plusieurs, MariaDB lève une erreur (« Subquery returns more than 1 row »).
+
+---
+
+## IN et NOT IN
+
+L'opérateur **`IN`** teste l'appartenance à l'ensemble de valeurs renvoyé par la sous-requête. Exemple : les clients ayant passé **au moins une commande**.
 
 ```sql
--- Clients ayant commandé
 SELECT nom
-FROM clients
-WHERE id_client IN (
-    SELECT id_client  -- Liste : plusieurs valeurs
-    FROM commandes
-);
+FROM client
+WHERE id IN (SELECT client_id FROM commande);
 ```
 
-**Utilisation** : Opérateurs IN, NOT IN, ANY, ALL
+| nom |
+|-----|
+| Dupont |
+| Martin |
+| Leroy |
 
-### 3. Sous-requête à plusieurs colonnes (table)
+La sous-requête renvoie les `client_id` présents dans `commande` (`{1, 2, 3}`) ; Petit (id 4) n'y figurant pas, il est exclu.
 
-Retourne **plusieurs lignes et colonnes** → une table complète.
+### Le piège de NOT IN avec les NULL
+
+`NOT IN` semble être la négation naturelle de `IN` — *les clients sans aucune commande* :
 
 ```sql
--- Sous-requête dans FROM (table dérivée)
-SELECT categorie, ca_moyen
-FROM (
-    SELECT
-        categorie,
-        AVG(prix_unitaire) AS ca_moyen
-    FROM produits
-    GROUP BY categorie
-) AS stats
-WHERE ca_moyen > 100;
+SELECT nom
+FROM client
+WHERE id NOT IN (SELECT client_id FROM commande);   -- renvoie : Petit
 ```
 
-**Utilisation** : Clause FROM (tables dérivées), comparaisons multi-colonnes
+Ici le résultat est correct (Petit), **mais cette requête est fragile**. Si la sous-requête renvoyait ne serait-ce qu'**une seule valeur `NULL`**, `NOT IN` ne renverrait **aucune ligne**. La raison tient à la logique ternaire (voir [section 4.6](../04-concepts-avances-sql/06-gestion-valeurs-null.md)) : `x NOT IN (1, 2, NULL)` équivaut à `x <> 1 AND x <> 2 AND x <> NULL`, et `x <> NULL` vaut toujours *inconnu* — l'expression ne peut donc jamais être vraie.
+
+Dans notre schéma, `commande.client_id` est protégé par une clé étrangère et ne contient pas de `NULL`. Mais sur une colonne *nullable*, `NOT IN` est une source de bugs silencieux. Deux parades : filtrer les `NULL` dans la sous-requête (`WHERE client_id IS NOT NULL`), ou — bien préférable — employer **`NOT EXISTS`** (ci-dessous), qui n'a pas ce défaut.
 
 ---
 
-## Sous-requêtes dans les différentes clauses
+## EXISTS et NOT EXISTS
 
-### Sous-requêtes dans SELECT
-
-#### Exemple 1 : Colonnes calculées avec sous-requête
-
-**Question métier** : *Pour chaque client, afficher son CA et le CA moyen de tous les clients*
+**`EXISTS`** ne s'intéresse pas aux *valeurs* renvoyées par la sous-requête mais à leur **existence** : il vaut vrai dès que la sous-requête renvoie au moins une ligne. Il s'emploie presque toujours en **corrélation** avec la requête englobante. Exemple : les clients ayant au moins une commande **supérieure à 150**.
 
 ```sql
--- Sous-requête scalaire dans SELECT
-SELECT
-    c.nom,
-    (
-        SELECT COALESCE(SUM(montant_total), 0)
-        FROM commandes
-        WHERE id_client = c.id_client
-          AND statut IN ('confirmée', 'expédiée', 'livrée')
-    ) AS ca_client,
-    (
-        SELECT AVG(ca)
-        FROM (
-            SELECT SUM(montant_total) AS ca
-            FROM commandes
-            WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-            GROUP BY id_client
-        ) AS ca_par_client
-    ) AS ca_moyen_global,
-    c.ville
-FROM clients c
-ORDER BY ca_client DESC
-LIMIT 10;
-```
-
-**Résultat attendu** :
-```
-+----------------+------------+------------------+-------------+
-| nom            | ca_client  | ca_moyen_global  | ville       |
-+----------------+------------+------------------+-------------+
-| Alice Martin   |  14283.45  |         1847.23  | Paris       |
-| Bob Dupont     |  12847.92  |         1847.23  | Lyon        |
-| Sophie Bernard |  11293.18  |         1847.23  | Marseille   |
-+----------------+------------+------------------+-------------+
-```
-
-**Explication** :
-- Première sous-requête : CA du client (corrélée à `c.id_client`)
-- Deuxième sous-requête : CA moyen de tous les clients (non corrélée)
-- Chaque sous-requête s'exécute pour chaque ligne de `clients`
-
-⚠️ **Performance** : Les sous-requêtes dans SELECT peuvent être lentes car exécutées pour **chaque ligne**. Préférez les jointures si possible.
-
-#### Exemple 2 : Sous-requête pour calcul de pourcentage
-
-```sql
--- Part de chaque catégorie dans le CA total
-SELECT
-    p.categorie,
-    SUM(dc.quantite * dc.prix_unitaire) AS ca_categorie,
-    ROUND(
-        100.0 * SUM(dc.quantite * dc.prix_unitaire) / (
-            SELECT SUM(quantite * prix_unitaire)
-            FROM details_commande dc2
-            INNER JOIN commandes cmd2 ON dc2.id_commande = cmd2.id_commande
-            WHERE cmd2.statut IN ('confirmée', 'expédiée', 'livrée')
-        ),
-        2
-    ) AS pourcentage_ca
-FROM produits p
-INNER JOIN details_commande dc ON p.id_produit = dc.id_produit
-INNER JOIN commandes cmd ON dc.id_commande = cmd.id_commande
-WHERE cmd.statut IN ('confirmée', 'expédiée', 'livrée')
-GROUP BY p.categorie
-ORDER BY ca_categorie DESC;
-```
-
-**Cas d'usage** : Dashboards, rapports de contribution, analyses de mix.
-
----
-
-### Sous-requêtes dans WHERE
-
-#### Exemple 3 : Filtrage avec sous-requête scalaire
-
-**Question métier** : *Produits au-dessus du prix moyen*
-
-```sql
--- Comparaison avec une valeur calculée
-SELECT
-    nom_produit,
-    categorie,
-    prix_unitaire,
-    (
-        SELECT ROUND(AVG(prix_unitaire), 2)
-        FROM produits
-    ) AS prix_moyen
-FROM produits
-WHERE prix_unitaire > (
-    SELECT AVG(prix_unitaire)
-    FROM produits
-)
-ORDER BY prix_unitaire DESC;
-```
-
-**Résultat attendu** :
-```
-+--------------------+---------------+---------------+-------------+
-| nom_produit        | categorie     | prix_unitaire | prix_moyen  |
-+--------------------+---------------+---------------+-------------+
-| Laptop Pro         | Électronique  |       1299.99 |       45.84 |
-| Tablette Premium   | Électronique  |        649.99 |       45.84 |
-| Écran 27"          | Électronique  |        389.99 |       45.84 |
-+--------------------+---------------+---------------+-------------+
-```
-
-**Explication** :
-- La sous-requête calcule `AVG(prix_unitaire)` une seule fois
-- Le résultat est utilisé pour filtrer dans WHERE
-- Sous-requête **non corrélée** (indépendante de la requête principale)
-
-#### Exemple 4 : Opérateur IN avec sous-requête
-
-**Question métier** : *Clients ayant commandé au moins une fois*
-
-```sql
--- Utilisation de IN
-SELECT
-    c.nom,
-    c.email,
-    c.ville
-FROM clients c
-WHERE c.id_client IN (
-    SELECT DISTINCT id_client
-    FROM commandes
-    WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-)
-ORDER BY c.nom;
-```
-
-**Résultat attendu** :
-```
-+----------------+-------------------+-------------+
-| nom            | email             | ville       |
-+----------------+-------------------+-------------+
-| Alice Martin   | alice@email.com   | Paris       |
-| Bob Dupont     | bob@email.com     | Lyon        |
-| Sophie Bernard | sophie@email.com  | Marseille   |
-+----------------+-------------------+-------------+
-```
-
-**Alternative avec EXISTS** (souvent plus performant) :
-
-```sql
-SELECT c.nom, c.email, c.ville
-FROM clients c
+SELECT c.nom
+FROM client c
 WHERE EXISTS (
     SELECT 1
-    FROM commandes cmd
-    WHERE cmd.id_client = c.id_client
-      AND cmd.statut IN ('confirmée', 'expédiée', 'livrée')
+    FROM commande cmd
+    WHERE cmd.client_id = c.id
+      AND cmd.montant > 150
 );
 ```
 
-💡 **EXISTS vs IN** :
-- **EXISTS** : S'arrête dès qu'une ligne correspond (plus rapide)
-- **IN** : Doit construire la liste complète avant de comparer
+| nom |
+|-----|
+| Dupont |
 
-#### Exemple 5 : Opérateur NOT IN pour trouver les exclus
+La sous-requête référence `c.id` — une colonne de la requête **extérieure** : elle est donc **corrélée**, évaluée conceptuellement pour chaque client. Seule la commande 3 (200, client 1) dépasse 150 : seul Dupont satisfait l'`EXISTS`.
 
-**Question métier** : *Clients n'ayant jamais commandé*
+Comme seule l'existence compte, la liste du `SELECT` interne est indifférente : on écrit par convention `SELECT 1`. MariaDB s'arrête dès la première ligne trouvée.
+
+### NOT EXISTS : l'anti-jointure robuste
+
+`NOT EXISTS` est la manière sûre d'exprimer « sans aucune correspondance » — sans le piège des `NULL` de `NOT IN` :
 
 ```sql
--- Clients sans commande
-SELECT
-    c.id_client,
-    c.nom,
-    c.email,
-    c.date_inscription
-FROM clients c
-WHERE c.id_client NOT IN (
-    SELECT id_client
-    FROM commandes
-    WHERE id_client IS NOT NULL  -- Important pour NOT IN !
-)
-ORDER BY c.date_inscription;
-```
-
-⚠️ **PIÈGE avec NOT IN et NULL** :
-```sql
--- ❌ ATTENTION : Si la sous-requête contient NULL, NOT IN retourne toujours FALSE
-WHERE id_client NOT IN (1, 2, NULL)  -- Ne retourne rien !
-
--- ✅ SOLUTION : Filtrer les NULL ou utiliser NOT EXISTS
-WHERE id_client NOT IN (
-    SELECT id_client
-    FROM commandes
-    WHERE id_client IS NOT NULL
-)
-
--- ✅ MEILLEUR : Utiliser NOT EXISTS (pas de problème avec NULL)
+SELECT c.nom
+FROM client c
 WHERE NOT EXISTS (
-    SELECT 1
-    FROM commandes
-    WHERE id_client = c.id_client
-)
+    SELECT 1 FROM commande cmd WHERE cmd.client_id = c.id
+);   -- renvoie : Petit
 ```
+
+C'est l'équivalent, en sous-requête, du motif `LEFT JOIN ... IS NULL` vu en [section 3.3.2](03.2-left-right-join.md). **Privilégiez `NOT EXISTS` à `NOT IN`** dès qu'une valeur `NULL` est possible.
 
 ---
 
-### Sous-requêtes dans FROM (tables dérivées)
+## ANY, SOME et ALL
 
-#### Exemple 6 : Table dérivée simple
+Ces opérateurs comparent une valeur à **chaque** élément renvoyé par la sous-requête :
 
-**Question métier** : *Catégories avec CA moyen > 100€*
+- **`ANY`** (synonyme : `SOME`) : la condition est vraie si elle l'est pour **au moins un** élément ;
+- **`ALL`** : la condition est vraie si elle l'est pour **tous** les éléments.
 
-```sql
--- Sous-requête créant une table temporaire
-SELECT
-    categorie,
-    ca_moyen,
-    nb_produits
-FROM (
-    -- Table dérivée
-    SELECT
-        categorie,
-        AVG(prix_unitaire) AS ca_moyen,
-        COUNT(*) AS nb_produits
-    FROM produits
-    GROUP BY categorie
-) AS stats_categories
-WHERE ca_moyen > 100
-ORDER BY ca_moyen DESC;
-```
+Ils se ramènent souvent à des formes plus simples :
 
-**Résultat attendu** :
-```
-+---------------+-----------+--------------+
-| categorie     | ca_moyen  | nb_produits  |
-+---------------+-----------+--------------+
-| Électronique  |    345.67 |          247 |
-| Maison        |    142.38 |           89 |
-+---------------+-----------+--------------+
-```
+| Forme | Équivaut à |
+|-------|-----------|
+| `= ANY (…)` | `IN (…)` |
+| `<> ALL (…)` | `NOT IN (…)` |
+| `> ANY (…)` | `> (SELECT MIN(…))` |
+| `> ALL (…)` | `> (SELECT MAX(…))` |
 
-**Avantage** : Permet d'utiliser des alias d'agrégation dans WHERE (normalement impossible).
-
-#### Exemple 7 : Jointure avec table dérivée
-
-**Question métier** : *Clients dépensant plus que la moyenne de leur pays*
+Exemple avec `ALL` — les commandes supérieures à **toutes** celles de Martin (id 2) :
 
 ```sql
--- Table dérivée avec agrégation par pays
-SELECT
-    c.nom,
-    c.pays,
-    c.ca_client,
-    stats_pays.ca_moyen_pays
-FROM (
-    -- CA par client
-    SELECT
-        id_client,
-        SUM(montant_total) AS ca_client
-    FROM commandes
-    WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-    GROUP BY id_client
-) AS ca_clients
-INNER JOIN clients c ON ca_clients.id_client = c.id_client
-INNER JOIN (
-    -- CA moyen par pays
-    SELECT
-        cl.pays,
-        AVG(ca_client) AS ca_moyen_pays
-    FROM (
-        SELECT id_client, SUM(montant_total) AS ca_client
-        FROM commandes
-        WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-        GROUP BY id_client
-    ) AS ca
-    INNER JOIN clients cl ON ca.id_client = cl.id_client
-    GROUP BY cl.pays
-) AS stats_pays ON c.pays = stats_pays.pays
-WHERE ca_clients.ca_client > stats_pays.ca_moyen_pays
-ORDER BY c.pays, ca_clients.ca_client DESC;
-```
-
-**Application** : Segmentation avancée, identification d'outliers, benchmarking par segment.
-
----
-
-### Sous-requêtes dans HAVING
-
-#### Exemple 8 : Filtrage d'agrégations avec sous-requête
-
-**Question métier** : *Catégories vendant plus que la moyenne globale*
-
-```sql
--- HAVING avec sous-requête
-SELECT
-    p.categorie,
-    COUNT(DISTINCT cmd.id_commande) AS nb_commandes,
-    SUM(dc.quantite * dc.prix_unitaire) AS ca_categorie
-FROM produits p
-INNER JOIN details_commande dc ON p.id_produit = dc.id_produit
-INNER JOIN commandes cmd ON dc.id_commande = cmd.id_commande
-WHERE cmd.statut IN ('confirmée', 'expédiée', 'livrée')
-GROUP BY p.categorie
-HAVING SUM(dc.quantite * dc.prix_unitaire) > (
-    -- CA moyen par catégorie
-    SELECT AVG(ca_cat)
-    FROM (
-        SELECT SUM(dc2.quantite * dc2.prix_unitaire) AS ca_cat
-        FROM produits p2
-        INNER JOIN details_commande dc2 ON p2.id_produit = dc2.id_produit
-        INNER JOIN commandes cmd2 ON dc2.id_commande = cmd2.id_commande
-        WHERE cmd2.statut IN ('confirmée', 'expédiée', 'livrée')
-        GROUP BY p2.categorie
-    ) AS categories_ca
-)
-ORDER BY ca_categorie DESC;
-```
-
-**Cas d'usage** : Identification de segments performants, analyses de contribution.
-
----
-
-## Opérateurs spéciaux avec sous-requêtes
-
-### EXISTS et NOT EXISTS
-
-#### Exemple 9 : EXISTS pour tester l'existence
-
-**Question métier** : *Clients ayant commandé dans les 30 derniers jours*
-
-```sql
--- EXISTS : Test d'existence
-SELECT
-    c.id_client,
-    c.nom,
-    c.email
-FROM clients c
-WHERE EXISTS (
-    SELECT 1  -- La valeur n'a pas d'importance, seule l'existence compte
-    FROM commandes cmd
-    WHERE cmd.id_client = c.id_client
-      AND cmd.date_commande >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-      AND cmd.statut IN ('confirmée', 'expédiée', 'livrée')
-)
-ORDER BY c.nom;
-```
-
-**Résultat attendu** :
-```
-+------------+----------------+-------------------+
-| id_client  | nom            | email             |
-+------------+----------------+-------------------+
-|       1847 | Alice Martin   | alice@email.com   |
-|       2934 | Bob Dupont     | bob@email.com     |
-|       5621 | Sophie Bernard | sophie@email.com  |
-+------------+----------------+-------------------+
-```
-
-**Avantages de EXISTS** :
-- ✅ S'arrête dès la première correspondance (efficace)
-- ✅ Pas de problème avec NULL
-- ✅ Peut utiliser des index efficacement
-- ✅ Lisible pour "vérifier si au moins un..."
-
-#### Exemple 10 : NOT EXISTS pour exclusion
-
-**Question métier** : *Produits jamais commandés*
-
-```sql
--- NOT EXISTS : Absence
-SELECT
-    p.id_produit,
-    p.nom_produit,
-    p.categorie,
-    p.stock
-FROM produits p
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM details_commande dc
-    WHERE dc.id_produit = p.id_produit
-)
-ORDER BY p.categorie, p.nom_produit;
-```
-
-**Application** : Dead stock, produits à promouvoir, révision d'assortiment.
-
----
-
-### ANY et ALL
-
-#### Exemple 11 : ANY (au moins un)
-
-**Question métier** : *Produits plus chers qu'au moins un produit de catégorie "Livres"*
-
-```sql
--- ANY : Au moins une valeur satisfait la condition
-SELECT
-    nom_produit,
-    categorie,
-    prix_unitaire
-FROM produits
-WHERE prix_unitaire > ANY (
-    SELECT prix_unitaire
-    FROM produits
-    WHERE categorie = 'Livres'
-)
-AND categorie != 'Livres'
-ORDER BY prix_unitaire;
-```
-
-**Équivalent** :
-```sql
--- ANY équivaut à > MIN()
-WHERE prix_unitaire > (
-    SELECT MIN(prix_unitaire)
-    FROM produits
-    WHERE categorie = 'Livres'
-)
-```
-
-#### Exemple 12 : ALL (toutes les valeurs)
-
-**Question métier** : *Produits plus chers que TOUS les livres*
-
-```sql
--- ALL : Toutes les valeurs doivent satisfaire la condition
-SELECT
-    nom_produit,
-    categorie,
-    prix_unitaire
-FROM produits
-WHERE prix_unitaire > ALL (
-    SELECT prix_unitaire
-    FROM produits
-    WHERE categorie = 'Livres'
-)
-ORDER BY prix_unitaire;
-```
-
-**Équivalent** :
-```sql
--- ALL équivaut à > MAX()
-WHERE prix_unitaire > (
-    SELECT MAX(prix_unitaire)
-    FROM produits
-    WHERE categorie = 'Livres'
-)
-```
-
-**Résumé des opérateurs** :
-
-| Opérateur | Signification | Équivalent |
-|-----------|---------------|------------|
-| `> ANY` | Plus grand qu'au moins un | `> MIN(...)` |
-| `< ANY` | Plus petit qu'au moins un | `< MAX(...)` |
-| `> ALL` | Plus grand que tous | `> MAX(...)` |
-| `< ALL` | Plus petit que tous | `< MIN(...)` |
-| `= ANY` | Égal à au moins un | `IN (...)` |
-| `!= ALL` | Différent de tous | `NOT IN (...)` |
-
-💡 **Recommandation** : Préférez MIN/MAX qui sont plus clairs et plus courants.
-
----
-
-## Sous-requêtes corrélées vs non-corrélées
-
-### Sous-requête non-corrélée
-
-**Indépendante** de la requête externe, exécutée **une seule fois**.
-
-```sql
--- Non-corrélée : exécutée 1 fois
-SELECT nom_produit, prix_unitaire
-FROM produits
-WHERE prix_unitaire > (
-    SELECT AVG(prix_unitaire)  -- Calculé 1 fois
-    FROM produits
+SELECT id, montant
+FROM commande
+WHERE montant > ALL (
+    SELECT montant FROM commande WHERE client_id = 2
 );
 ```
 
-**Avantage** : Performance optimale (1 exécution).
+| id | montant |
+|----|---------|
+| 3 | 200.00 |
 
-### Sous-requête corrélée
-
-**Dépend** de la requête externe, exécutée **pour chaque ligne**.
-
-#### Exemple 13 : Sous-requête corrélée classique
-
-**Question métier** : *Produits au-dessus du prix moyen de leur catégorie*
-
-```sql
--- Corrélée : exécutée pour chaque produit
-SELECT
-    p1.nom_produit,
-    p1.categorie,
-    p1.prix_unitaire,
-    (
-        SELECT ROUND(AVG(p2.prix_unitaire), 2)
-        FROM produits p2
-        WHERE p2.categorie = p1.categorie  -- Corrélation avec p1
-    ) AS prix_moyen_categorie
-FROM produits p1
-WHERE p1.prix_unitaire > (
-    SELECT AVG(p2.prix_unitaire)
-    FROM produits p2
-    WHERE p2.categorie = p1.categorie  -- Corrélation
-)
-ORDER BY p1.categorie, p1.prix_unitaire DESC;
-```
-
-**Résultat attendu** :
-```
-+--------------------+---------------+---------------+-----------------------+
-| nom_produit        | categorie     | prix_unitaire | prix_moyen_categorie  |
-+--------------------+---------------+---------------+-----------------------+
-| Laptop Pro         | Électronique  |       1299.99 |                345.67 |
-| Tablette Premium   | Électronique  |        649.99 |                345.67 |
-| Manteau hiver      | Vêtements     |        249.99 |                 54.23 |
-+--------------------+---------------+---------------+-----------------------+
-```
-
-**⚠️ Performance** : Sous-requête exécutée N fois (une par ligne) → peut être lent.
-
-**Alternative avec jointure** (plus performant) :
-
-```sql
--- Jointure avec table dérivée (plus rapide)
-SELECT
-    p.nom_produit,
-    p.categorie,
-    p.prix_unitaire,
-    stats.prix_moyen_categorie
-FROM produits p
-INNER JOIN (
-    SELECT
-        categorie,
-        AVG(prix_unitaire) AS prix_moyen_categorie
-    FROM produits
-    GROUP BY categorie
-) AS stats ON p.categorie = stats.categorie
-WHERE p.prix_unitaire > stats.prix_moyen_categorie
-ORDER BY p.categorie, p.prix_unitaire DESC;
-```
+Les montants de Martin étant `80.50` et `150.00`, `> ALL` revient à `> 150` (le maximum) : seule la commande 3 (200) qualifie.
 
 ---
 
-## Cas d'usage avancés
+## Sous-requête de ligne
 
-### Exemple 14 : Top N par catégorie
-
-**Question métier** : *Les 3 produits les plus chers de chaque catégorie*
+La famille **de ligne** compare un **n-uplet de colonnes** — un *constructeur de ligne* `(a, b)` — au résultat de la sous-requête. Associée à `IN`, elle exprime avec élégance un besoin fréquent : retrouver, pour chaque client, sa **commande la plus chère**.
 
 ```sql
--- Top 3 avec sous-requête corrélée
-SELECT
-    p1.categorie,
-    p1.nom_produit,
-    p1.prix_unitaire
-FROM produits p1
-WHERE (
-    SELECT COUNT(*)
-    FROM produits p2
-    WHERE p2.categorie = p1.categorie
-      AND p2.prix_unitaire > p1.prix_unitaire
-) < 3  -- Moins de 3 produits plus chers
-ORDER BY p1.categorie, p1.prix_unitaire DESC;
+SELECT id, client_id, montant
+FROM commande
+WHERE (client_id, montant) IN (
+    SELECT client_id, MAX(montant)
+    FROM commande
+    GROUP BY client_id
+);
 ```
 
-**Résultat attendu** :
-```
-+---------------+--------------------+---------------+
-| categorie     | nom_produit        | prix_unitaire |
-+---------------+--------------------+---------------+
-| Électronique  | Laptop Pro         |       1299.99 |
-| Électronique  | Tablette Premium   |        649.99 |
-| Électronique  | Écran 27"          |        389.99 |
-| Vêtements     | Manteau hiver      |        249.99 |
-| Vêtements     | Costume            |        189.99 |
-| Vêtements     | Robe soirée        |        159.99 |
-+---------------+--------------------+---------------+
-```
+| id | client_id | montant |
+|----|-----------|---------|
+| 3 | 1 | 200.00 |
+| 5 | 2 | 150.00 |
+| 4 | 3 | 80.50 |
 
-💡 **Note** : En MariaDB 10.2+, utilisez plutôt **Window Functions** (ROW_NUMBER) pour ce cas (section 4.2).
-
-### Exemple 15 : Comparaison avec valeurs calculées
-
-**Question métier** : *Clients avec un panier moyen supérieur à 2x la médiane*
-
-```sql
--- Calcul complexe multi-étapes
-WITH stats_globales AS (
-    SELECT
-        AVG(montant_total) AS panier_moyen_global,
-        -- Approximation de la médiane
-        (
-            SELECT montant_total
-            FROM commandes
-            WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-            ORDER BY montant_total
-            LIMIT 1 OFFSET (
-                SELECT COUNT(*) / 2
-                FROM commandes
-                WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-            )
-        ) AS mediane_globale
-    FROM commandes
-    WHERE statut IN ('confirmée', 'expédiée', 'livrée')
-)
-SELECT
-    c.nom,
-    AVG(cmd.montant_total) AS panier_moyen_client,
-    (SELECT panier_moyen_global FROM stats_globales) AS ref_moyenne,
-    (SELECT mediane_globale FROM stats_globales) AS ref_mediane
-FROM clients c
-INNER JOIN commandes cmd ON c.id_client = cmd.id_client
-WHERE cmd.statut IN ('confirmée', 'expédiée', 'livrée')
-GROUP BY c.id_client, c.nom
-HAVING AVG(cmd.montant_total) > 2 * (
-    SELECT mediane_globale FROM stats_globales
-)
-ORDER BY panier_moyen_client DESC;
-```
-
-**Application** : Identification de VIP, segmentation avancée, personnalisation.
-
-### Exemple 16 : Détection d'anomalies
-
-**Question métier** : *Commandes avec des quantités anormalement élevées (>3 écarts-types)*
-
-```sql
--- Détection statistique d'outliers
-SELECT
-    cmd.id_commande,
-    c.nom AS client,
-    dc.id_produit,
-    p.nom_produit,
-    dc.quantite,
-    stats.quantite_moyenne,
-    stats.ecart_type
-FROM commandes cmd
-INNER JOIN clients c ON cmd.id_client = c.id_client
-INNER JOIN details_commande dc ON cmd.id_commande = dc.id_commande
-INNER JOIN produits p ON dc.id_produit = p.id_produit
-INNER JOIN (
-    -- Statistiques par produit
-    SELECT
-        id_produit,
-        AVG(quantite) AS quantite_moyenne,
-        STDDEV(quantite) AS ecart_type
-    FROM details_commande
-    GROUP BY id_produit
-    HAVING ecart_type > 0
-) AS stats ON dc.id_produit = stats.id_produit
-WHERE dc.quantite > stats.quantite_moyenne + 3 * stats.ecart_type
-ORDER BY dc.quantite DESC;
-```
-
-**Application** : Détection de fraude, alertes automatiques, contrôle qualité.
+La sous-requête produit une paire `(client_id, montant maximal)` par client ; la requête englobante ne conserve que les commandes dont le couple `(client_id, montant)` figure dans cet ensemble. Si plusieurs commandes d'un même client atteignaient ce maximum, **toutes** seraient renvoyées — un classement plus fin relève des **window functions** ([section 4.2](../04-concepts-avances-sql/02-window-functions.md)). L'ordre des lignes n'étant pas garanti, ajoutez un `ORDER BY` si l'affichage doit être trié.
 
 ---
 
-## Optimisation des sous-requêtes
+## Sous-requêtes corrélées vs non corrélées
 
-### Performance : Sous-requêtes vs Jointures
+C'est la distinction la plus importante pour comprendre le **comportement et le coût** d'une sous-requête.
 
-#### Comparaison
+- Une **sous-requête non corrélée** ne fait aucune référence à la requête englobante. Elle peut s'exécuter seule et n'est évaluée **qu'une fois** (cas de la moyenne générale, du `IN` plus haut).
+- Une **sous-requête corrélée** référence une ou plusieurs colonnes de la requête extérieure. Conceptuellement, elle est **réévaluée pour chaque ligne** de la requête englobante (cas de l'`EXISTS` plus haut).
 
-| Critère | Sous-requête | Jointure |
-|---------|--------------|----------|
-| **Lisibilité** | ✅ Logique en étapes claires | ⚠️ Peut être complexe |
-| **Performance non-corrélée** | ✅ Bonne | ✅ Bonne (similaire) |
-| **Performance corrélée** | ❌ Lente (N exécutions) | ✅ Rapide |
-| **Doublons** | ✅ Pas de doublons automatiques | ⚠️ Peut créer doublons (1:N) |
-| **Maintenabilité** | ✅ Intentions claires | ⚠️ Nécessite compréhension jointures |
-
-#### Exemple : Conversion sous-requête → jointure
+Une sous-requête scalaire **corrélée** placée dans le `SELECT` permet de calculer une valeur par ligne. Exemple : le nombre de commandes de chaque client.
 
 ```sql
--- ❌ LENT : Sous-requête corrélée dans SELECT
 SELECT
     c.nom,
-    (
-        SELECT COUNT(*)
-        FROM commandes
-        WHERE id_client = c.id_client
-    ) AS nb_commandes,
-    (
-        SELECT SUM(montant_total)
-        FROM commandes
-        WHERE id_client = c.id_client
-    ) AS ca_total
-FROM clients c;
-
--- ✅ RAPIDE : Jointure avec agrégation
-SELECT
-    c.nom,
-    COUNT(cmd.id_commande) AS nb_commandes,
-    COALESCE(SUM(cmd.montant_total), 0) AS ca_total
-FROM clients c
-LEFT JOIN commandes cmd ON c.id_client = cmd.id_client
-GROUP BY c.id_client, c.nom;
+    (SELECT COUNT(*)
+     FROM commande cmd
+     WHERE cmd.client_id = c.id) AS nb_commandes
+FROM client c;
 ```
 
-**Gain de performance** : 10x à 100x plus rapide selon le volume.
+| nom | nb_commandes |
+|-----|--------------|
+| Dupont | 2 |
+| Martin | 2 |
+| Leroy | 1 |
+| Petit | 0 |
 
-### Index pour sous-requêtes
-
-```sql
--- Index sur colonnes utilisées dans sous-requêtes
-CREATE INDEX idx_commandes_client ON commandes(id_client);
-CREATE INDEX idx_commandes_statut ON commandes(statut);
-CREATE INDEX idx_details_produit ON details_commande(id_produit);
-```
-
-### EXPLAIN pour analyser
-
-```sql
-EXPLAIN
-SELECT nom
-FROM clients
-WHERE id_client IN (
-    SELECT id_client
-    FROM commandes
-);
-```
-
-Vérifiez :
-- `dependent subquery` → Corrélée (potentiellement lent)
-- `subquery` → Non-corrélée (bon)
-- MariaDB transforme parfois automatiquement en jointure
+Petit obtient `0` (un `COUNT` sur un ensemble vide, voir [section 3.1](01-fonctions-agregation.md)) et figure bien au résultat — contrairement à ce qu'aurait donné un `INNER JOIN`. Ce résultat est équivalent à un `LEFT JOIN ... GROUP BY` ([section 3.3.2](03.2-left-right-join.md)), mais la forme corrélée, réévaluée pour chaque client, peut être plus coûteuse sur de gros volumes (voir plus bas).
 
 ---
 
-## Pièges courants et solutions
+## Tables dérivées : une sous-requête dans le FROM
 
-### Piège 1 : NOT IN avec NULL
-
-```sql
--- ❌ DANGER : Si la sous-requête retourne NULL, résultat vide
-SELECT nom
-FROM clients
-WHERE id_client NOT IN (
-    SELECT id_client  -- Peut contenir NULL !
-    FROM commandes
-);
-
--- ✅ SOLUTION 1 : Filtrer NULL
-WHERE id_client NOT IN (
-    SELECT id_client
-    FROM commandes
-    WHERE id_client IS NOT NULL
-)
-
--- ✅ SOLUTION 2 : Utiliser NOT EXISTS
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM commandes
-    WHERE id_client = clients.id_client
-)
-```
-
-### Piège 2 : Sous-requête retournant plusieurs lignes
+Une sous-requête placée dans le `FROM` est une **table dérivée** (ou *vue en ligne*) : MariaDB la traite comme une table temporaire interrogeable. Elle est indispensable lorsqu'on doit **agréger un résultat déjà agrégé**, ce qu'une simple imbrication d'agrégats ne permet pas. Exemple : la moyenne des totaux dépensés *par client*.
 
 ```sql
--- ❌ ERREUR : Sous-requête scalaire retourne > 1 ligne
-SELECT nom, prix_unitaire
-FROM produits
-WHERE prix_unitaire = (
-    SELECT prix_unitaire  -- Peut retourner plusieurs valeurs !
-    FROM produits
-    WHERE categorie = 'Électronique'
-);
--- Error: "Subquery returns more than 1 row"
-
--- ✅ SOLUTION : Utiliser IN ou agrégation
-WHERE prix_unitaire IN (
-    SELECT prix_unitaire
-    FROM produits
-    WHERE categorie = 'Électronique'
-)
--- OU
-WHERE prix_unitaire = (
-    SELECT MAX(prix_unitaire)  -- Garantit 1 valeur
-    FROM produits
-    WHERE categorie = 'Électronique'
-)
-```
-
-### Piège 3 : Sous-requête corrélée lente
-
-```sql
--- ❌ LENT : Corrélée dans SELECT
-SELECT
-    p.nom_produit,
-    (SELECT COUNT(*) FROM details_commande WHERE id_produit = p.id_produit)
-FROM produits p;
-
--- ✅ RAPIDE : LEFT JOIN + GROUP BY
-SELECT
-    p.nom_produit,
-    COUNT(dc.id_detail) AS nb_ventes
-FROM produits p
-LEFT JOIN details_commande dc ON p.id_produit = dc.id_produit
-GROUP BY p.id_produit, p.nom_produit;
-```
-
-### Piège 4 : Confusion sur le scope des alias
-
-```sql
--- ❌ ERREUR : Alias de la sous-requête non accessible
-SELECT nom
+SELECT AVG(total_client) AS moyenne_des_totaux
 FROM (
-    SELECT nom_produit AS nom, prix_unitaire
-    FROM produits
-) AS sub
-WHERE prix_unitaire > 100;  -- Erreur : prix_unitaire n'existe pas dans le scope
-
--- ✅ CORRECT : Utiliser l'alias de la sous-requête
-SELECT nom
-FROM (
-    SELECT nom_produit AS nom, prix_unitaire AS prix
-    FROM produits
-) AS sub
-WHERE sub.prix > 100;
+    SELECT client_id, SUM(montant) AS total_client
+    FROM commande
+    GROUP BY client_id
+) AS totaux;
 ```
 
----
+| moyenne_des_totaux |
+|--------------------|
+| 210.333333 |
 
-## Bonnes pratiques
+La table dérivée calcule d'abord le total par client (`320`, `230.50`, `80.50`), puis la requête englobante en fait la moyenne (`631 / 3 ≈ 210.33`).
 
-### ✅ Quand utiliser les sous-requêtes
+> ⚠️ Une table dérivée **doit obligatoirement porter un alias** (ici `AS totaux`), même s'il n'est pas réutilisé. C'est une exigence de syntaxe.
 
-1. **Logique métier en étapes** : Calcul intermédiaire puis utilisation
-2. **EXISTS pour test d'existence** : Plus clair que LEFT JOIN + IS NULL
-3. **Agrégations dans WHERE/HAVING** : Comparaison avec moyenne, max, etc.
-4. **Tables dérivées complexes** : Agrégations sur agrégations
-5. **Lisibilité avant tout** : Si plus clair qu'une jointure complexe
-
-### ❌ Quand éviter les sous-requêtes
-
-1. **Sous-requêtes corrélées dans SELECT** : Préférer jointure
-2. **NOT IN avec colonnes nullable** : Utiliser NOT EXISTS
-3. **Performance critique** : Tester avec EXPLAIN
-4. **Doublons acceptables** : Jointure directe plus simple
-
-### Checklist optimisation
-
-```sql
--- ✅ Vérifier avec EXPLAIN
-EXPLAIN SELECT ... ;
-
--- ✅ Comparer avec version jointure
--- Si sous-requête corrélée, tester l'alternative jointure
-
--- ✅ Vérifier les index
-SHOW INDEX FROM table;
-
--- ✅ Tester sur données volumineuses
--- Performance peut différer entre 100 et 1M lignes
-```
+Lorsqu'une même table dérivée doit être réutilisée ou que l'imbrication nuit à la lisibilité, les **expressions de table communes (CTE)** — `WITH ... AS (...)` — offrent une alternative plus claire, traitée en [section 4.4](../04-concepts-avances-sql/04-expressions-table-communes.md).
 
 ---
 
-## ✅ Points clés à retenir
+## Sous-requêtes ou jointures ? Note de performance
 
-1. **Sous-requêtes = requêtes imbriquées** – décomposent problèmes complexes en étapes logiques
+De nombreuses sous-requêtes (`IN`, `EXISTS` corrélés) sont logiquement équivalentes à des jointures. Le choix se fait sur la lisibilité et la performance :
 
-2. **3 types par résultat** – scalaire (1 valeur), liste (N valeurs), table (N×M valeurs)
+- L'optimiseur de MariaDB applique des **transformations** aux sous-requêtes `IN`/`EXISTS` (semi-jointure, matérialisation) pour les exécuter efficacement, souvent comme des jointures.
+- Pour de l'**agrégation par entité**, un `LEFT JOIN ... GROUP BY` est généralement plus performant qu'une sous-requête scalaire corrélée dans le `SELECT`, qui se réévalue ligne par ligne.
+- En cas de doute, comparez les plans avec `EXPLAIN` ([section 5.7](../05-index-et-performance/07-analyse-plans-execution.md)) et reportez-vous aux techniques d'[optimisation des requêtes](../05-index-et-performance/08-optimisation-requetes.md).
 
-3. **4 emplacements possibles** – SELECT, FROM, WHERE, HAVING selon le besoin
-
-4. **EXISTS plus performant que IN** – s'arrête à la première correspondance
-
-5. **NOT IN dangereux avec NULL** – préférer NOT EXISTS systématiquement
-
-6. **Corrélées vs non-corrélées** – corrélées exécutées N fois (lentes), non-corrélées 1 fois (rapides)
-
-7. **Sous-requêtes dans SELECT souvent lentes** – préférer jointures avec agrégation
-
-8. **Tables dérivées permettent alias dans WHERE** – contournent limitation HAVING
-
-9. **ANY/ALL équivalent à MIN/MAX** – préférer MIN/MAX plus clairs
-
-10. **Toujours vérifier avec EXPLAIN** – identifier sous-requêtes dépendantes et lentes
+La règle pragmatique : écrivez la forme la plus **lisible** pour exprimer votre intention, puis vérifiez le plan si la requête est critique.
 
 ---
 
-## 🔗 Ressources et références
+## Autres emplacements
 
-### Documentation officielle MariaDB
-- [📖 Subqueries](https://mariadb.com/kb/en/subqueries/) – Documentation complète
-- [📖 Optimizing Subqueries](https://mariadb.com/kb/en/subquery-optimizations/) – Techniques d'optimisation
-- [📖 EXISTS vs IN](https://mariadb.com/kb/en/exists-to-in-optimization/) – Comparaison performance
+Une sous-requête peut aussi apparaître :
 
-### Articles approfondis
-- [SQL Subqueries](https://modern-sql.com/feature/subqueries) – Patterns et best practices
-- [Subquery Performance](https://use-the-index-luke.com/sql/where-clause/subqueries) – Guide performance
+- dans le **`HAVING`**, pour comparer un agrégat de groupe à une valeur calculée (ex. `HAVING SUM(montant) > (SELECT AVG(...) ...)`) ;
+- dans les instructions **`INSERT`, `UPDATE` et `DELETE`**, pour cibler des lignes à partir d'une autre requête. Le cas particulier d'un `UPDATE`/`DELETE` s'appuyant sur une CTE est abordé en [section 4.4.1](../04-concepts-avances-sql/04.1-update-delete-from-cte.md), et les requêtes complexes multi-tables en [section 4.5](../04-concepts-avances-sql/05-requetes-complexes-multi-tables.md).
 
 ---
 
-## ➡️ Section suivante
+## À retenir
 
-**[3.5 Opérateurs ensemblistes (UNION, INTERSECT, EXCEPT)](./05-operateurs-ensemblistes.md)**
-
-La prochaine section couvre les opérateurs qui **combinent des résultats de plusieurs requêtes** :
-- **UNION** et **UNION ALL** : Fusionner des résultats
-- **INTERSECT** : Trouver l'intersection
-- **EXCEPT** : Trouver la différence
-- Différences avec les jointures
-- Cas d'usage : consolidation de sources multiples, analyses comparatives
-
-Les opérateurs ensemblistes complètent votre arsenal SQL intermédiaire ! 🎯
+- Une sous-requête est un `SELECT` imbriqué dont la requête englobante exploite le résultat.
+- Selon ce qu'elle renvoie : **scalaire** (une valeur, avec `=`/`<`/`>`…), **de ligne** (constructeur `(a, b) IN …`), ou **de table** (avec `IN`, `EXISTS`, `ANY`, `ALL`, ou dans le `FROM`).
+- Une sous-requête **non corrélée** s'évalue une fois ; une sous-requête **corrélée** (qui référence la requête englobante) se réévalue par ligne.
+- `EXISTS`/`NOT EXISTS` testent l'existence ; `NOT EXISTS` est l'anti-jointure **robuste** à préférer à `NOT IN`, sensible aux `NULL`.
+- `= ANY` ≡ `IN`, `<> ALL` ≡ `NOT IN`, `> ALL` ≡ `> MAX`, `> ANY` ≡ `> MIN`.
+- Une **table dérivée** (sous-requête dans `FROM`, **alias obligatoire**) permet d'agréger un résultat déjà agrégé ; les CTE en sont une alternative lisible ([section 4.4](../04-concepts-avances-sql/04-expressions-table-communes.md)).
+- Sous-requête ou jointure : choisir la forme lisible, vérifier le plan avec `EXPLAIN` si nécessaire.
 
 ---
 
+## Navigation
+
+- ⬅️ Section précédente : [3.3.5 — Syntaxe ( + ) pour jointures externes en mode Oracle](03.5-oracle-outer-join.md)
+- ➡️ Section suivante : [3.5 — Opérateurs ensemblistes (UNION, INTERSECT, EXCEPT)](05-operateurs-ensemblistes.md)
+- ⬆️ Retour au [Sommaire](../SOMMAIRE.md)
 
 ⏭️ [Opérateurs ensemblistes (UNION, INTERSECT, EXCEPT)](/03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md)
