@@ -22,12 +22,12 @@ Ces compétences sont **essentielles pour les architectes et DBA**, mais égalem
 
 ---
 
-## 📚 Les trois modules de cette partie
+## 📚 Les trois chapitres de cette partie
 
-### Module 7 : Moteurs de Stockage
+### Chapitre 7 : Moteurs de Stockage
 **10 sections | Durée : ~2 jours**
 
-Ce module décortique l'architecture pluggable de MariaDB et vous enseigne comment tirer parti de chaque moteur :
+Ce chapitre décortique l'architecture pluggable de MariaDB et vous enseigne comment tirer parti de chaque moteur :
 
 #### 🏗️ Architecture et fondamentaux
 - **Pluggable Storage Engine Architecture** : Comment MariaDB découple la couche SQL de la couche stockage
@@ -53,12 +53,12 @@ Ce module décortique l'architecture pluggable de MariaDB et vous enseigne comme
   - Stratégies de tiering automatique (hot/warm/cold)
   - Économies de coûts significatives pour données rarement consultées
 
-#### 🤖 Moteur Intelligence Artificielle
-- 🆕 **Vector/HNSW** : Le game-changer pour l'IA et le ML
+#### 🤖 Recherche vectorielle (IA)
+- 🆕 **Vector/HNSW** : la brique d'IA native. Ce n'est **pas un moteur de stockage distinct**, mais un **type de colonne `VECTOR` et un type d'index HNSW** intégrés *dans* les moteurs existants (InnoDB, MyISAM, Aria)
   - Architecture HNSW (Hierarchical Navigable Small Worlds)
   - Stockage et indexation optimisés pour embeddings haute dimension
-  - Intégration native avec frameworks IA (LangChain, LlamaIndex)
-  - Performance : recherche k-NN en <5ms sur millions de vecteurs
+  - Fonctions de distance `VEC_DISTANCE_EUCLIDEAN` / `_COSINE`, optimisations SIMD (AVX2/AVX512, ARM NEON)
+  - Cas d'usage : recherche k-NN, RAG, moteurs de recommandation
 
 #### 🎯 Moteurs spécialisés
 - **Memory** : Tables en RAM pour performance ultime
@@ -76,10 +76,10 @@ Ce module décortique l'architecture pluggable de MariaDB et vous enseigne comme
 
 ---
 
-### Module 8 : Programmation Côté Serveur
+### Chapitre 8 : Programmation Côté Serveur
 **8 sections | Durée : ~1,5 jour**
 
-Ce module vous enseigne comment déplacer la logique métier vers la base de données de manière élégante et performante :
+Ce chapitre vous enseigne comment déplacer la logique métier vers la base de données de manière élégante et performante :
 
 #### 📝 Procédures stockées
 - **Syntaxe et structure** : `CREATE PROCEDURE` avec paramètres
@@ -116,10 +116,10 @@ Ce module vous enseigne comment déplacer la logique métier vers la base de don
 
 ---
 
-### Module 9 : Vues et Données Virtuelles
+### Chapitre 9 : Vues et Données Virtuelles
 **7 sections | Durée : ~0,5 jour**
 
-Ce module explore les vues comme outil d'abstraction, de sécurité, et de simplification :
+Ce chapitre explore les vues comme outil d'abstraction, de sécurité, et de simplification :
 
 #### 🪟 Vues classiques
 - **Création et gestion** : `CREATE VIEW`, `ALTER VIEW`, `DROP VIEW`
@@ -148,25 +148,25 @@ Ce module explore les vues comme outil d'abstraction, de sécurité, et de simpl
 
 ---
 
-## 🆕 Innovations MariaDB 11.8 pour l'architecture avancée
+## 🆕 Innovations de la série 12.x pour l'architecture avancée
 
-### Moteur Vector/HNSW : La révolution de l'IA native
+### Recherche vectorielle Vector/HNSW : l'IA native
 
-MariaDB 11.8 introduit un **moteur de stockage entièrement nouveau** dédié à la recherche vectorielle haute performance, marquant l'entrée de MariaDB dans l'ère de l'IA native.
+La recherche vectorielle est arrivée en **MariaDB 11.7** (GA), s'est stabilisée dans la **11.8 LTS**, et a été **optimisée tout au long de la série 12.x** (calcul de distance accéléré, intégration au plus près du stockage). Ce n'est **pas un moteur de stockage séparé** : MariaDB ajoute un **type de données `VECTOR` et un index HNSW** directement utilisables au sein des moteurs existants (InnoDB en tête), ce qui marque son entrée dans l'ère de l'IA native.
 
 #### Architecture HNSW (Hierarchical Navigable Small Worlds)
 
 ```sql
--- Créer une table avec moteur Vector
+-- Une colonne VECTOR et un index HNSW, dans une table InnoDB ordinaire
 CREATE TABLE product_embeddings (
     product_id INT PRIMARY KEY,
     name VARCHAR(255),
     description TEXT,
-    embedding VECTOR(768),
-    INDEX idx_vector (embedding) USING HNSW
-) ENGINE=InnoDB;  -- Intégration transparente dans InnoDB
+    embedding VECTOR(768) NOT NULL,         -- une colonne VECTOR indexée doit être NOT NULL
+    VECTOR INDEX idx_vector (embedding)      -- index HNSW (et non « INDEX … USING HNSW »)
+) ENGINE=InnoDB;  -- pas de moteur dédié : tout reste dans InnoDB
 
--- Recherche k-NN ultra-rapide
+-- Recherche k-NN : trier par distance croissante et limiter
 SELECT product_id, name,
        VEC_DISTANCE_COSINE(embedding, @query_vector) AS similarity
 FROM product_embeddings
@@ -187,7 +187,7 @@ LIMIT 10;
    LIMIT 20;
    ```
 4. **Optimisations hardware** : Support SIMD (AVX2, AVX512, ARM NEON)
-5. **Scalabilité** : Jusqu'à 10M+ vecteurs avec latence <10ms
+5. **Scalabilité** : conçu pour de grands volumes de vecteurs, la recherche **approchée** (ANN) par graphe HNSW restant rapide là où une recherche exacte serait prohibitive
 
 #### Cas d'usage transformateurs
 
@@ -201,29 +201,26 @@ LIMIT 10;
 
 ---
 
-### Améliorations du moteur S3 : Cloud-native storage
+### Moteur S3 : archivage cloud à coût minimal
 
-MariaDB 11.8 améliore significativement le moteur S3 pour l'archivage intelligent de données froides :
+Le moteur **S3** stocke des tables **en lecture seule** sur un *object storage*, pour archiver des données froides à très faible coût tout en conservant un accès SQL transparent.
 
-#### Nouveautés et optimisations
+#### Caractéristiques
 
-- **Tiering automatique** : Déplacement automatique des partitions anciennes vers S3
-- **Performance améliorée** : Cache local pour données fréquemment accédées
-- **Support multi-cloud** : AWS S3, Google Cloud Storage, Azure Blob, MinIO
-- **Compression transparente** : Réduction des coûts de stockage de 70-90%
+- **Archivage par conversion** : on bascule une table existante vers S3 avec `ALTER TABLE … ENGINE=S3` ; elle devient alors **en lecture seule**
+- **Lecture transparente** : les `SELECT` fonctionnent normalement ; comme Aria/MyISAM, S3 conserve le nombre de lignes (`COUNT(*)` sans `WHERE` reste instantané)
+- **Stockage compatible S3** : Amazon S3 et tout stockage compatible (MinIO, etc.) ; la connexion se configure par des **variables serveur** (`s3_bucket`, `s3_access_key`, `s3_region`…)
+- **Compression du stockage** : les données sont compressées, réduisant fortement l'empreinte (et donc le coût) sur l'*object storage*
 
 ```sql
--- Archivage automatique de données anciennes
-CREATE TABLE logs_archive (
-    id BIGINT,
-    timestamp DATETIME,
-    message TEXT
-) ENGINE=S3
-  CONNECTION='s3://my-bucket/logs/'
-  COMPRESSION='zstd';
+-- Le bucket et les accès S3 sont définis par des variables serveur
+-- (s3_bucket, s3_access_key, s3_secret_key, s3_region…), pas dans le CREATE.
 
--- Les requêtes fonctionnent normalement, le moteur gère la transparence
-SELECT COUNT(*) FROM logs_archive WHERE timestamp > '2024-01-01';
+-- Archiver une table existante : elle part sur S3 et devient en lecture seule
+ALTER TABLE logs_2023 ENGINE=S3;
+
+-- Les requêtes de lecture fonctionnent normalement, en toute transparence
+SELECT COUNT(*) FROM logs_2023 WHERE timestamp > '2023-06-01';
 ```
 
 #### Économies significatives
@@ -233,6 +230,19 @@ SELECT COUNT(*) FROM logs_archive WHERE timestamp > '2024-01-01';
 - **Élasticité** : Pas de pré-provisioning, paiement à l'usage
 
 💡 **Impact opérationnel** : Pour une application avec 10TB de logs historiques, le passage à S3 peut économiser $10,000+/an tout en maintenant l'accès SQL transparent.
+
+---
+
+### Autres nouveautés 12.x : stockage et programmation serveur
+
+Au-delà du vectoriel, la série 12.x enrichit concrètement les chapitres de cette partie :
+
+- **Binlog intégré à InnoDB** (12.3) : le journal binaire est écrit *dans* InnoDB, supprimant la synchronisation entre binlog et redo log. Présenté par l'éditeur comme la plus grande amélioration OLTP de la 12.3 (à activer explicitement ; débit en écriture annoncé jusqu'à ~4×, chiffre avancé sans méthodologie de benchmark publiée).
+- **Cache de clés segmenté d'Aria** (`aria_pagecache_segments`, 12.1) : réduit la contention sur le *page cache* d'Aria.
+- **Triggers multi-événements** (12.0) : un même déclencheur peut couvrir `INSERT OR UPDATE OR DELETE`, avec les prédicats `INSERTING` / `UPDATING` / `DELETING`.
+- **Programmation procédurale enrichie** : tableaux associatifs de style Oracle (`TABLE OF … INDEX BY`, 12.1, `sql_mode=ORACLE`), curseurs de référence `SYS_REFCURSOR` (12.0.1) et curseurs sur instructions préparées (12.3).
+
+Ces nouveautés sont détaillées dans les chapitres 7 et 8.
 
 ---
 
@@ -280,7 +290,7 @@ Cette partie cible principalement les **architectes et DBA**, mais reste pertine
 |----------|------------|---------------|
 | 🔐 **Administrateur/DBA** | ⭐⭐⭐ ESSENTIEL | Absolument critique. Le choix du moteur de stockage et la maintenance sont au cœur du métier DBA. Maîtrise obligatoire. |
 | 🔧 **Développeur** | ⭐⭐ TRÈS UTILE | Les procédures/fonctions/triggers sont des outils puissants pour encapsuler la logique. Le choix du moteur impacte directement les performances applicatives. |
-| 🤖 **IA/ML Engineer** | ⭐⭐⭐ ESSENTIEL | Le moteur Vector/HNSW est révolutionnaire pour RAG et applications ML. ColumnStore est crucial pour feature engineering à grande échelle. |
+| 🤖 **IA/ML Engineer** | ⭐⭐⭐ ESSENTIEL | La recherche vectorielle (type `VECTOR` + index HNSW) est révolutionnaire pour RAG et applications ML. ColumnStore est crucial pour feature engineering à grande échelle. |
 | ⚙️ **DevOps/Cloud** | ⭐⭐ UTILE | Compréhension nécessaire pour dimensionnement, monitoring, et optimisation des coûts (notamment moteur S3). |
 
 ### Pourquoi cette partie est stratégique ?
@@ -296,7 +306,7 @@ Cette partie cible principalement les **architectes et DBA**, mais reste pertine
 - Les vues simplifient drastiquement l'accès aux données complexes
 
 **Pour l'IA/ML** :
-- Le moteur Vector élimine le besoin de bases vectorielles séparées
+- La recherche vectorielle native élimine le besoin de bases vectorielles séparées
 - ColumnStore accélère la préparation de données de 10-100x
 - L'architecture unifiée simplifie les pipelines ML
 
@@ -415,12 +425,12 @@ CREATE TABLE audit_logs_archive (
     details JSON
 ) ENGINE=S3;
 
--- 🤖 Recherche produits (IA) → InnoDB avec Vector
+-- 🤖 Recherche produits (IA) → colonne + index VECTOR dans InnoDB
 CREATE TABLE product_catalog (
     id INT PRIMARY KEY,
     name VARCHAR(255),
     description TEXT,
-    embedding VECTOR(768),
+    embedding VECTOR(768) NOT NULL,
     VECTOR INDEX (embedding)
 ) ENGINE=InnoDB;
 
@@ -554,12 +564,12 @@ Les compétences de cette partie sont **différenciantes** sur le marché du tra
 
 ## ➡️ Prochaine étape
 
-**Module 7 : Moteurs de Stockage** → Explorez l'architecture pluggable de MariaDB, comprenez les forces et faiblesses de chaque moteur, et apprenez à choisir le moteur optimal pour chaque table.
+**Chapitre 7 : Moteurs de Stockage** → Explorez l'architecture pluggable de MariaDB, comprenez les forces et faiblesses de chaque moteur, et apprenez à choisir le moteur optimal pour chaque table.
 
 Bienvenue dans le monde de l'architecture avancée ! 🏗️
 
 ---
 
-**MariaDB** : Version 11.8 LTS
+**MariaDB** : Version 12.3 LTS
 
 ⏭️ [Moteurs de Stockage](/07-moteurs-de-stockage/README.md)
