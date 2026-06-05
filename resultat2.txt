@@ -1,0 +1,2163 @@
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:63:DELIMITER //
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:64:CREATE PROCEDURE rafraichir_mv_stats_departement()
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:64:CREATE PROCEDURE rafraichir_mv_stats_departement()
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:65:BEGIN
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:77:END //
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:78:DELIMITER ;
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:91:INSERT INTO mv_stats_departement_new
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:92:SELECT d.id, d.nom,
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:97:FROM departements d
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:98:LEFT JOIN employes e ON e.dept_id = d.id
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:98:LEFT JOIN employes e ON e.dept_id = d.id
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:99:GROUP BY d.id, d.nom;
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:129:CREATE EVENT ev_rafraichir_stats
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:130:ON SCHEDULE EVERY 1 HOUR
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:130:ON SCHEDULE EVERY 1 HOUR
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:131:DO CALL rafraichir_mv_stats_departement();
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:143:DELIMITER //
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:144:CREATE TRIGGER trg_employes_ai
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:144:CREATE TRIGGER trg_employes_ai
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:145:AFTER INSERT ON employes
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:145:AFTER INSERT ON employes
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:146:FOR EACH ROW
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:146:FOR EACH ROW
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:147:BEGIN
+
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:155:END //
+09-vues-et-donnees-virtuelles/02-vues-materialisees.md:156:DELIMITER ;
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:19:CREATE VIEW v_annuaire AS
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:20:SELECT id, nom, prenom, dept_id
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:20:SELECT id, nom, prenom, dept_id
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:21:FROM employes;
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:33:CREATE VIEW v_mon_dossier AS
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:34:SELECT id, nom, prenom, salaire, date_embauche
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:34:SELECT id, nom, prenom, salaire, date_embauche
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:35:FROM employes
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:35:FROM employes
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:36:WHERE login = SUBSTRING_INDEX(SESSION_USER(), '@', 1);
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:52:CREATE VIEW v_employes_masque AS
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:53:SELECT
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:90:CREATE DEFINER = 'admin'@'localhost' SQL SECURITY DEFINER
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:91:VIEW v_annuaire AS
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:91:VIEW v_annuaire AS
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:92:SELECT id, nom, prenom, dept_id
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:92:SELECT id, nom, prenom, dept_id
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:93:FROM employes;
+
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:106:SELECT * FROM v_annuaire;   -- OK : exécutée avec les droits d'« admin »
+09-vues-et-donnees-virtuelles/05-securite-et-vues.md:107:SELECT * FROM employes;     -- ERROR : accès refusé à la table de base
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:31:CREATE ALGORITHM = MERGE VIEW v_emp_merge AS
+09-vues-et-donnees-virtuelles/06-performance-vues.md:32:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:32:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/06-performance-vues.md:33:FROM employes;
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:71:CREATE ALGORITHM = MERGE     VIEW v_emp_merge AS
+09-vues-et-donnees-virtuelles/06-performance-vues.md:72:SELECT id, nom, prenom, salaire, dept_id FROM employes;
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:74:CREATE ALGORITHM = TEMPTABLE VIEW v_emp_temp  AS
+09-vues-et-donnees-virtuelles/06-performance-vues.md:75:SELECT id, nom, prenom, salaire, dept_id FROM employes;
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:81:SELECT * FROM v_emp_merge WHERE id = 5;   -- filtre poussé : index PK, 1 ligne lue
+09-vues-et-donnees-virtuelles/06-performance-vues.md:82:SELECT * FROM v_emp_temp  WHERE id = 5;   -- TOUTE la table matérialisée, PUIS filtrée
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:110:SELECT TABLE_NAME, ALGORITHM
+09-vues-et-donnees-virtuelles/06-performance-vues.md:111:FROM INFORMATION_SCHEMA.VIEWS
+
+09-vues-et-donnees-virtuelles/06-performance-vues.md:111:FROM INFORMATION_SCHEMA.VIEWS
+09-vues-et-donnees-virtuelles/06-performance-vues.md:112:WHERE TABLE_SCHEMA = DATABASE();
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:39:CREATE VIEW v_employes_resume AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:40:SELECT id, nom, prenom, date_embauche
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:40:SELECT id, nom, prenom, date_embauche
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:41:FROM employes;
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:47:SELECT * FROM v_employes_resume
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:48:WHERE date_embauche >= '2024-01-01';
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:86:CREATE VIEW v_salaires_annuels AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:87:SELECT
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:97:CREATE VIEW v_salaires_annuels (id, employe, salaire_annuel) AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:98:SELECT id, CONCAT(prenom, ' ', nom), salaire * 12
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:98:SELECT id, CONCAT(prenom, ' ', nom), salaire * 12
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:99:FROM employes;
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:115:CREATE OR REPLACE VIEW v_employes_resume AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:116:SELECT id, nom, prenom, date_embauche, dept_id
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:116:SELECT id, nom, prenom, date_embauche, dept_id
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:117:FROM employes;
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:145:character_set_client: utf8mb4
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:146:collation_connection: utf8mb4_uca1400_ai_ci
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:154:SELECT TABLE_NAME, IS_UPDATABLE, ALGORITHM, VIEW_DEFINITION
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:155:FROM INFORMATION_SCHEMA.VIEWS
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:155:FROM INFORMATION_SCHEMA.VIEWS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:156:WHERE TABLE_SCHEMA = DATABASE();
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:178:ALTER VIEW v_employes_resume AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:179:SELECT id, nom, prenom, date_embauche, dept_id
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:179:SELECT id, nom, prenom, date_embauche, dept_id
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:180:FROM employes
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:180:FROM employes
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:181:WHERE date_embauche IS NOT NULL;
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:203:CREATE VIEW v_tous_employes AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:204:SELECT * FROM employes;          -- développé en (id, nom, prenom, salaire, …)
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:218:CREATE VIEW v_employes_paris AS
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:219:SELECT e.id, e.nom, e.prenom
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:219:SELECT e.id, e.nom, e.prenom
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:220:FROM v_employes_resume AS e
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:220:FROM v_employes_resume AS e
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:221:JOIN departements AS d ON d.id = e.dept_id
+
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:221:JOIN departements AS d ON d.id = e.dept_id
+09-vues-et-donnees-virtuelles/01-creation-gestion-vues.md:222:WHERE d.ville = 'Paris';
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:51:SELECT TABLE_NAME
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:52:FROM INFORMATION_SCHEMA.TABLES
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:52:FROM INFORMATION_SCHEMA.TABLES
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:53:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:70:FROM INFORMATION_SCHEMA.TABLES
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:71:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:79:SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:80:FROM INFORMATION_SCHEMA.COLUMNS
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:80:FROM INFORMATION_SCHEMA.COLUMNS
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:81:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:91:FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:92:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:99:SELECT INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME, NON_UNIQUE, CARDINALITY
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:100:FROM INFORMATION_SCHEMA.STATISTICS
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:100:FROM INFORMATION_SCHEMA.STATISTICS
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:101:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:109:SELECT TABLE_NAME, IS_UPDATABLE, ALGORITHM, CHECK_OPTION, SECURITY_TYPE
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:110:FROM INFORMATION_SCHEMA.VIEWS
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:110:FROM INFORMATION_SCHEMA.VIEWS
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:111:WHERE TABLE_SCHEMA = 'ma_base';
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:119:SELECT CONCAT('ANALYZE TABLE ', TABLE_SCHEMA, '.', TABLE_NAME, ';') AS commande
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:120:FROM INFORMATION_SCHEMA.TABLES
+
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:120:FROM INFORMATION_SCHEMA.TABLES
+09-vues-et-donnees-virtuelles/07.1-information-schema.md:121:WHERE TABLE_SCHEMA = 'ma_base'
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:55:CREATE VIEW v_employes_contact AS
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:56:SELECT id, nom, prenom, dept_id
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:56:SELECT id, nom, prenom, dept_id
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:57:FROM employes;
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:65:INSERT INTO v_employes_contact (id, nom, prenom, dept_id)
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:66:VALUES (101, 'Durand', 'Paul', 2);
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:76:CREATE VIEW v_effectifs AS
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:77:SELECT dept_id, COUNT(*) AS nb_employes
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:77:SELECT dept_id, COUNT(*) AS nb_employes
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:78:FROM employes
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:78:FROM employes
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:79:GROUP BY dept_id;
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:89:CREATE VIEW v_employes_calc AS
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:90:SELECT id, nom, prenom, salaire * 1.1 AS salaire_augmente
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:90:SELECT id, nom, prenom, salaire * 1.1 AS salaire_augmente
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:91:FROM employes;
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:108:CREATE VIEW v_emp_dept AS
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:109:SELECT e.id, e.nom, e.salaire, d.nom AS departement, d.ville
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:109:SELECT e.id, e.nom, e.salaire, d.nom AS departement, d.ville
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:110:FROM employes e
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:110:FROM employes e
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:111:JOIN departements d ON d.id = e.dept_id;
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:126:SELECT TABLE_NAME, IS_UPDATABLE
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:127:FROM INFORMATION_SCHEMA.VIEWS
+
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:127:FROM INFORMATION_SCHEMA.VIEWS
+09-vues-et-donnees-virtuelles/03-vues-updatable.md:128:WHERE TABLE_SCHEMA = DATABASE();
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:61:FROM performance_schema.events_statements_summary_by_digest
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:62:ORDER BY SUM_TIMER_WAIT DESC
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:62:ORDER BY SUM_TIMER_WAIT DESC
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:63:LIMIT 10;
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:72:FROM performance_schema.events_waits_summary_global_by_event_name
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:73:WHERE SUM_TIMER_WAIT > 0
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:73:WHERE SUM_TIMER_WAIT > 0
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:74:ORDER BY SUM_TIMER_WAIT DESC
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:74:ORDER BY SUM_TIMER_WAIT DESC
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:75:LIMIT 10;
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:81:SELECT DIGEST_TEXT, COUNT_STAR, SUM_NO_INDEX_USED, SUM_SELECT_SCAN
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:82:FROM performance_schema.events_statements_summary_by_digest
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:82:FROM performance_schema.events_statements_summary_by_digest
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:83:WHERE SUM_NO_INDEX_USED > 0
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:83:WHERE SUM_NO_INDEX_USED > 0
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:84:ORDER BY SUM_NO_INDEX_USED DESC
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:84:ORDER BY SUM_NO_INDEX_USED DESC
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:85:LIMIT 10;
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:93:UPDATE performance_schema.setup_instruments
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:94:SET ENABLED = 'YES', TIMED = 'YES'
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:94:SET ENABLED = 'YES', TIMED = 'YES'
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:95:WHERE NAME LIKE 'statement/%';
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:97:UPDATE performance_schema.setup_consumers
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:98:SET ENABLED = 'YES'
+
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:98:SET ENABLED = 'YES'
+09-vues-et-donnees-virtuelles/07.2-performance-schema.md:99:WHERE NAME LIKE 'events_statements_%';
+
+09-vues-et-donnees-virtuelles/07.3-mysql-system-tables.md:40:SELECT User, Host, JSON_DETAILED(Priv) AS privileges
+09-vues-et-donnees-virtuelles/07.3-mysql-system-tables.md:41:FROM mysql.global_priv\G
+
+09-vues-et-donnees-virtuelles/07.3-mysql-system-tables.md:66:SELECT User, Host, Db, Table_name, Table_priv
+09-vues-et-donnees-virtuelles/07.3-mysql-system-tables.md:67:FROM mysql.tables_priv;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:17:CREATE VIEW v_dept_ventes AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:18:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:18:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/04-with-check-option.md:19:FROM employes
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:19:FROM employes
+09-vues-et-donnees-virtuelles/04-with-check-option.md:20:WHERE dept_id = 3;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:26:INSERT INTO v_dept_ventes (id, nom, prenom, salaire, dept_id)
+09-vues-et-donnees-virtuelles/04-with-check-option.md:27:VALUES (200, 'Petit', 'Luc', 40000, 5);
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:43:CREATE OR REPLACE VIEW v_dept_ventes AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:44:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:44:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/04-with-check-option.md:45:FROM employes
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:45:FROM employes
+09-vues-et-donnees-virtuelles/04-with-check-option.md:46:WHERE dept_id = 3
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:46:WHERE dept_id = 3
+09-vues-et-donnees-virtuelles/04-with-check-option.md:47:WITH CHECK OPTION;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:54:INSERT INTO v_dept_ventes (id, nom, prenom, salaire, dept_id)
+09-vues-et-donnees-virtuelles/04-with-check-option.md:55:VALUES (200, 'Petit', 'Luc', 40000, 5);
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:59:INSERT INTO v_dept_ventes (id, nom, prenom, salaire, dept_id)
+09-vues-et-donnees-virtuelles/04-with-check-option.md:60:VALUES (200, 'Petit', 'Luc', 40000, 3);
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:84:CREATE VIEW v_seniors AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:85:SELECT id, nom, prenom
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:85:SELECT id, nom, prenom
+09-vues-et-donnees-virtuelles/04-with-check-option.md:86:FROM employes
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:86:FROM employes
+09-vues-et-donnees-virtuelles/04-with-check-option.md:87:WHERE date_embauche < '2015-01-01'
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:87:WHERE date_embauche < '2015-01-01'
+09-vues-et-donnees-virtuelles/04-with-check-option.md:88:WITH CHECK OPTION;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:107:CREATE VIEW v_salaire_min AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:108:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:108:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/04-with-check-option.md:109:FROM employes
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:109:FROM employes
+09-vues-et-donnees-virtuelles/04-with-check-option.md:110:WHERE salaire >= 30000;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:117:CREATE VIEW v_salaire_cascaded AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:118:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:118:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/04-with-check-option.md:119:FROM v_salaire_min
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:119:FROM v_salaire_min
+09-vues-et-donnees-virtuelles/04-with-check-option.md:120:WHERE salaire <= 60000
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:120:WHERE salaire <= 60000
+09-vues-et-donnees-virtuelles/04-with-check-option.md:121:WITH CASCADED CHECK OPTION;
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:124:CREATE VIEW v_salaire_local AS
+09-vues-et-donnees-virtuelles/04-with-check-option.md:125:SELECT id, nom, prenom, salaire, dept_id
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:125:SELECT id, nom, prenom, salaire, dept_id
+09-vues-et-donnees-virtuelles/04-with-check-option.md:126:FROM v_salaire_min
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:126:FROM v_salaire_min
+09-vues-et-donnees-virtuelles/04-with-check-option.md:127:WHERE salaire <= 60000
+
+09-vues-et-donnees-virtuelles/04-with-check-option.md:127:WHERE salaire <= 60000
+09-vues-et-donnees-virtuelles/04-with-check-option.md:128:WITH LOCAL CHECK OPTION;
+
+partie-06-replication-haute-disponibilite.md:305:type=service
+partie-06-replication-haute-disponibilite.md:306:router=diffsvc
+
+partie-06-replication-haute-disponibilite.md:306:router=diffsvc
+partie-06-replication-haute-disponibilite.md:307:servers=mariadb-11.4-prod, mariadb-11.8-test
+
+partie-06-replication-haute-disponibilite.md:307:servers=mariadb-11.4-prod, mariadb-11.8-test
+partie-06-replication-haute-disponibilite.md:308:user=maxscale
+
+partie-06-replication-haute-disponibilite.md:308:user=maxscale
+partie-06-replication-haute-disponibilite.md:309:password=***
+
+partie-06-replication-haute-disponibilite.md:439:mariabackup --copy-back --target-dir=/backup/resync
+partie-06-replication-haute-disponibilite.md:440:mariadb -e "CHANGE MASTER TO MASTER_LOG_FILE='binlog.xxx', MASTER_LOG_POS=yyy; START SLAVE;"
+
+partie-06-replication-haute-disponibilite.md:477:mariadb -h replica1 -e "SHOW SLAVE STATUS\G" | grep Exec_Master_Log_Pos
+partie-06-replication-haute-disponibilite.md:478:mariadb -h replica2 -e "SHOW SLAVE STATUS\G" | grep Exec_Master_Log_Pos
+
+partie-06-replication-haute-disponibilite.md:556:Latence inter-DC : 15-20ms (acceptable pour Galera)
+partie-06-replication-haute-disponibilite.md:557:Write Performance : Impacté par latence, mais disponibilité garantie
+
+partie-06-replication-haute-disponibilite.md:762:Différentiel : $146,710/an
+partie-06-replication-haute-disponibilite.md:763:Bénéfice : -$3,290 de pertes évitées
+
+01-introduction-fondamentaux/08-installation-configuration.md:27:sudo apt update
+01-introduction-fondamentaux/08-installation-configuration.md:28:sudo apt install mariadb-server
+
+01-introduction-fondamentaux/08-installation-configuration.md:52:brew install mariadb
+01-introduction-fondamentaux/08-installation-configuration.md:53:brew services start mariadb   # démarre le service et l'active au démarrage
+
+01-introduction-fondamentaux/08-installation-configuration.md:78:sudo systemctl enable --now mariadb     # démarre maintenant + au prochain boot
+01-introduction-fondamentaux/08-installation-configuration.md:79:systemctl status mariadb                # doit afficher « active (running) »
+
+01-introduction-fondamentaux/08-installation-configuration.md:79:systemctl status mariadb                # doit afficher « active (running) »
+01-introduction-fondamentaux/08-installation-configuration.md:80:sudo mariadb-secure-installation
+
+02-bases-du-sql/02.1-types-numeriques.md:60:prix DECIMAL(10,2)   -- jusqu'à 99 999 999,99
+02-bases-du-sql/02.1-types-numeriques.md:61:taux DECIMAL(5,4)    -- ex. 0,1975 pour un taux de 19,75 %
+
+02-bases-du-sql/02.1-types-numeriques.md:78:SELECT 0.1 + 0.2;        -- 0.3                  (littéraux DECIMAL : exact)
+02-bases-du-sql/02.1-types-numeriques.md:79:SELECT 0.1e0 + 0.2e0;    -- ≈ 0.30000000000000004 (DOUBLE : approché)
+
+02-bases-du-sql/06-insertion-donnees.md:15:INSERT INTO client (nom, email, pays)
+02-bases-du-sql/06-insertion-donnees.md:16:VALUES ('Dupont', 'dupont@example.com', 'FR');
+
+02-bases-du-sql/06-insertion-donnees.md:37:INSERT INTO client (nom, email) VALUES ('Leroy', 'leroy@example.com');
+02-bases-du-sql/06-insertion-donnees.md:38:SELECT LAST_INSERT_ID();   -- identifiant auto-généré de la dernière insertion
+
+02-bases-du-sql/06-insertion-donnees.md:46:INSERT INTO client_archive (id, nom, email)
+02-bases-du-sql/06-insertion-donnees.md:47:SELECT id, nom, email
+
+02-bases-du-sql/06-insertion-donnees.md:47:SELECT id, nom, email
+02-bases-du-sql/06-insertion-donnees.md:48:FROM client
+
+02-bases-du-sql/06-insertion-donnees.md:48:FROM client
+02-bases-du-sql/06-insertion-donnees.md:49:WHERE actif = FALSE;
+
+02-bases-du-sql/06-insertion-donnees.md:67:INSERT INTO stock (produit_id, quantite) VALUES (42, 10)
+02-bases-du-sql/06-insertion-donnees.md:68:ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite);
+
+02-bases-du-sql/06-insertion-donnees.md:82:LOAD DATA LOCAL INFILE 'clients.csv'
+02-bases-du-sql/06-insertion-donnees.md:83:INTO TABLE client
+
+02-bases-du-sql/06-insertion-donnees.md:83:INTO TABLE client
+02-bases-du-sql/06-insertion-donnees.md:84:FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+
+02-bases-du-sql/06-insertion-donnees.md:84:FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+02-bases-du-sql/06-insertion-donnees.md:85:LINES TERMINATED BY '\n'
+
+02-bases-du-sql/06-insertion-donnees.md:85:LINES TERMINATED BY '\n'
+02-bases-du-sql/06-insertion-donnees.md:86:IGNORE 1 LINES                       -- ignore la ligne d'en-tête
+
+02-bases-du-sql/06-insertion-donnees.md:97:START TRANSACTION;
+02-bases-du-sql/06-insertion-donnees.md:98:INSERT INTO mesure (capteur_id, valeur) VALUES (...);
+
+02-bases-du-sql/06-insertion-donnees.md:98:INSERT INTO mesure (capteur_id, valeur) VALUES (...);
+02-bases-du-sql/06-insertion-donnees.md:99:INSERT INTO mesure (capteur_id, valeur) VALUES (...);
+
+02-bases-du-sql/02.4-types-binaires.md:23:empreinte_sha256  BINARY(32)     -- 32 octets bruts (un hachage SHA-256)
+02-bases-du-sql/02.4-types-binaires.md:24:cle_chiffrement   VARBINARY(64)  -- clé de longueur variable
+
+02-bases-du-sql/02.6-type-xml.md:27:CREATE TABLE t (x XMLTYPE CHARACTER SET utf8mb4);   -- jeu de caractères explicite
+02-bases-du-sql/02.6-type-xml.md:28:CREATE TABLE t (x XMLTYPE BINARY);                  -- collation binaire
+
+02-bases-du-sql/07-requetes-selection-simples.md:27:SELECT nom, prix * quantite AS total
+02-bases-du-sql/07-requetes-selection-simples.md:28:FROM ligne_commande;
+
+02-bases-du-sql/07-requetes-selection-simples.md:48:SELECT nom, pays FROM client
+02-bases-du-sql/07-requetes-selection-simples.md:49:WHERE pays = 'FR' AND actif = TRUE;
+
+02-bases-du-sql/07-requetes-selection-simples.md:55:SELECT nom, prix FROM produit WHERE prix BETWEEN 10 AND 50;
+02-bases-du-sql/07-requetes-selection-simples.md:56:SELECT nom FROM client       WHERE pays IN ('FR', 'BE', 'CH');
+
+02-bases-du-sql/07-requetes-selection-simples.md:56:SELECT nom FROM client       WHERE pays IN ('FR', 'BE', 'CH');
+02-bases-du-sql/07-requetes-selection-simples.md:57:SELECT nom FROM client       WHERE email LIKE '%@example.com';
+
+02-bases-du-sql/07-requetes-selection-simples.md:69:SELECT nom FROM client
+02-bases-du-sql/07-requetes-selection-simples.md:70:WHERE pays = 'FR' AND (statut = 'actif' OR statut = 'premium');
+
+02-bases-du-sql/07-requetes-selection-simples.md:78:SELECT nom, prix FROM produit
+02-bases-du-sql/07-requetes-selection-simples.md:79:ORDER BY prix DESC;                  -- du plus cher au moins cher
+
+02-bases-du-sql/07-requetes-selection-simples.md:81:SELECT nom, pays, prix FROM produit
+02-bases-du-sql/07-requetes-selection-simples.md:82:ORDER BY pays ASC, prix DESC;        -- d'abord par pays, puis par prix décroissant
+
+02-bases-du-sql/07-requetes-selection-simples.md:88:SELECT nom, date_livraison FROM commande
+02-bases-du-sql/07-requetes-selection-simples.md:89:ORDER BY date_livraison IS NULL, date_livraison;   -- place les NULL à la fin
+
+02-bases-du-sql/07-requetes-selection-simples.md:97:SELECT nom, prix FROM produit
+02-bases-du-sql/07-requetes-selection-simples.md:98:ORDER BY prix DESC
+
+02-bases-du-sql/07-requetes-selection-simples.md:98:ORDER BY prix DESC
+02-bases-du-sql/07-requetes-selection-simples.md:99:LIMIT 5;                             -- les 5 produits les plus chers
+
+02-bases-du-sql/07-requetes-selection-simples.md:105:SELECT nom FROM produit ORDER BY id LIMIT 40, 20;       -- LIMIT offset, nombre
+02-bases-du-sql/07-requetes-selection-simples.md:106:SELECT nom FROM produit ORDER BY id LIMIT 20 OFFSET 40; -- forme équivalente
+
+02-bases-du-sql/02.5-types-specifiques-mariadb.md:68:INSERT INTO document (contenu, embedding)
+02-bases-du-sql/02.5-types-specifiques-mariadb.md:69:VALUES ('…', VEC_FromText('[0.12, -0.03, 0.88, …]'));
+
+02-bases-du-sql/02.2-types-texte.md:17:code_pays  CHAR(2)        -- 'FR', 'US' : longueur fixe
+02-bases-du-sql/02.2-types-texte.md:18:nom        VARCHAR(100)   -- longueur variable, jusqu'à 100 caractères
+
+02-bases-du-sql/02.2-types-texte.md:18:nom        VARCHAR(100)   -- longueur variable, jusqu'à 100 caractères
+02-bases-du-sql/02.2-types-texte.md:19:empreinte  CHAR(64)       -- ex. un hachage SHA-256 en hexadécimal
+
+02-bases-du-sql/05-contraintes.md:36:quantite  INT UNSIGNED NOT NULL DEFAULT 1
+02-bases-du-sql/05-contraintes.md:37:cree_le   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+02-bases-du-sql/05-contraintes.md:45:email      VARCHAR(255) NOT NULL UNIQUE       -- unicité sur une colonne
+02-bases-du-sql/05-contraintes.md:46:UNIQUE (commande_id, produit_id)              -- unicité sur un couple de colonnes
+
+02-bases-du-sql/05-contraintes.md:78:CONSTRAINT chk_montant_positif CHECK (montant >= 0)
+02-bases-du-sql/05-contraintes.md:79:CHECK (statut IN ('en_attente','payee','expediee','annulee'))
+
+02-bases-du-sql/05-contraintes.md:79:CHECK (statut IN ('en_attente','payee','expediee','annulee'))
+02-bases-du-sql/05-contraintes.md:80:CHECK (date_fin >= date_debut)
+
+02-bases-du-sql/05-contraintes.md:94:ALTER TABLE commande ADD UNIQUE (reference);
+02-bases-du-sql/05-contraintes.md:95:ALTER TABLE commande ADD CONSTRAINT chk_montant_positif CHECK (montant >= 0);
+
+02-bases-du-sql/05-contraintes.md:95:ALTER TABLE commande ADD CONSTRAINT chk_montant_positif CHECK (montant >= 0);
+02-bases-du-sql/05-contraintes.md:96:ALTER TABLE commande DROP FOREIGN KEY fk_commande_client;   -- par son nom
+
+02-bases-du-sql/05-contraintes.md:96:ALTER TABLE commande DROP FOREIGN KEY fk_commande_client;   -- par son nom
+02-bases-du-sql/05-contraintes.md:97:ALTER TABLE commande DROP CONSTRAINT chk_montant_positif;
+
+02-bases-du-sql/05-contraintes.md:97:ALTER TABLE commande DROP CONSTRAINT chk_montant_positif;
+02-bases-du-sql/05-contraintes.md:98:ALTER TABLE commande MODIFY COLUMN statut VARCHAR(20) NULL; -- lever un NOT NULL
+
+02-bases-du-sql/02.3-types-temporels.md:39:rendez_vous   DATETIME    -- '2026-06-03 14:00:00' reste tel quel
+02-bases-du-sql/02.3-types-temporels.md:40:evenement_le  TIMESTAMP   -- moment absolu, réexprimé dans l'heure locale de la session
+
+02-bases-du-sql/02.3-types-temporels.md:52:mesure_le DATETIME(3)   -- précision à la milliseconde
+02-bases-du-sql/02.3-types-temporels.md:53:trace_le  TIMESTAMP(6)  -- précision à la microseconde
+
+02-bases-du-sql/02.3-types-temporels.md:80:SELECT NOW();             -- date/heure courante, selon le time_zone de la session
+02-bases-du-sql/02.3-types-temporels.md:81:SELECT UTC_TIMESTAMP();   -- date/heure courante en UTC
+
+02-bases-du-sql/02.3-types-temporels.md:81:SELECT UTC_TIMESTAMP();   -- date/heure courante en UTC
+02-bases-du-sql/02.3-types-temporels.md:82:SELECT CURDATE();         -- date courante seule
+
+02-bases-du-sql/01-introduction-langage-sql.md:82:SELECT id, nom, prix
+02-bases-du-sql/01-introduction-langage-sql.md:83:FROM produit
+
+02-bases-du-sql/01-introduction-langage-sql.md:83:FROM produit
+02-bases-du-sql/01-introduction-langage-sql.md:84:WHERE prix < 100
+
+02-bases-du-sql/01-introduction-langage-sql.md:84:WHERE prix < 100
+02-bases-du-sql/01-introduction-langage-sql.md:85:ORDER BY prix DESC;
+
+02-bases-du-sql/04-creation-modification-tables.md:41:CREATE TABLE IF NOT EXISTS client ( /* ... */ );
+02-bases-du-sql/04-creation-modification-tables.md:42:CREATE OR REPLACE TABLE client ( /* ... */ );   -- ⚠ supprime la table existante d'abord
+
+02-bases-du-sql/04-creation-modification-tables.md:54:CREATE TABLE client_archive LIKE client;                          -- structure seule
+02-bases-du-sql/04-creation-modification-tables.md:55:CREATE TABLE client_fr AS SELECT * FROM client WHERE pays = 'FR'; -- colonnes + données (sans clés ni index)
+
+02-bases-du-sql/04-creation-modification-tables.md:55:CREATE TABLE client_fr AS SELECT * FROM client WHERE pays = 'FR'; -- colonnes + données (sans clés ni index)
+02-bases-du-sql/04-creation-modification-tables.md:56:CREATE TEMPORARY TABLE resultats_tmp AS SELECT ...;               -- table de session
+
+02-bases-du-sql/04-creation-modification-tables.md:64:SHOW TABLES;                  -- liste des tables de la base courante
+02-bases-du-sql/04-creation-modification-tables.md:65:SHOW CREATE TABLE client;     -- instruction CREATE complète, avec options
+
+02-bases-du-sql/04-creation-modification-tables.md:65:SHOW CREATE TABLE client;     -- instruction CREATE complète, avec options
+02-bases-du-sql/04-creation-modification-tables.md:66:DESCRIBE client;              -- colonnes, types, nullabilité, clés (alias : DESC)
+
+02-bases-du-sql/04-creation-modification-tables.md:66:DESCRIBE client;              -- colonnes, types, nullabilité, clés (alias : DESC)
+02-bases-du-sql/04-creation-modification-tables.md:67:SHOW COLUMNS FROM client;     -- équivalent de DESCRIBE
+
+02-bases-du-sql/04-creation-modification-tables.md:77:ALTER TABLE client ADD COLUMN telephone VARCHAR(20) AFTER email;  -- ajouter (position optionnelle)
+02-bases-du-sql/04-creation-modification-tables.md:78:ALTER TABLE client MODIFY COLUMN nom VARCHAR(150) NOT NULL;       -- changer type/attributs
+
+02-bases-du-sql/04-creation-modification-tables.md:78:ALTER TABLE client MODIFY COLUMN nom VARCHAR(150) NOT NULL;       -- changer type/attributs
+02-bases-du-sql/04-creation-modification-tables.md:79:ALTER TABLE client CHANGE COLUMN nom nom_complet VARCHAR(150);    -- renommer ET redéfinir
+
+02-bases-du-sql/04-creation-modification-tables.md:79:ALTER TABLE client CHANGE COLUMN nom nom_complet VARCHAR(150);    -- renommer ET redéfinir
+02-bases-du-sql/04-creation-modification-tables.md:80:ALTER TABLE client RENAME COLUMN pays TO code_pays;               -- renommer seulement
+
+02-bases-du-sql/04-creation-modification-tables.md:80:ALTER TABLE client RENAME COLUMN pays TO code_pays;               -- renommer seulement
+02-bases-du-sql/04-creation-modification-tables.md:81:ALTER TABLE client DROP COLUMN actif;                             -- supprimer
+
+02-bases-du-sql/04-creation-modification-tables.md:81:ALTER TABLE client DROP COLUMN actif;                             -- supprimer
+02-bases-du-sql/04-creation-modification-tables.md:82:ALTER TABLE client ALTER COLUMN code_pays SET DEFAULT 'BE';       -- ajuster la valeur par défaut
+
+02-bases-du-sql/04-creation-modification-tables.md:97:ALTER TABLE client RENAME TO usager;                 -- (équivaut à RENAME TABLE client TO usager)
+02-bases-du-sql/04-creation-modification-tables.md:98:ALTER TABLE usager ENGINE=InnoDB;                    -- changer/reconstruire avec un moteur
+
+02-bases-du-sql/04-creation-modification-tables.md:98:ALTER TABLE usager ENGINE=InnoDB;                    -- changer/reconstruire avec un moteur
+02-bases-du-sql/04-creation-modification-tables.md:99:ALTER TABLE usager CONVERT TO CHARACTER SET utf8mb4
+
+02-bases-du-sql/04-creation-modification-tables.md:116:DROP TABLE IF EXISTS client;
+02-bases-du-sql/04-creation-modification-tables.md:117:DROP TABLE commande, ligne_commande;   -- plusieurs tables en une instruction
+
+02-bases-du-sql/03-creation-gestion-bases.md:43:SHOW DATABASES;
+02-bases-du-sql/03-creation-gestion-bases.md:44:SHOW DATABASES LIKE 'bout%';
+
+02-bases-du-sql/03-creation-gestion-bases.md:60:USE boutique;
+02-bases-du-sql/03-creation-gestion-bases.md:61:SELECT * FROM client;            -- 'client' est cherchée dans 'boutique'
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:15:UPDATE client
+02-bases-du-sql/08-mise-a-jour-suppression.md:16:SET pays = 'BE'
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:16:SET pays = 'BE'
+02-bases-du-sql/08-mise-a-jour-suppression.md:17:WHERE id = 42;
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:19:UPDATE produit
+02-bases-du-sql/08-mise-a-jour-suppression.md:20:SET prix = prix * 1.10                 -- expression : +10 % sur le prix
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:20:SET prix = prix * 1.10                 -- expression : +10 % sur le prix
+02-bases-du-sql/08-mise-a-jour-suppression.md:21:WHERE categorie = 'electronique';
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:33:UPDATE commande SET statut = 'archivee'
+02-bases-du-sql/08-mise-a-jour-suppression.md:34:WHERE statut = 'expediee'
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:34:WHERE statut = 'expediee'
+02-bases-du-sql/08-mise-a-jour-suppression.md:35:ORDER BY cree_le
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:35:ORDER BY cree_le
+02-bases-du-sql/08-mise-a-jour-suppression.md:36:LIMIT 1000;
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:46:DELETE FROM client WHERE id = 42;
+02-bases-du-sql/08-mise-a-jour-suppression.md:47:DELETE FROM log    WHERE cree_le < '2025-01-01';
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:59:DELETE FROM log WHERE cree_le < '2025-01-01'
+02-bases-du-sql/08-mise-a-jour-suppression.md:60:ORDER BY cree_le
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:60:ORDER BY cree_le
+02-bases-du-sql/08-mise-a-jour-suppression.md:61:LIMIT 5000;
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:67:DELETE FROM commande WHERE statut = 'annulee'
+02-bases-du-sql/08-mise-a-jour-suppression.md:68:RETURNING id, reference;
+
+02-bases-du-sql/08-mise-a-jour-suppression.md:108:START TRANSACTION;
+02-bases-du-sql/08-mise-a-jour-suppression.md:109:UPDATE client SET actif = FALSE WHERE pays = 'XX';
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:49:SELECT id, montant
+03-requetes-sql-intermediaires/04-sous-requetes.md:50:FROM commande
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:50:FROM commande
+03-requetes-sql-intermediaires/04-sous-requetes.md:51:WHERE montant > (SELECT AVG(montant) FROM commande);
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:70:SELECT nom
+03-requetes-sql-intermediaires/04-sous-requetes.md:71:FROM client
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:71:FROM client
+03-requetes-sql-intermediaires/04-sous-requetes.md:72:WHERE id IN (SELECT client_id FROM commande);
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:88:SELECT nom
+03-requetes-sql-intermediaires/04-sous-requetes.md:89:FROM client
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:89:FROM client
+03-requetes-sql-intermediaires/04-sous-requetes.md:90:WHERE id NOT IN (SELECT client_id FROM commande);   -- renvoie : Petit
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:104:SELECT c.nom
+03-requetes-sql-intermediaires/04-sous-requetes.md:105:FROM client c
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:105:FROM client c
+03-requetes-sql-intermediaires/04-sous-requetes.md:106:WHERE EXISTS (
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:127:SELECT c.nom
+03-requetes-sql-intermediaires/04-sous-requetes.md:128:FROM client c
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:128:FROM client c
+03-requetes-sql-intermediaires/04-sous-requetes.md:129:WHERE NOT EXISTS (
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:157:SELECT id, montant
+03-requetes-sql-intermediaires/04-sous-requetes.md:158:FROM commande
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:158:FROM commande
+03-requetes-sql-intermediaires/04-sous-requetes.md:159:WHERE montant > ALL (
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:177:SELECT id, client_id, montant
+03-requetes-sql-intermediaires/04-sous-requetes.md:178:FROM commande
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:178:FROM commande
+03-requetes-sql-intermediaires/04-sous-requetes.md:179:WHERE (client_id, montant) IN (
+
+03-requetes-sql-intermediaires/04-sous-requetes.md:230:SELECT AVG(total_client) AS moyenne_des_totaux
+03-requetes-sql-intermediaires/04-sous-requetes.md:231:FROM (
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:99:SELECT SUM(DISTINCT montant) AS somme_montants_distincts
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:100:FROM commande;
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:127:SELECT AVG(COALESCE(remise, 0)) AS remise_moyenne_globale
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:128:FROM commande;   -- 50.00 / 5 = 10.00
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:161:SELECT MAX(montant) - MIN(montant) AS amplitude
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:162:FROM commande;   -- 200.00 - 80.50 = 119.50
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:192:FROM commande
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:193:WHERE region = 'Ouest';   -- aucune commande dans cette région
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:203:SELECT COALESCE(SUM(montant), 0) AS ca
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:204:FROM commande
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:204:FROM commande
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:205:WHERE region = 'Ouest';   -- renvoie 0.00 au lieu de NULL
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:218:FROM commande
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:219:WHERE region = 'Nord';
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:230:SELECT region
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:231:FROM commande
+
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:231:FROM commande
+03-requetes-sql-intermediaires/01-fonctions-agregation.md:232:WHERE SUM(montant) > 100;
+
+03-requetes-sql-intermediaires/03.4-self-join.md:50:SELECT e.nom AS employe, m.nom AS manager
+03-requetes-sql-intermediaires/03.4-self-join.md:51:FROM employe e
+
+03-requetes-sql-intermediaires/03.4-self-join.md:51:FROM employe e
+03-requetes-sql-intermediaires/03.4-self-join.md:52:INNER JOIN employe m ON e.manager_id = m.id;
+
+03-requetes-sql-intermediaires/03.4-self-join.md:87:FROM employe e
+03-requetes-sql-intermediaires/03.4-self-join.md:88:LEFT JOIN employe m ON e.manager_id = m.id;
+
+03-requetes-sql-intermediaires/03.4-self-join.md:110:SELECT e1.nom AS collegue_1, e2.nom AS collegue_2
+03-requetes-sql-intermediaires/03.4-self-join.md:111:FROM employe e1
+
+03-requetes-sql-intermediaires/03.4-self-join.md:111:FROM employe e1
+03-requetes-sql-intermediaires/03.4-self-join.md:112:INNER JOIN employe e2
+
+03-requetes-sql-intermediaires/03.4-self-join.md:137:FROM employe e
+03-requetes-sql-intermediaires/03.4-self-join.md:138:INNER JOIN employe m ON e.manager_id = m.id
+
+03-requetes-sql-intermediaires/03.4-self-join.md:138:INNER JOIN employe m ON e.manager_id = m.id
+03-requetes-sql-intermediaires/03.4-self-join.md:139:WHERE e.salaire > m.salaire;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:37:SELECT colonnes
+03-requetes-sql-intermediaires/03.2-left-right-join.md:38:FROM table_gauche
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:38:FROM table_gauche
+03-requetes-sql-intermediaires/03.2-left-right-join.md:39:LEFT JOIN table_droite
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:50:SELECT c.nom, cmd.id AS commande, cmd.montant
+03-requetes-sql-intermediaires/03.2-left-right-join.md:51:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:51:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:52:LEFT JOIN commande cmd ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:76:SELECT c.nom
+03-requetes-sql-intermediaires/03.2-left-right-join.md:77:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:77:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:78:LEFT JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:78:LEFT JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.2-left-right-join.md:79:WHERE cmd.id IS NULL;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:97:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.2-left-right-join.md:98:FROM commande cmd
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:98:FROM commande cmd
+03-requetes-sql-intermediaires/03.2-left-right-join.md:99:RIGHT JOIN client c ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:117:SELECT c.nom, cmd.id AS commande, cmd.montant
+03-requetes-sql-intermediaires/03.2-left-right-join.md:118:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:118:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:119:LEFT JOIN commande cmd
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:136:SELECT c.nom, cmd.id AS commande, cmd.montant
+03-requetes-sql-intermediaires/03.2-left-right-join.md:137:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:137:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:138:LEFT JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:138:LEFT JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.2-left-right-join.md:139:WHERE cmd.montant > 100;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:170:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:171:LEFT JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:171:LEFT JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.2-left-right-join.md:172:GROUP BY c.id, c.nom;
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:196:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.2-left-right-join.md:197:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:197:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:198:LEFT JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:202:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.2-left-right-join.md:203:FROM client c
+
+03-requetes-sql-intermediaires/03.2-left-right-join.md:203:FROM client c
+03-requetes-sql-intermediaires/03.2-left-right-join.md:204:RIGHT JOIN commande cmd ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:46:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:47:GROUP BY region;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:66:SELECT region, client, SUM(montant) AS ca
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:67:FROM commande
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:67:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:68:GROUP BY region;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:89:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:90:GROUP BY region, client;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:109:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:110:GROUP BY YEAR(date_cmd), MONTH(date_cmd)
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:110:GROUP BY YEAR(date_cmd), MONTH(date_cmd)
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:111:ORDER BY annee, mois;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:125:SELECT remise, COUNT(*) AS nb
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:126:FROM commande
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:126:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:127:GROUP BY remise;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:153:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:154:GROUP BY region;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:180:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:181:GROUP BY region WITH ROLLUP;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:199:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:200:GROUP BY region WITH ROLLUP;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:217:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:218:GROUP BY region
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:218:GROUP BY region
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:219:HAVING SUM(montant) > 200;
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:237:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:238:GROUP BY region
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:238:GROUP BY region
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:239:HAVING ca > 200;     -- réutilise l'alias « ca »
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:261:FROM commande
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:262:WHERE montant >= 100     -- filtre les LIGNES avant regroupement
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:262:WHERE montant >= 100     -- filtre les LIGNES avant regroupement
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:263:GROUP BY region
+
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:263:GROUP BY region
+03-requetes-sql-intermediaires/02-regroupement-donnees.md:264:HAVING COUNT(*) >= 2;    -- filtre les GROUPES après regroupement
+
+03-requetes-sql-intermediaires/07-fonctions-dates-heures.md:166:FROM commande
+03-requetes-sql-intermediaires/07-fonctions-dates-heures.md:167:GROUP BY DATE_FORMAT(date_cmd, '%Y-%m')
+
+03-requetes-sql-intermediaires/07-fonctions-dates-heures.md:167:GROUP BY DATE_FORMAT(date_cmd, '%Y-%m')
+03-requetes-sql-intermediaires/07-fonctions-dates-heures.md:168:ORDER BY mois;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:21:SELECT colonnes
+03-requetes-sql-intermediaires/03.3-cross-join.md:22:FROM table_a
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:22:FROM table_a
+03-requetes-sql-intermediaires/03.3-cross-join.md:23:CROSS JOIN table_b;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:30:SELECT colonnes
+03-requetes-sql-intermediaires/03.3-cross-join.md:31:FROM table_a, table_b;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:43:SELECT t.taille, c.couleur
+03-requetes-sql-intermediaires/03.3-cross-join.md:44:FROM taille t
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:44:FROM taille t
+03-requetes-sql-intermediaires/03.3-cross-join.md:45:CROSS JOIN couleur c;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:71:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03.3-cross-join.md:72:FROM client c, commande cmd;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:96:FROM region r
+03-requetes-sql-intermediaires/03.3-cross-join.md:97:CROSS JOIN mois m
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:97:CROSS JOIN mois m
+03-requetes-sql-intermediaires/03.3-cross-join.md:98:LEFT JOIN vente v
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:114:FROM commande cmd
+03-requetes-sql-intermediaires/03.3-cross-join.md:115:CROSS JOIN (SELECT 0.20 AS taux_tva) p;
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:137:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03.3-cross-join.md:138:FROM client c CROSS JOIN commande cmd
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:138:FROM client c CROSS JOIN commande cmd
+03-requetes-sql-intermediaires/03.3-cross-join.md:139:WHERE c.id = cmd.client_id;          -- = INNER JOIN
+
+03-requetes-sql-intermediaires/03.3-cross-join.md:141:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03.3-cross-join.md:142:FROM client c INNER JOIN commande cmd
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:63:SELECT email, nom FROM client_web
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:64:UNION
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:64:UNION
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:65:SELECT email, nom FROM client_magasin;
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:80:SELECT email, nom FROM client_web
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:81:UNION ALL
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:81:UNION ALL
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:82:SELECT email, nom FROM client_magasin;
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:96:SELECT email, nom FROM client_web
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:97:INTERSECT
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:97:INTERSECT
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:98:SELECT email, nom FROM client_magasin;
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:115:SELECT email, nom FROM client_web
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:116:EXCEPT
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:116:EXCEPT
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:117:SELECT email, nom FROM client_magasin;
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:136:SELECT email, nom FROM client_web
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:137:UNION
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:137:UNION
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:138:SELECT email, nom FROM client_magasin
+
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:138:SELECT email, nom FROM client_magasin
+03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md:139:ORDER BY nom;
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:46:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:47:FROM client c, commande cmd
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:47:FROM client c, commande cmd
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:48:WHERE c.id = cmd.client_id(+);
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:64:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:65:FROM client c
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:65:FROM client c
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:66:LEFT JOIN commande cmd ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:76:SELECT c.nom, cmd.id AS commande
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:77:FROM client c, commande cmd
+
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:77:FROM client c, commande cmd
+03-requetes-sql-intermediaires/03.5-oracle-outer-join.md:78:WHERE c.id(+) = cmd.client_id;
+
+03-requetes-sql-intermediaires/03-jointures.md:23:SELECT colonnes
+03-requetes-sql-intermediaires/03-jointures.md:24:FROM table_gauche
+
+03-requetes-sql-intermediaires/03-jointures.md:86:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03-jointures.md:87:FROM client c, commande cmd
+
+03-requetes-sql-intermediaires/03-jointures.md:87:FROM client c, commande cmd
+03-requetes-sql-intermediaires/03-jointures.md:88:WHERE c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03-jointures.md:95:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03-jointures.md:96:FROM client c
+
+03-requetes-sql-intermediaires/03-jointures.md:96:FROM client c
+03-requetes-sql-intermediaires/03-jointures.md:97:JOIN commande cmd ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03-jointures.md:120:SELECT nom, montant
+03-requetes-sql-intermediaires/03-jointures.md:121:FROM client
+
+03-requetes-sql-intermediaires/03-jointures.md:121:FROM client
+03-requetes-sql-intermediaires/03-jointures.md:122:JOIN commande USING (client_id);
+
+03-requetes-sql-intermediaires/08-expressions-conditionnelles.md:149:FROM client c
+03-requetes-sql-intermediaires/08-expressions-conditionnelles.md:150:LEFT JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/08-expressions-conditionnelles.md:150:LEFT JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/08-expressions-conditionnelles.md:151:GROUP BY c.id, c.nom;
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:48:SELECT colonnes
+03-requetes-sql-intermediaires/03.1-inner-join.md:49:FROM table_gauche
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:49:FROM table_gauche
+03-requetes-sql-intermediaires/03.1-inner-join.md:50:INNER JOIN table_droite
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:68:SELECT c.nom, cmd.id AS commande, cmd.montant
+03-requetes-sql-intermediaires/03.1-inner-join.md:69:FROM client c
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:69:FROM client c
+03-requetes-sql-intermediaires/03.1-inner-join.md:70:INNER JOIN commande cmd ON c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:107:FROM client c   INNER JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.1-inner-join.md:108:FROM commande cmd INNER JOIN client c   ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:121:SELECT c.nom, cmd.id AS commande, cmd.montant
+03-requetes-sql-intermediaires/03.1-inner-join.md:122:FROM client c, commande cmd
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:122:FROM client c, commande cmd
+03-requetes-sql-intermediaires/03.1-inner-join.md:123:WHERE c.id = cmd.client_id;
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:135:SELECT c.nom, cmd.montant
+03-requetes-sql-intermediaires/03.1-inner-join.md:136:FROM client c
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:136:FROM client c
+03-requetes-sql-intermediaires/03.1-inner-join.md:137:INNER JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:137:INNER JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.1-inner-join.md:138:WHERE cmd.montant > 100;
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:160:FROM client c
+03-requetes-sql-intermediaires/03.1-inner-join.md:161:INNER JOIN commande cmd ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:161:INNER JOIN commande cmd ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.1-inner-join.md:162:GROUP BY c.id, c.nom;
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:200:SELECT ...
+03-requetes-sql-intermediaires/03.1-inner-join.md:201:FROM client c
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:201:FROM client c
+03-requetes-sql-intermediaires/03.1-inner-join.md:202:INNER JOIN commande cmd   ON c.id = cmd.client_id
+
+03-requetes-sql-intermediaires/03.1-inner-join.md:202:INNER JOIN commande cmd   ON c.id = cmd.client_id
+03-requetes-sql-intermediaires/03.1-inner-join.md:203:INNER JOIN ligne_cmd l    ON l.commande_id = cmd.id;
+
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:44:SELECT TO_CHAR('2026-06-03', 'DD/MM/YYYY')          AS date_fr;   -- '03/06/2026'
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:45:SELECT TO_CHAR('2026-06-03 14:30:00', 'HH24:MI:SS') AS heure;     -- '14:30:00'
+
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:61:SELECT CONCAT('[', TO_CHAR('2026-01-06', 'DAY'),   ']') AS sans_fm;  -- '[Tuesday  ]'
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:62:SELECT CONCAT('[', TO_CHAR('2026-01-06', 'FMDAY'), ']') AS avec_fm;  -- '[Tuesday]'
+
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:104:SELECT TRUNC('2026-06-03 14:30:00', 'MM')   AS debut_mois;   -- 2026-06-01 00:00:00
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:105:SELECT TRUNC('2026-06-03 14:30:00', 'YYYY') AS debut_annee;  -- 2026-01-01 00:00:00
+
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:105:SELECT TRUNC('2026-06-03 14:30:00', 'YYYY') AS debut_annee;  -- 2026-01-01 00:00:00
+03-requetes-sql-intermediaires/07.1-fonctions-oracle.md:106:SELECT TRUNC('2026-06-03 14:30:00')         AS jour;         -- 2026-06-03 00:00:00
+
+08-programmation-cote-serveur/07-variables-flow-control.md:12:DECLARE v_compteur INT DEFAULT 0;
+08-programmation-cote-serveur/07-variables-flow-control.md:13:DECLARE v_nom VARCHAR(100);
+
+08-programmation-cote-serveur/07-variables-flow-control.md:13:DECLARE v_nom VARCHAR(100);
+08-programmation-cote-serveur/07-variables-flow-control.md:14:DECLARE v_prix, v_remise DECIMAL(10,2);
+
+08-programmation-cote-serveur/07-variables-flow-control.md:20:SET v_compteur = v_compteur + 1;
+08-programmation-cote-serveur/07-variables-flow-control.md:21:SELECT nom INTO v_nom FROM clients WHERE id = 1;
+
+08-programmation-cote-serveur/07-variables-flow-control.md:92:UNTIL v_compteur >= 10
+08-programmation-cote-serveur/07-variables-flow-control.md:93:END REPEAT;
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:28:CREATE PROCEDURE augmenter_prix(IN p_pct DECIMAL(5,2))
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:29:BEGIN
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:51:CREATE PROCEDURE compter_produits(OUT p_nb INT)
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:52:BEGIN
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:58:CALL compter_produits(@n);
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:59:SELECT @n;        -- le nombre de produits
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:67:CREATE PROCEDURE demo_out(OUT p_val INT)
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:68:BEGIN
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:75:SET @x = 99;
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:76:CALL demo_out(@x);
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:76:CALL demo_out(@x);
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:77:SELECT @x;        -- -1, et non 99 : la valeur d'entrée a été ignorée
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:99:SET @total = 200.00;
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:100:CALL appliquer_remise(@total, 15);   -- remise de 15 %
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:100:CALL appliquer_remise(@total, 15);   -- remise de 15 %
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:101:SELECT @total;                       -- 170.00
+
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:131:AS
+08-programmation-cote-serveur/01.2-parametres-in-out-inout.md:132:BEGIN
+
+08-programmation-cote-serveur/05.2-sys-refcursor.md:24:CREATE OR REPLACE PROCEDURE lister_par_statut(p_statut VARCHAR(20))
+08-programmation-cote-serveur/05.2-sys-refcursor.md:25:AS
+
+08-programmation-cote-serveur/05.1-curseurs-prepared-statements.md:32:CREATE OR REPLACE PROCEDURE archiver_table(IN p_table VARCHAR(64))
+08-programmation-cote-serveur/05.1-curseurs-prepared-statements.md:33:BEGIN
+
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:30:CREATE OR REPLACE PROCEDURE transferer(IN p_de INT, IN p_vers INT, IN p_montant DECIMAL(10,2))
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:31:BEGIN
+
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:62:CREATE OR REPLACE PROCEDURE definir_prix(IN p_id INT, IN p_prix DECIMAL(10,2))
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:63:BEGIN
+
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:83:CREATE OR REPLACE PROCEDURE inserer_avec_log(IN p_valeur INT)
+08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md:84:BEGIN
+
+08-programmation-cote-serveur/02.1-syntaxe-create-function.md:103:AS
+08-programmation-cote-serveur/02.1-syntaxe-create-function.md:104:BEGIN
+
+08-programmation-cote-serveur/02.2-caracteristiques-fonction.md:53:ERROR 1418 (HY000): This function has none of DETERMINISTIC, NO SQL,
+08-programmation-cote-serveur/02.2-caracteristiques-fonction.md:54:or READS SQL DATA in its declaration and binary logging is enabled ...
+
+08-programmation-cote-serveur/05-curseurs.md:37:CREATE OR REPLACE PROCEDURE traiter_commandes_en_attente()
+08-programmation-cote-serveur/05-curseurs.md:38:BEGIN
+
+08-programmation-cote-serveur/04.1-create-event.md:38:CREATE EVENT ev_rappel_unique
+08-programmation-cote-serveur/04.1-create-event.md:39:ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
+
+08-programmation-cote-serveur/04.1-create-event.md:39:ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
+08-programmation-cote-serveur/04.1-create-event.md:40:DO
+
+08-programmation-cote-serveur/04.1-create-event.md:48:CREATE EVENT ev_purge_sessions
+08-programmation-cote-serveur/04.1-create-event.md:49:ON SCHEDULE EVERY 1 DAY STARTS CURRENT_TIMESTAMP + INTERVAL 1 DAY
+
+08-programmation-cote-serveur/04.1-create-event.md:49:ON SCHEDULE EVERY 1 DAY STARTS CURRENT_TIMESTAMP + INTERVAL 1 DAY
+08-programmation-cote-serveur/04.1-create-event.md:50:DO
+
+08-programmation-cote-serveur/04.1-create-event.md:74:CREATE OR REPLACE EVENT ev_maintenance_nocturne
+08-programmation-cote-serveur/04.1-create-event.md:75:ON SCHEDULE
+
+08-programmation-cote-serveur/04.1-create-event.md:79:ON COMPLETION PRESERVE
+08-programmation-cote-serveur/04.1-create-event.md:80:COMMENT 'Maintenance nocturne : purge et statistiques'
+
+08-programmation-cote-serveur/04.1-create-event.md:80:COMMENT 'Maintenance nocturne : purge et statistiques'
+08-programmation-cote-serveur/04.1-create-event.md:81:DO
+
+08-programmation-cote-serveur/04.1-create-event.md:81:DO
+08-programmation-cote-serveur/04.1-create-event.md:82:BEGIN
+
+08-programmation-cote-serveur/01.3-appel-call.md:38:CREATE PROCEDURE lister_produits_chers(IN p_seuil DECIMAL(10,2))
+08-programmation-cote-serveur/01.3-appel-call.md:39:BEGIN
+
+08-programmation-cote-serveur/01.3-appel-call.md:56:CREATE PROCEDURE tableau_de_bord()
+08-programmation-cote-serveur/01.3-appel-call.md:57:BEGIN
+
+08-programmation-cote-serveur/01.3-appel-call.md:77:CREATE PROCEDURE traiter_client(IN p_client_id INT)
+08-programmation-cote-serveur/01.3-appel-call.md:78:BEGIN
+
+08-programmation-cote-serveur/01.3-appel-call.md:101:PREPARE appel FROM 'CALL nb_commandes_client(?, @total)';
+08-programmation-cote-serveur/01.3-appel-call.md:102:SET @id = 42;
+
+08-programmation-cote-serveur/01.3-appel-call.md:102:SET @id = 42;
+08-programmation-cote-serveur/01.3-appel-call.md:103:EXECUTE appel USING @id;
+
+08-programmation-cote-serveur/01.3-appel-call.md:103:EXECUTE appel USING @id;
+08-programmation-cote-serveur/01.3-appel-call.md:104:SELECT @total;
+
+08-programmation-cote-serveur/01.3-appel-call.md:104:SELECT @total;
+08-programmation-cote-serveur/01.3-appel-call.md:105:DEALLOCATE PREPARE appel;
+
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:34:CREATE OR REPLACE PROCEDURE demo_salaires()
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:35:AS
+
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:67:CREATE OR REPLACE PROCEDURE lister_salaires(p_resultat OUT VARCHAR2(200))
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:68:AS
+
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:89:CALL lister_salaires(@r);
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:90:SELECT @r;
+
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:103:TYPE t_repertoire IS TABLE OF personne_t INDEX BY VARCHAR2(20);
+08-programmation-cote-serveur/01.4-tableaux-associatifs.md:104:repertoire t_repertoire;
+
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:64:CREATE PROCEDURE bonjour()
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:65:BEGIN
+
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:128:CALL nb_commandes_client(42, @total);
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:129:SELECT @total;
+
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:145:AS
+08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md:146:BEGIN
+
+partie-02-requetes-sql-intermediaires-avancees.md:93:DELETE FROM commandes
+partie-02-requetes-sql-intermediaires-avancees.md:94:WHERE id IN (SELECT id FROM doublons WHERE rn > 1);
+
+partie-02-requetes-sql-intermediaires-avancees.md:219:FROM profils_utilisateur
+partie-02-requetes-sql-intermediaires-avancees.md:220:WHERE ville = 'Paris';
+
+partie-02-requetes-sql-intermediaires-avancees.md:244:FROM activite_cohorte
+partie-02-requetes-sql-intermediaires-avancees.md:245:ORDER BY mois_cohorte, mois_activite;
+
+partie-02-requetes-sql-intermediaires-avancees.md:267:FROM logs_application
+partie-02-requetes-sql-intermediaires-avancees.md:268:WHERE niveau = 'ERROR'
+
+partie-02-requetes-sql-intermediaires-avancees.md:268:WHERE niveau = 'ERROR'
+partie-02-requetes-sql-intermediaires-avancees.md:269:ORDER BY erreurs_utilisateur DESC;
+
+partie-07-performance-tuning.md:183:innodb_alter_copy_bulk = ON
+partie-07-performance-tuning.md:184:innodb_sort_buffer_size = 64M  # Augmenter pour grandes tables
+
+partie-07-performance-tuning.md:184:innodb_sort_buffer_size = 64M  # Augmenter pour grandes tables
+partie-07-performance-tuning.md:185:tmpdir = /fast-ssd/tmp         # SSD pour fichiers temporaires
+
+partie-07-performance-tuning.md:234:EXPLAIN FORMAT=JSON 
+partie-07-performance-tuning.md:235:SELECT * FROM orders WHERE customer_id = 12345;
+
+partie-07-performance-tuning.md:394:FROM performance_schema.events_statements_summary_by_digest
+partie-07-performance-tuning.md:395:WHERE SCHEMA_NAME = 'production_db'
+
+partie-07-performance-tuning.md:395:WHERE SCHEMA_NAME = 'production_db'
+partie-07-performance-tuning.md:396:ORDER BY SUM_TIMER_WAIT DESC
+
+partie-07-performance-tuning.md:396:ORDER BY SUM_TIMER_WAIT DESC
+partie-07-performance-tuning.md:397:LIMIT 10;
+
+partie-07-performance-tuning.md:466:innodb_buffer_pool_size = 4G        # 87.5% hit ratio
+partie-07-performance-tuning.md:467:innodb_buffer_pool_instances = 4
+
+partie-07-performance-tuning.md:467:innodb_buffer_pool_instances = 4
+partie-07-performance-tuning.md:468:innodb_io_capacity = 200            # HDD default
+
+partie-07-performance-tuning.md:472:innodb_buffer_pool_size = 12G       # Augmentation à 75% RAM
+partie-07-performance-tuning.md:473:innodb_buffer_pool_instances = 12   # 1 instance par GB
+
+partie-07-performance-tuning.md:473:innodb_buffer_pool_instances = 12   # 1 instance par GB
+partie-07-performance-tuning.md:474:innodb_io_capacity = 10000          # SSD IOPS réels
+
+partie-07-performance-tuning.md:516:echo "=== BEFORE ===" && cat baseline_results.txt | grep "transactions:"
+partie-07-performance-tuning.md:517:echo "=== AFTER  ===" && cat optimized_results.txt | grep "transactions:"
+
+partie-07-performance-tuning.md:531:SELECT AVG_TIMER_WAIT/1000000000 AS avg_ms_after
+partie-07-performance-tuning.md:532:FROM performance_schema.events_statements_summary_by_digest
+
+partie-07-performance-tuning.md:532:FROM performance_schema.events_statements_summary_by_digest
+partie-07-performance-tuning.md:533:WHERE DIGEST_TEXT LIKE '%critical_query%';
+
+partie-07-performance-tuning.md:701:innodb_buffer_pool_size = 96G  # 75% des 128GB RAM
+partie-07-performance-tuning.md:702:innodb_buffer_pool_instances = 16  # 1 instance / 6GB
+
+partie-07-performance-tuning.md:736:orders = Order.objects.all()[:100]  # 1 requête
+partie-07-performance-tuning.md:737:for order in orders:
+
+partie-07-performance-tuning.md:748:SELECT * FROM orders LIMIT 100;
+partie-07-performance-tuning.md:749:SELECT * FROM customers WHERE id = 1;
+
+partie-07-performance-tuning.md:749:SELECT * FROM customers WHERE id = 1;
+partie-07-performance-tuning.md:750:SELECT * FROM customers WHERE id = 2;
+
+partie-07-performance-tuning.md:799:SELECT * FROM application_logs 
+partie-07-performance-tuning.md:800:WHERE log_date >= CURDATE() - INTERVAL 7 DAY
+
+partie-07-performance-tuning.md:800:WHERE log_date >= CURDATE() - INTERVAL 7 DAY
+partie-07-performance-tuning.md:801:ORDER BY log_date DESC 
+
+partie-07-performance-tuning.md:801:ORDER BY log_date DESC 
+partie-07-performance-tuning.md:802:LIMIT 1000;
+
+partie-07-performance-tuning.md:829:INSERT INTO application_logs_partitioned 
+partie-07-performance-tuning.md:830:SELECT * FROM application_logs;
+
+partie-07-performance-tuning.md:836:SELECT * FROM application_logs_partitioned 
+partie-07-performance-tuning.md:837:WHERE log_date >= CURDATE() - INTERVAL 7 DAY
+
+partie-07-performance-tuning.md:837:WHERE log_date >= CURDATE() - INTERVAL 7 DAY
+partie-07-performance-tuning.md:838:ORDER BY log_date DESC 
+
+partie-07-performance-tuning.md:838:ORDER BY log_date DESC 
+partie-07-performance-tuning.md:839:LIMIT 1000;
+
+partie-07-performance-tuning.md:877:performance_schema = ON
+partie-07-performance-tuning.md:878:performance-schema-instrument = 'statement/%=ON'
+
+partie-07-performance-tuning.md:878:performance-schema-instrument = 'statement/%=ON'
+partie-07-performance-tuning.md:879:performance-schema-consumer-statements-digest = ON
+
+partie-07-performance-tuning.md:888:FROM performance_schema.events_statements_summary_by_digest
+partie-07-performance-tuning.md:889:WHERE SCHEMA_NAME = 'mydb'
+
+partie-07-performance-tuning.md:889:WHERE SCHEMA_NAME = 'mydb'
+partie-07-performance-tuning.md:890:ORDER BY SUM_TIMER_WAIT DESC
+
+partie-07-performance-tuning.md:890:ORDER BY SUM_TIMER_WAIT DESC
+partie-07-performance-tuning.md:891:LIMIT 10;
+
+partie-07-performance-tuning.md:906:SELECT * FROM sys.io_global_by_file_by_bytes 
+partie-07-performance-tuning.md:907:LIMIT 10;
+
+partie-07-performance-tuning.md:916:SELECT * FROM sys.statements_with_full_table_scans
+partie-07-performance-tuning.md:917:LIMIT 20;
+
+partie-05-securite-administration.md:212:CREATE USER 'secure_admin'@'localhost' 
+partie-05-securite-administration.md:213:IDENTIFIED VIA parsec 
+
+partie-05-securite-administration.md:213:IDENTIFIED VIA parsec 
+partie-05-securite-administration.md:214:USING 'password_hash';
+
+partie-05-securite-administration.md:217:ALTER USER 'secure_admin'@'localhost' 
+partie-05-securite-administration.md:218:IDENTIFIED VIA parsec 
+
+partie-05-securite-administration.md:218:IDENTIFIED VIA parsec 
+partie-05-securite-administration.md:219:USING 'hsm:token1:key_id';
+
+partie-05-securite-administration.md:233:GRANT SELECT (id, name, email) 
+partie-05-securite-administration.md:234:ON customers 
+
+partie-05-securite-administration.md:234:ON customers 
+partie-05-securite-administration.md:235:TO 'analyst'@'%';
+
+partie-05-securite-administration.md:238:GRANT EXECUTE ON PROCEDURE calculate_report 
+partie-05-securite-administration.md:239:TO 'reporting_user'@'%';
+
+partie-05-securite-administration.md:242:GRANT SELECT, INSERT 
+partie-05-securite-administration.md:243:ON orders 
+
+partie-05-securite-administration.md:243:ON orders 
+partie-05-securite-administration.md:244:TO 'app_user'@'%' 
+
+partie-05-securite-administration.md:244:TO 'app_user'@'%' 
+partie-05-securite-administration.md:245:WITH MAX_QUERIES_PER_HOUR 10000;
+
+partie-05-securite-administration.md:259:character-set-server = utf8mb4
+partie-05-securite-administration.md:260:collation-server = utf8mb4_uca1400_ai_ci  # UCA 14.0.0
+
+partie-05-securite-administration.md:283:INSERT INTO events (event_time) 
+partie-05-securite-administration.md:284:VALUES ('2050-12-31 23:59:59');  -- ✅ Fonctionne parfaitement
+
+partie-05-securite-administration.md:429:SELECT * FROM mysql.server_audit_log 
+partie-05-securite-administration.md:430:WHERE object_name = 'customers' 
+
+partie-05-securite-administration.md:588:PROD_CHECKSUM=$(mariadb -e "CHECKSUM TABLE critical_table" | awk '{print $2}')
+partie-05-securite-administration.md:589:TEST_CHECKSUM=$(docker exec restore-test mariadb -e "CHECKSUM TABLE critical_table" | awk '{print $2}')
+
+partie-09-integration-fonctionnalites-avancees.md:247:import openai
+partie-09-integration-fonctionnalites-avancees.md:248:import mariadb
+
+partie-09-integration-fonctionnalites-avancees.md:268:doc_title = "Introduction to Machine Learning"
+partie-09-integration-fonctionnalites-avancees.md:269:doc_content = "Machine learning is a subset of artificial intelligence..."
+
+partie-09-integration-fonctionnalites-avancees.md:297:FROM documents
+partie-09-integration-fonctionnalites-avancees.md:298:ORDER BY similarity ASC  -- Plus petit = plus similaire
+
+partie-09-integration-fonctionnalites-avancees.md:298:ORDER BY similarity ASC  -- Plus petit = plus similaire
+partie-09-integration-fonctionnalites-avancees.md:299:LIMIT 10;
+
+partie-09-integration-fonctionnalites-avancees.md:316:FROM documents d
+partie-09-integration-fonctionnalites-avancees.md:317:WHERE 
+
+partie-09-integration-fonctionnalites-avancees.md:323:ORDER BY similarity ASC
+partie-09-integration-fonctionnalites-avancees.md:324:LIMIT 20;
+
+partie-09-integration-fonctionnalites-avancees.md:339:from langchain.chat_models import ChatOpenAI
+partie-09-integration-fonctionnalites-avancees.md:340:from langchain.embeddings import OpenAIEmbeddings
+
+partie-09-integration-fonctionnalites-avancees.md:340:from langchain.embeddings import OpenAIEmbeddings
+partie-09-integration-fonctionnalites-avancees.md:341:import mariadb
+
+partie-09-integration-fonctionnalites-avancees.md:382:user_question = "How does gradient descent work in neural networks?"
+partie-09-integration-fonctionnalites-avancees.md:383:relevant_docs = vector_store.similarity_search(user_question, k=3)
+
+partie-09-integration-fonctionnalites-avancees.md:386:context = "\n\n".join([doc["content"] for doc in relevant_docs])
+partie-09-integration-fonctionnalites-avancees.md:387:prompt = f"""
+
+partie-09-integration-fonctionnalites-avancees.md:387:prompt = f"""
+partie-09-integration-fonctionnalites-avancees.md:388:Answer the following question based on the provided context:
+
+partie-09-integration-fonctionnalites-avancees.md:399:llm = ChatOpenAI(model="gpt-4", temperature=0)
+partie-09-integration-fonctionnalites-avancees.md:400:response = llm.predict(prompt)
+
+partie-09-integration-fonctionnalites-avancees.md:521:FROM products p
+partie-09-integration-fonctionnalites-avancees.md:522:CROSS JOIN users u
+
+partie-09-integration-fonctionnalites-avancees.md:522:CROSS JOIN users u
+partie-09-integration-fonctionnalites-avancees.md:523:WHERE u.user_id = ?  -- Utilisateur cible
+
+partie-09-integration-fonctionnalites-avancees.md:525:ORDER BY match_score ASC
+partie-09-integration-fonctionnalites-avancees.md:526:LIMIT 10;
+
+partie-09-integration-fonctionnalites-avancees.md:590:from langchain.vectorstores import VectorStore
+partie-09-integration-fonctionnalites-avancees.md:591:from langchain.embeddings import OpenAIEmbeddings
+
+partie-09-integration-fonctionnalites-avancees.md:591:from langchain.embeddings import OpenAIEmbeddings
+partie-09-integration-fonctionnalites-avancees.md:592:import mariadb
+
+partie-09-integration-fonctionnalites-avancees.md:642:from langchain.chains import RetrievalQA
+partie-09-integration-fonctionnalites-avancees.md:643:from langchain.chat_models import ChatOpenAI
+
+partie-09-integration-fonctionnalites-avancees.md:660:answer = qa_chain.run("What is the return policy for electronics?")
+partie-09-integration-fonctionnalites-avancees.md:661:print(answer)
+
+partie-09-integration-fonctionnalites-avancees.md:667:from llama_index import VectorStoreIndex, StorageContext
+partie-09-integration-fonctionnalites-avancees.md:668:from llama_index.vector_stores import MariaDBVectorStore as LlamaMariaDB
+
+partie-09-integration-fonctionnalites-avancees.md:668:from llama_index.vector_stores import MariaDBVectorStore as LlamaMariaDB
+partie-09-integration-fonctionnalites-avancees.md:669:from llama_index.embeddings import OpenAIEmbedding
+
+partie-09-integration-fonctionnalites-avancees.md:686:documents = [...]  # Vos documents
+partie-09-integration-fonctionnalites-avancees.md:687:index = VectorStoreIndex.from_documents(
+
+partie-09-integration-fonctionnalites-avancees.md:697:response = query_engine.query("Explain the product return process")
+partie-09-integration-fonctionnalites-avancees.md:698:print(response)
+
+partie-09-integration-fonctionnalites-avancees.md:913:FROM products
+partie-09-integration-fonctionnalites-avancees.md:914:WHERE category IN ('Footwear', 'Shoes')
+
+partie-09-integration-fonctionnalites-avancees.md:917:ORDER BY relevance ASC
+partie-09-integration-fonctionnalites-avancees.md:918:LIMIT 20;
+
+partie-09-integration-fonctionnalites-avancees.md:936:UPDATE users
+partie-09-integration-fonctionnalites-avancees.md:937:SET preference_embedding = (
+
+partie-09-integration-fonctionnalites-avancees.md:953:FROM articles a
+partie-09-integration-fonctionnalites-avancees.md:954:CROSS JOIN users u
+
+partie-09-integration-fonctionnalites-avancees.md:954:CROSS JOIN users u
+partie-09-integration-fonctionnalites-avancees.md:955:WHERE u.user_id = ?
+
+partie-09-integration-fonctionnalites-avancees.md:958:ORDER BY match_score ASC
+partie-09-integration-fonctionnalites-avancees.md:959:LIMIT 10;
+
+partie-04-moteurs-stockage-programmation.md:172:FROM product_embeddings
+partie-04-moteurs-stockage-programmation.md:173:ORDER BY similarity
+
+partie-04-moteurs-stockage-programmation.md:173:ORDER BY similarity
+partie-04-moteurs-stockage-programmation.md:174:LIMIT 10;
+
+partie-04-moteurs-stockage-programmation.md:321:FROM sales_innodb
+partie-04-moteurs-stockage-programmation.md:322:GROUP BY category;
+
+partie-04-moteurs-stockage-programmation.md:330:FROM sales_columnstore
+partie-04-moteurs-stockage-programmation.md:331:GROUP BY category;
+
+partie-04-moteurs-stockage-programmation.md:359:FROM users u
+partie-04-moteurs-stockage-programmation.md:360:LEFT JOIN orders o ON u.id = o.user_id
+
+partie-04-moteurs-stockage-programmation.md:360:LEFT JOIN orders o ON u.id = o.user_id
+partie-04-moteurs-stockage-programmation.md:361:WHERE o.status = 'completed'
+
+partie-04-moteurs-stockage-programmation.md:361:WHERE o.status = 'completed'
+partie-04-moteurs-stockage-programmation.md:362:GROUP BY u.id;
+
+05-index-et-performance/09-index-covering.md:94:SELECT date_commande, montant FROM commandes
+05-index-et-performance/09-index-covering.md:95:WHERE client_id = 42 ORDER BY date_commande;
+
+05-index-et-performance/04-creation-gestion-index.md:104:SELECT INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX, CARDINALITY
+05-index-et-performance/04-creation-gestion-index.md:105:FROM information_schema.STATISTICS
+
+05-index-et-performance/04-creation-gestion-index.md:105:FROM information_schema.STATISTICS
+05-index-et-performance/04-creation-gestion-index.md:106:WHERE TABLE_SCHEMA = 'boutique' AND TABLE_NAME = 'commandes'
+
+05-index-et-performance/04-creation-gestion-index.md:106:WHERE TABLE_SCHEMA = 'boutique' AND TABLE_NAME = 'commandes'
+05-index-et-performance/04-creation-gestion-index.md:107:ORDER BY INDEX_NAME, SEQ_IN_INDEX;
+
+05-index-et-performance/04-creation-gestion-index.md:121:ALTER TABLE commandes ALTER INDEX idx_date IGNORED;
+05-index-et-performance/04-creation-gestion-index.md:122:ALTER TABLE commandes ALTER INDEX idx_date NOT IGNORED;
+
+05-index-et-performance/04-creation-gestion-index.md:133:DROP INDEX idx_statut ON commandes;
+05-index-et-performance/04-creation-gestion-index.md:134:ALTER TABLE commandes DROP INDEX idx_date;
+
+05-index-et-performance/06-index-composites.md:96:SELECT * FROM commandes
+05-index-et-performance/06-index-composites.md:97:WHERE statut = 'expediee'        -- (E) égalité
+
+05-index-et-performance/05.3-index-order-group.md:98:SELECT client_id, MAX(date_commande)
+05-index-et-performance/05.3-index-order-group.md:99:FROM commandes
+
+05-index-et-performance/05.3-index-order-group.md:99:FROM commandes
+05-index-et-performance/05.3-index-order-group.md:100:GROUP BY client_id;
+
+05-index-et-performance/05.1-index-colonnes-filtrees.md:36:CREATE INDEX idx_email ON clients (email);
+05-index-et-performance/05.1-index-colonnes-filtrees.md:37:SELECT * FROM clients WHERE email = 'alice@example.fr';
+
+05-index-et-performance/05.1-index-colonnes-filtrees.md:69:SELECT * FROM commandes
+05-index-et-performance/05.1-index-colonnes-filtrees.md:70:WHERE date_commande >= '2026-01-01' AND date_commande < '2027-01-01';
+
+05-index-et-performance/05.1-index-colonnes-filtrees.md:95:SELECT * FROM clients WHERE nom LIKE 'Dup%';     -- ✅ préfixe : index utilisé
+05-index-et-performance/05.1-index-colonnes-filtrees.md:96:SELECT * FROM clients WHERE nom LIKE '%dupont%'; -- ❌ joker en tête : index inutilisable
+
+05-index-et-performance/02.1-btree.md:61:SELECT * FROM commandes WHERE montant BETWEEN 50 AND 200;
+05-index-et-performance/02.1-btree.md:62:SELECT * FROM commandes WHERE date_commande >= '2026-01-01';
+
+05-index-et-performance/02.1-btree.md:70:SELECT * FROM clients WHERE nom LIKE 'Dur%';   -- ✅ utilise l'index
+05-index-et-performance/02.1-btree.md:71:SELECT * FROM clients WHERE nom LIKE '%dur%';  -- ❌ joker en tête : index inutile
+
+05-index-et-performance/03-index-vector-hnsw.md:70:INSERT INTO documents (id, contenu, embedding)
+05-index-et-performance/03-index-vector-hnsw.md:71:VALUES (1, 'Texte du document…',
+
+05-index-et-performance/03-index-vector-hnsw.md:88:SELECT id, contenu
+05-index-et-performance/03-index-vector-hnsw.md:89:FROM documents
+
+05-index-et-performance/03-index-vector-hnsw.md:89:FROM documents
+05-index-et-performance/03-index-vector-hnsw.md:90:ORDER BY VEC_DISTANCE_COSINE(embedding, @q)   -- distance croissante = du plus proche…
+
+05-index-et-performance/03-index-vector-hnsw.md:90:ORDER BY VEC_DISTANCE_COSINE(embedding, @q)   -- distance croissante = du plus proche…
+05-index-et-performance/03-index-vector-hnsw.md:91:LIMIT 5;                                       -- … aux 5 plus proches voisins
+
+05-index-et-performance/03-index-vector-hnsw.md:108:SELECT id, 1 - d AS score
+05-index-et-performance/03-index-vector-hnsw.md:109:FROM (
+
+05-index-et-performance/03-index-vector-hnsw.md:122:SELECT id
+05-index-et-performance/03-index-vector-hnsw.md:123:FROM documents
+
+05-index-et-performance/03-index-vector-hnsw.md:123:FROM documents
+05-index-et-performance/03-index-vector-hnsw.md:124:WHERE VEC_DISTANCE_COSINE(embedding, @q) < 0.2;
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:34:EXPLAIN SELECT * FROM commandes
+05-index-et-performance/08.1-optimisations-scans-inverses.md:35:WHERE statut = 'expediee' AND reference LIKE '%2026%';
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:55:SELECT * FROM commandes
+05-index-et-performance/08.1-optimisations-scans-inverses.md:56:WHERE date_commande BETWEEN '2026-01-01' AND '2026-01-31'  -- index idx_date (accès)
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:89:SELECT * FROM commandes
+05-index-et-performance/08.1-optimisations-scans-inverses.md:90:WHERE statut = 'expediee' AND reference LIKE '%2026%'
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:90:WHERE statut = 'expediee' AND reference LIKE '%2026%'
+05-index-et-performance/08.1-optimisations-scans-inverses.md:91:ORDER BY id DESC
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:91:ORDER BY id DESC
+05-index-et-performance/08.1-optimisations-scans-inverses.md:92:LIMIT 50;
+
+05-index-et-performance/08.1-optimisations-scans-inverses.md:103:SELECT @@optimizer_switch;                    -- état des bascules d'optimisation
+05-index-et-performance/08.1-optimisations-scans-inverses.md:104:SET optimizer_switch = 'rowid_filter=off';    -- désactivation ciblée (diagnostic)
+
+05-index-et-performance/05.2-index-cles-etrangeres.md:25:SELECT c.id, cl.nom
+05-index-et-performance/05.2-index-cles-etrangeres.md:26:FROM commandes c
+
+05-index-et-performance/05.2-index-cles-etrangeres.md:26:FROM commandes c
+05-index-et-performance/05.2-index-cles-etrangeres.md:27:JOIN clients cl ON c.client_id = cl.id   -- client_id : la clé étrangère
+
+05-index-et-performance/05.2-index-cles-etrangeres.md:27:JOIN clients cl ON c.client_id = cl.id   -- client_id : la clé étrangère
+05-index-et-performance/05.2-index-cles-etrangeres.md:28:WHERE cl.nom = 'Durand';
+
+05-index-et-performance/02.4-spatial.md:106:SELECT z.nom
+05-index-et-performance/02.4-spatial.md:107:FROM zones_livraison z
+
+05-index-et-performance/02.4-spatial.md:107:FROM zones_livraison z
+05-index-et-performance/02.4-spatial.md:108:WHERE ST_Contains(
+
+05-index-et-performance/02.4-spatial.md:117:SELECT r.nom
+05-index-et-performance/02.4-spatial.md:118:FROM routes r
+
+05-index-et-performance/02.4-spatial.md:118:FROM routes r
+05-index-et-performance/02.4-spatial.md:119:WHERE ST_Intersects(r.trace, @zone);
+
+05-index-et-performance/02.4-spatial.md:142:FROM magasins
+05-index-et-performance/02.4-spatial.md:143:WHERE MBRContains(@boite, emplacement)                  -- ① rectangle de recherche
+
+05-index-et-performance/02.3-full-text.md:63:ALTER TABLE articles ADD FULLTEXT INDEX ft_article (titre, contenu);
+05-index-et-performance/02.3-full-text.md:64:CREATE FULLTEXT INDEX ft_article ON articles (titre, contenu);
+
+05-index-et-performance/02.3-full-text.md:74:SELECT id, titre
+05-index-et-performance/02.3-full-text.md:75:FROM articles
+
+05-index-et-performance/02.3-full-text.md:75:FROM articles
+05-index-et-performance/02.3-full-text.md:76:WHERE MATCH(titre, contenu) AGAINST('réplication galera');
+
+05-index-et-performance/02.3-full-text.md:84:FROM articles
+05-index-et-performance/02.3-full-text.md:85:WHERE MATCH(titre, contenu) AGAINST('réplication galera')
+
+05-index-et-performance/02.3-full-text.md:85:WHERE MATCH(titre, contenu) AGAINST('réplication galera')
+05-index-et-performance/02.3-full-text.md:86:ORDER BY pertinence DESC;
+
+05-index-et-performance/02.3-full-text.md:117:SELECT id, titre
+05-index-et-performance/02.3-full-text.md:118:FROM articles
+
+05-index-et-performance/02.3-full-text.md:118:FROM articles
+05-index-et-performance/02.3-full-text.md:119:WHERE MATCH(titre, contenu)
+
+partie-08-devops-cloud-automatisation.md:164:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:165:kind: MariaDB
+
+partie-08-devops-cloud-automatisation.md:165:kind: MariaDB
+partie-08-devops-cloud-automatisation.md:166:metadata:
+
+partie-08-devops-cloud-automatisation.md:223:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:224:kind: Backup
+
+partie-08-devops-cloud-automatisation.md:224:kind: Backup
+partie-08-devops-cloud-automatisation.md:225:metadata:
+
+partie-08-devops-cloud-automatisation.md:235:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:236:kind: Restore
+
+partie-08-devops-cloud-automatisation.md:236:kind: Restore
+partie-08-devops-cloud-automatisation.md:237:metadata:
+
+partie-08-devops-cloud-automatisation.md:249:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:250:kind: User
+
+partie-08-devops-cloud-automatisation.md:250:kind: User
+partie-08-devops-cloud-automatisation.md:251:metadata:
+
+partie-08-devops-cloud-automatisation.md:262:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:263:kind: Database
+
+partie-08-devops-cloud-automatisation.md:263:kind: Database
+partie-08-devops-cloud-automatisation.md:264:metadata:
+
+partie-08-devops-cloud-automatisation.md:273:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:274:kind: Grant
+
+partie-08-devops-cloud-automatisation.md:274:kind: Grant
+partie-08-devops-cloud-automatisation.md:275:metadata:
+
+partie-08-devops-cloud-automatisation.md:302:apiVersion: apps/v1
+partie-08-devops-cloud-automatisation.md:303:kind: Deployment
+
+partie-08-devops-cloud-automatisation.md:303:kind: Deployment
+partie-08-devops-cloud-automatisation.md:304:metadata:
+
+partie-08-devops-cloud-automatisation.md:333:apiVersion: monitoring.coreos.com/v1
+partie-08-devops-cloud-automatisation.md:334:kind: ServiceMonitor
+
+partie-08-devops-cloud-automatisation.md:334:kind: ServiceMonitor
+partie-08-devops-cloud-automatisation.md:335:metadata:
+
+partie-08-devops-cloud-automatisation.md:453:flyway.url=jdbc:mariadb://mariadb-primary:3306/production
+partie-08-devops-cloud-automatisation.md:454:flyway.user=flyway_user
+
+partie-08-devops-cloud-automatisation.md:454:flyway.user=flyway_user
+partie-08-devops-cloud-automatisation.md:455:flyway.password=${FLYWAY_PASSWORD}
+
+partie-08-devops-cloud-automatisation.md:455:flyway.password=${FLYWAY_PASSWORD}
+partie-08-devops-cloud-automatisation.md:456:flyway.schemas=production
+
+partie-08-devops-cloud-automatisation.md:456:flyway.schemas=production
+partie-08-devops-cloud-automatisation.md:457:flyway.table=flyway_schema_history
+
+partie-08-devops-cloud-automatisation.md:457:flyway.table=flyway_schema_history
+partie-08-devops-cloud-automatisation.md:458:flyway.locations=filesystem:./migrations
+
+partie-08-devops-cloud-automatisation.md:518:apiVersion: source.toolkit.fluxcd.io/v1
+partie-08-devops-cloud-automatisation.md:519:kind: GitRepository
+
+partie-08-devops-cloud-automatisation.md:519:kind: GitRepository
+partie-08-devops-cloud-automatisation.md:520:metadata:
+
+partie-08-devops-cloud-automatisation.md:532:apiVersion: kustomize.toolkit.fluxcd.io/v1
+partie-08-devops-cloud-automatisation.md:533:kind: Kustomization
+
+partie-08-devops-cloud-automatisation.md:533:kind: Kustomization
+partie-08-devops-cloud-automatisation.md:534:metadata:
+
+partie-08-devops-cloud-automatisation.md:731:apiVersion: apps/v1
+partie-08-devops-cloud-automatisation.md:732:kind: StatefulSet
+
+partie-08-devops-cloud-automatisation.md:732:kind: StatefulSet
+partie-08-devops-cloud-automatisation.md:733:metadata:
+
+partie-08-devops-cloud-automatisation.md:824:apiVersion: v1
+partie-08-devops-cloud-automatisation.md:825:kind: Pod
+
+partie-08-devops-cloud-automatisation.md:825:kind: Pod
+partie-08-devops-cloud-automatisation.md:826:metadata:
+
+partie-08-devops-cloud-automatisation.md:863:apiVersion: v1
+partie-08-devops-cloud-automatisation.md:864:kind: Pod
+
+partie-08-devops-cloud-automatisation.md:864:kind: Pod
+partie-08-devops-cloud-automatisation.md:865:metadata:
+
+partie-08-devops-cloud-automatisation.md:913:apiVersion: k8s.mariadb.com/v1alpha1
+partie-08-devops-cloud-automatisation.md:914:kind: MariaDB
+
+partie-08-devops-cloud-automatisation.md:914:kind: MariaDB
+partie-08-devops-cloud-automatisation.md:915:metadata:
+
+partie-08-devops-cloud-automatisation.md:1078:apiVersion: v1
+partie-08-devops-cloud-automatisation.md:1079:kind: Secret
+
+partie-08-devops-cloud-automatisation.md:1079:kind: Secret
+partie-08-devops-cloud-automatisation.md:1080:metadata:
+
+partie-08-devops-cloud-automatisation.md:1089:apiVersion: external-secrets.io/v1beta1
+partie-08-devops-cloud-automatisation.md:1090:kind: ExternalSecret
+
+partie-08-devops-cloud-automatisation.md:1090:kind: ExternalSecret
+partie-08-devops-cloud-automatisation.md:1091:metadata:
+
+partie-08-devops-cloud-automatisation.md:1123:Avant automatisation : 1 deployment / mois (maintenance windows)
+partie-08-devops-cloud-automatisation.md:1124:Après automatisation : 10-20 deployments / jour (schema migrations via CI/CD)
+
+partie-08-devops-cloud-automatisation.md:1131:Avant : 2-4 semaines (planning → approval → maintenance window)
+partie-08-devops-cloud-automatisation.md:1132:Après : 2-4 heures (PR → review → automated deployment)
+
+partie-08-devops-cloud-automatisation.md:1139:Avant : 2-8 heures (manual diagnosis + fix + deployment)
+partie-08-devops-cloud-automatisation.md:1140:Après : 5-15 minutes (automated detection + rollback/failover)
+
+partie-08-devops-cloud-automatisation.md:1147:Avant : 15-30% (manual errors, insufficient testing)
+partie-08-devops-cloud-automatisation.md:1148:Après : 0-5% (automated testing, validation gates)
+
+04-concepts-avances-sql/09-json-schema-validation.md:43:SELECT JSON_SCHEMA_VALID(@schema, '{"age":25, "lastname":"Miller"}');  -- 1
+04-concepts-avances-sql/09-json-schema-validation.md:44:SELECT JSON_SCHEMA_VALID(@schema, '{"age":10, "lastname":"Miller"}');  -- 0 (age < 18)
+
+04-concepts-avances-sql/09-json-schema-validation.md:44:SELECT JSON_SCHEMA_VALID(@schema, '{"age":10, "lastname":"Miller"}');  -- 0 (age < 18)
+04-concepts-avances-sql/09-json-schema-validation.md:45:SELECT JSON_SCHEMA_VALID(@schema, '{"age":25}');                       -- 0 (lastname manquant)
+
+04-concepts-avances-sql/02.2-fonctions-valeur.md:30:LAG(expression [, décalage])
+04-concepts-avances-sql/02.2-fonctions-valeur.md:31:LEAD(expression [, décalage])
+
+04-concepts-avances-sql/02.2-fonctions-valeur.md:103:FROM cotations
+04-concepts-avances-sql/02.2-fonctions-valeur.md:104:WINDOW fenetre AS (
+
+04-concepts-avances-sql/03-requetes-pivotees.md:48:FROM ventes
+04-concepts-avances-sql/03-requetes-pivotees.md:49:GROUP BY region;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:76:FROM attributs
+04-concepts-avances-sql/03-requetes-pivotees.md:77:GROUP BY entite;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:98:PREPARE requete FROM @sql;
+04-concepts-avances-sql/03-requetes-pivotees.md:99:EXECUTE requete;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:99:EXECUTE requete;
+04-concepts-avances-sql/03-requetes-pivotees.md:100:DEALLOCATE PREPARE requete;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:112:SELECT region, 'T1' AS trimestre, T1 AS montant FROM ventes_pivot
+04-concepts-avances-sql/03-requetes-pivotees.md:113:UNION ALL
+
+04-concepts-avances-sql/03-requetes-pivotees.md:113:UNION ALL
+04-concepts-avances-sql/03-requetes-pivotees.md:114:SELECT region, 'T2', T2 FROM ventes_pivot
+
+04-concepts-avances-sql/03-requetes-pivotees.md:114:SELECT region, 'T2', T2 FROM ventes_pivot
+04-concepts-avances-sql/03-requetes-pivotees.md:115:UNION ALL
+
+04-concepts-avances-sql/03-requetes-pivotees.md:115:UNION ALL
+04-concepts-avances-sql/03-requetes-pivotees.md:116:SELECT region, 'T3', T3 FROM ventes_pivot
+
+04-concepts-avances-sql/03-requetes-pivotees.md:116:SELECT region, 'T3', T3 FROM ventes_pivot
+04-concepts-avances-sql/03-requetes-pivotees.md:117:UNION ALL
+
+04-concepts-avances-sql/03-requetes-pivotees.md:117:UNION ALL
+04-concepts-avances-sql/03-requetes-pivotees.md:118:SELECT region, 'T4', T4 FROM ventes_pivot;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:136:FROM ventes
+04-concepts-avances-sql/03-requetes-pivotees.md:137:GROUP BY region;
+
+04-concepts-avances-sql/03-requetes-pivotees.md:145:SELECT region, trimestre, SUM(montant)
+04-concepts-avances-sql/03-requetes-pivotees.md:146:FROM ventes
+
+04-concepts-avances-sql/03-requetes-pivotees.md:146:FROM ventes
+04-concepts-avances-sql/03-requetes-pivotees.md:147:GROUP BY region, trimestre WITH ROLLUP;
+
+04-concepts-avances-sql/04-expressions-table-communes.md:27:SELECT c.nom, g.total
+04-concepts-avances-sql/04-expressions-table-communes.md:28:FROM gros_clients AS g
+
+04-concepts-avances-sql/04-expressions-table-communes.md:28:FROM gros_clients AS g
+04-concepts-avances-sql/04-expressions-table-communes.md:29:JOIN clients AS c ON c.id = g.client_id;
+
+04-concepts-avances-sql/04-expressions-table-communes.md:73:SELECT t.region, t.total
+04-concepts-avances-sql/04-expressions-table-communes.md:74:FROM totaux_region AS t
+
+04-concepts-avances-sql/04-expressions-table-communes.md:74:FROM totaux_region AS t
+04-concepts-avances-sql/04-expressions-table-communes.md:75:CROSS JOIN reference AS r
+
+04-concepts-avances-sql/04-expressions-table-communes.md:75:CROSS JOIN reference AS r
+04-concepts-avances-sql/04-expressions-table-communes.md:76:WHERE t.total > r.moyenne;
+
+04-concepts-avances-sql/04-expressions-table-communes.md:95:SELECT c.nom, g.total
+04-concepts-avances-sql/04-expressions-table-communes.md:96:FROM (
+
+04-concepts-avances-sql/02-window-functions.md:23:SELECT departement, AVG(salaire) AS moyenne_dept
+04-concepts-avances-sql/02-window-functions.md:24:FROM employes
+
+04-concepts-avances-sql/02-window-functions.md:24:FROM employes
+04-concepts-avances-sql/02-window-functions.md:25:GROUP BY departement;
+
+04-concepts-avances-sql/02-window-functions.md:79:SELECT *
+04-concepts-avances-sql/02-window-functions.md:80:FROM (
+
+04-concepts-avances-sql/02-window-functions.md:99:FROM ventes
+04-concepts-avances-sql/02-window-functions.md:100:WINDOW w AS (PARTITION BY region ORDER BY date_vente);
+
+04-concepts-avances-sql/01-requetes-recursives.md:131:SELECT id, nom, niveau
+04-concepts-avances-sql/01-requetes-recursives.md:132:FROM hierarchie
+
+04-concepts-avances-sql/01-requetes-recursives.md:132:FROM hierarchie
+04-concepts-avances-sql/01-requetes-recursives.md:133:ORDER BY niveau, nom;
+
+04-concepts-avances-sql/01-requetes-recursives.md:166:SELECT id, nom, fil_ariane
+04-concepts-avances-sql/01-requetes-recursives.md:167:FROM chemin;
+
+04-concepts-avances-sql/01-requetes-recursives.md:200:CYCLE id RESTRICT          -- stoppe le parcours dès qu'un id réapparaît
+04-concepts-avances-sql/01-requetes-recursives.md:201:SELECT id, nom FROM parcours;
+
+04-concepts-avances-sql/10-indexation-colonnes-virtuelles-json.md:52:SELECT * FROM produits
+04-concepts-avances-sql/10-indexation-colonnes-virtuelles-json.md:53:WHERE CAST(JSON_VALUE(attributs, '$.stock') AS INTEGER) < 10;
+
+04-concepts-avances-sql/06-gestion-valeurs-null.md:25:NULL = 5      -- UNKNOWN
+04-concepts-avances-sql/06-gestion-valeurs-null.md:26:NULL <> 5     -- UNKNOWN
+
+04-concepts-avances-sql/06-gestion-valeurs-null.md:26:NULL <> 5     -- UNKNOWN
+04-concepts-avances-sql/06-gestion-valeurs-null.md:27:NULL > 5      -- UNKNOWN
+
+04-concepts-avances-sql/06-gestion-valeurs-null.md:27:NULL > 5      -- UNKNOWN
+04-concepts-avances-sql/06-gestion-valeurs-null.md:28:NULL = NULL   -- UNKNOWN  (et non TRUE !)
+
+04-concepts-avances-sql/06-gestion-valeurs-null.md:58:WHERE telephone IS NULL        -- lignes sans téléphone
+04-concepts-avances-sql/06-gestion-valeurs-null.md:59:WHERE telephone IS NOT NULL    -- lignes avec téléphone
+
+04-concepts-avances-sql/06-gestion-valeurs-null.md:65:NULL <=> NULL   -- TRUE (1)
+04-concepts-avances-sql/06-gestion-valeurs-null.md:66:NULL <=> 5      -- FALSE (0)
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:26:SELECT '{"a":1}'     IS JSON;       -- 1 (TRUE)
+04-concepts-avances-sql/07.4-is-json-predicate.md:27:SELECT 'pas du json' IS JSON;       -- 0 (FALSE)
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:27:SELECT 'pas du json' IS JSON;       -- 0 (FALSE)
+04-concepts-avances-sql/07.4-is-json-predicate.md:28:SELECT 'abc'         IS NOT JSON;   -- 1 (TRUE)
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:34:SELECT '[1,2,3]'  IS JSON ARRAY;    -- 1
+04-concepts-avances-sql/07.4-is-json-predicate.md:35:SELECT '{"a":1}'  IS JSON ARRAY;    -- 0
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:35:SELECT '{"a":1}'  IS JSON ARRAY;    -- 0
+04-concepts-avances-sql/07.4-is-json-predicate.md:36:SELECT '{"a":1}'  IS JSON OBJECT;   -- 1
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:36:SELECT '{"a":1}'  IS JSON OBJECT;   -- 1
+04-concepts-avances-sql/07.4-is-json-predicate.md:37:SELECT '42'       IS JSON SCALAR;   -- 1
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:43:SELECT '{"a":1,"a":2}' IS JSON WITH UNIQUE KEYS;     -- 0 (clé "a" en double)
+04-concepts-avances-sql/07.4-is-json-predicate.md:44:SELECT '{"a":1,"b":2}' IS JSON WITH UNIQUE KEYS;     -- 1
+
+04-concepts-avances-sql/07.4-is-json-predicate.md:44:SELECT '{"a":1,"b":2}' IS JSON WITH UNIQUE KEYS;     -- 1
+04-concepts-avances-sql/07.4-is-json-predicate.md:45:SELECT '{"a":1,"a":2}' IS JSON;                       -- 1 (doublons tolérés par défaut)
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:50:SELECT c.nom
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:51:FROM clients AS c
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:51:FROM clients AS c
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:52:WHERE EXISTS (SELECT 1 FROM commandes AS cmd WHERE cmd.client_id = c.id);
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:55:SELECT c.nom
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:56:FROM clients AS c
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:56:FROM clients AS c
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:57:WHERE NOT EXISTS (SELECT 1 FROM commandes AS cmd WHERE cmd.client_id = c.id);
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:82:FROM totaux_client
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:83:ORDER BY rang;
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:97:FROM commandes AS cmd
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:98:JOIN lignes_commande AS l ON l.commande_id = cmd.id
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:98:JOIN lignes_commande AS l ON l.commande_id = cmd.id
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:99:JOIN paiements       AS p ON p.commande_id = cmd.id
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:99:JOIN paiements       AS p ON p.commande_id = cmd.id
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:100:GROUP BY cmd.id;
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:119:SELECT cmd.id, l.total_lignes, p.total_paiements
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:120:FROM commandes AS cmd
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:120:FROM commandes AS cmd
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:121:LEFT JOIN lignes        AS l ON l.commande_id = cmd.id
+
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:121:LEFT JOIN lignes        AS l ON l.commande_id = cmd.id
+04-concepts-avances-sql/05-requetes-complexes-multi-tables.md:122:LEFT JOIN paiements_agg AS p ON p.commande_id = cmd.id;
+
+04-concepts-avances-sql/11-expressions-regulieres.md:27:SELECT email FROM clients
+04-concepts-avances-sql/11-expressions-regulieres.md:28:WHERE email REGEXP '@example\\.(com|org)$';          -- adresses se terminant par @example.com/.org
+
+04-concepts-avances-sql/11-expressions-regulieres.md:30:SELECT nom FROM produits
+04-concepts-avances-sql/11-expressions-regulieres.md:31:WHERE nom NOT REGEXP '^[A-Z]';                        -- initiale hors A–Z (la casse suit la collation : voir plus bas)
+
+04-concepts-avances-sql/11-expressions-regulieres.md:39:SELECT REGEXP_SUBSTR('Commande #4567 du 2026-06-04', '[0-9]+');   -- 4567 (premier nombre)
+04-concepts-avances-sql/11-expressions-regulieres.md:40:SELECT REGEXP_SUBSTR('contact : jean@example.com', '[\\w.]+@[\\w.]+'); -- jean@example.com
+
+04-concepts-avances-sql/11-expressions-regulieres.md:89:SELECT 'HELLO' REGEXP '(?i)hello';   -- 1 (forcé insensible)
+04-concepts-avances-sql/11-expressions-regulieres.md:90:SELECT 'HELLO' REGEXP '(?-i)hello';  -- 0 (forcé sensible)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:33:SET @j = '{"x":[0,1], "y":"texte", "z":42}';
+04-concepts-avances-sql/07.2-fonctions-json.md:34:SELECT JSON_VALUE(@j, '$.z');   -- 42      (scalaire)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:34:SELECT JSON_VALUE(@j, '$.z');   -- 42      (scalaire)
+04-concepts-avances-sql/07.2-fonctions-json.md:35:SELECT JSON_VALUE(@j, '$.x');   -- NULL    (x est un tableau)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:35:SELECT JSON_VALUE(@j, '$.x');   -- NULL    (x est un tableau)
+04-concepts-avances-sql/07.2-fonctions-json.md:36:SELECT JSON_QUERY(@j, '$.x');   -- [0, 1]  (objet/tableau)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:36:SELECT JSON_QUERY(@j, '$.x');   -- [0, 1]  (objet/tableau)
+04-concepts-avances-sql/07.2-fonctions-json.md:37:SELECT JSON_QUERY(@j, '$.z');   -- NULL    (z est un scalaire)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:43:SELECT id, nom
+04-concepts-avances-sql/07.2-fonctions-json.md:44:FROM lieux
+
+04-concepts-avances-sql/07.2-fonctions-json.md:44:FROM lieux
+04-concepts-avances-sql/07.2-fonctions-json.md:45:WHERE JSON_VALUE(attributs, '$.details.annee') = 1924;
+
+04-concepts-avances-sql/07.2-fonctions-json.md:55:SELECT JSON_OBJECT('nom', 'Monty', 'actif', TRUE);  -- {"nom": "Monty", "actif": true}
+04-concepts-avances-sql/07.2-fonctions-json.md:56:SELECT JSON_ARRAY(1, 'deux', 3);                     -- [1, "deux", 3]
+
+04-concepts-avances-sql/07.2-fonctions-json.md:63:SELECT categorie, JSON_ARRAYAGG(nom) AS produits
+04-concepts-avances-sql/07.2-fonctions-json.md:64:FROM produits GROUP BY categorie;
+
+04-concepts-avances-sql/07.2-fonctions-json.md:82:UPDATE produits
+04-concepts-avances-sql/07.2-fonctions-json.md:83:SET attributs = JSON_SET(attributs, '$.stock', 0)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:83:SET attributs = JSON_SET(attributs, '$.stock', 0)
+04-concepts-avances-sql/07.2-fonctions-json.md:84:WHERE id = 1;                                   -- persiste le changement
+
+04-concepts-avances-sql/07.2-fonctions-json.md:100:SELECT JSON_TYPE('[1,2,3]');                          -- ARRAY
+04-concepts-avances-sql/07.2-fonctions-json.md:101:SELECT JSON_LENGTH('{"a":1,"b":2}');                  -- 2
+
+04-concepts-avances-sql/07.2-fonctions-json.md:101:SELECT JSON_LENGTH('{"a":1,"b":2}');                  -- 2
+04-concepts-avances-sql/07.2-fonctions-json.md:102:SELECT JSON_CONTAINS('{"r":["a","b"]}', '"a"', '$.r'); -- 1 (présent)
+
+04-concepts-avances-sql/07.2-fonctions-json.md:124:SELECT p.id, t.type_animal, t.nom_animal
+04-concepts-avances-sql/07.2-fonctions-json.md:125:FROM personnes AS p,
+
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:28:UPDATE produits AS p
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:29:JOIN moyennes AS m ON p.categorie = m.categorie
+
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:29:JOIN moyennes AS m ON p.categorie = m.categorie
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:30:SET p.prix = ROUND(p.prix * 1.10, 2)
+
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:30:SET p.prix = ROUND(p.prix * 1.10, 2)
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:31:WHERE p.prix < m.prix_moyen;
+
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:47:DELETE FROM commandes
+04-concepts-avances-sql/04.1-update-delete-from-cte.md:48:WHERE id IN (SELECT id FROM doublons WHERE rn > 1);
+
+04-concepts-avances-sql/08-json-path-expressions.md:29:SET @j = '{"nom":"Monty", "adresse":{"ville":"Helsinki", "pays":"Finlande"}}';
+04-concepts-avances-sql/08-json-path-expressions.md:30:SELECT JSON_EXTRACT(@j, '$.nom');             -- "Monty"
+
+04-concepts-avances-sql/08-json-path-expressions.md:30:SELECT JSON_EXTRACT(@j, '$.nom');             -- "Monty"
+04-concepts-avances-sql/08-json-path-expressions.md:31:SELECT JSON_EXTRACT(@j, '$.adresse.ville');    -- "Helsinki"
+
+04-concepts-avances-sql/08-json-path-expressions.md:31:SELECT JSON_EXTRACT(@j, '$.adresse.ville');    -- "Helsinki"
+04-concepts-avances-sql/08-json-path-expressions.md:32:SELECT JSON_EXTRACT(@j, '$.adresse.*');        -- ["Helsinki", "Finlande"]
+
+04-concepts-avances-sql/08-json-path-expressions.md:49:SET @a = '[10, 20, 30, 40, 50]';
+04-concepts-avances-sql/08-json-path-expressions.md:50:SELECT JSON_EXTRACT(@a, '$[0]');       -- 10
+
+04-concepts-avances-sql/08-json-path-expressions.md:50:SELECT JSON_EXTRACT(@a, '$[0]');       -- 10
+04-concepts-avances-sql/08-json-path-expressions.md:51:SELECT JSON_EXTRACT(@a, '$[*]');        -- [10, 20, 30, 40, 50]
+
+04-concepts-avances-sql/08-json-path-expressions.md:51:SELECT JSON_EXTRACT(@a, '$[*]');        -- [10, 20, 30, 40, 50]
+04-concepts-avances-sql/08-json-path-expressions.md:52:SELECT JSON_EXTRACT(@a, '$[-1]');       -- 50  (dernier, indice négatif)
+
+04-concepts-avances-sql/08-json-path-expressions.md:52:SELECT JSON_EXTRACT(@a, '$[-1]');       -- 50  (dernier, indice négatif)
+04-concepts-avances-sql/08-json-path-expressions.md:53:SELECT JSON_EXTRACT(@a, '$[last]');     -- 50
+
+04-concepts-avances-sql/08-json-path-expressions.md:53:SELECT JSON_EXTRACT(@a, '$[last]');     -- 50
+04-concepts-avances-sql/08-json-path-expressions.md:54:SELECT JSON_EXTRACT(@a, '$[last-1]');   -- 40  (avant-dernier)
+
+04-concepts-avances-sql/08-json-path-expressions.md:54:SELECT JSON_EXTRACT(@a, '$[last-1]');   -- 40  (avant-dernier)
+04-concepts-avances-sql/08-json-path-expressions.md:55:SELECT JSON_EXTRACT(@a, '$[1 to 3]');   -- [20, 30, 40]  (intervalle)
+
+04-concepts-avances-sql/08-json-path-expressions.md:65:SET @doc = '[{"nom":"Wag","type":"chien"}, {"nom":"Meow","type":"chat"}]';
+04-concepts-avances-sql/08-json-path-expressions.md:66:SELECT JSON_EXTRACT(@doc, '$**.nom');   -- ["Wag", "Meow"]
+
+04-concepts-avances-sql/02.4-cas-usage-window.md:25:SELECT categorie, produit, ventes
+04-concepts-avances-sql/02.4-cas-usage-window.md:26:FROM classement
+
+04-concepts-avances-sql/02.4-cas-usage-window.md:26:FROM classement
+04-concepts-avances-sql/02.4-cas-usage-window.md:27:WHERE rang <= 3;
+
+04-concepts-avances-sql/02.4-cas-usage-window.md:110:FROM ca_mensuel
+04-concepts-avances-sql/02.4-cas-usage-window.md:111:WINDOW w AS (ORDER BY mois);
+
+04-concepts-avances-sql/07.1-stockage-type-json.md:68:INSERT INTO produits VALUES (2, '{ "a":1, "b":2, "a":3 }');
+04-concepts-avances-sql/07.1-stockage-type-json.md:69:SELECT attributs FROM produits WHERE id = 2;
+
+04-concepts-avances-sql/02.1-fonctions-rang.md:103:SELECT *
+04-concepts-avances-sql/02.1-fonctions-rang.md:104:FROM (
+
+04-concepts-avances-sql/02.1-fonctions-rang.md:120:SELECT *
+04-concepts-avances-sql/02.1-fonctions-rang.md:121:FROM (
+
+06-transactions-et-concurrence/07-savepoints.md:12:SAVEPOINT identifiant;                      -- pose un point de sauvegarde nommé
+06-transactions-et-concurrence/07-savepoints.md:13:ROLLBACK [WORK] TO [SAVEPOINT] identifiant; -- annule jusqu'à ce point (transaction maintenue)
+
+06-transactions-et-concurrence/07-savepoints.md:13:ROLLBACK [WORK] TO [SAVEPOINT] identifiant; -- annule jusqu'à ce point (transaction maintenue)
+06-transactions-et-concurrence/07-savepoints.md:14:RELEASE SAVEPOINT identifiant;              -- supprime le point (sans rien annuler)
+
+06-transactions-et-concurrence/03-niveaux-isolation.md:75:SELECT @@transaction_isolation;          -- niveau de la session
+06-transactions-et-concurrence/03-niveaux-isolation.md:76:SELECT @@global.transaction_isolation;   -- niveau global
+
+06-transactions-et-concurrence/09-snapshot-isolation.md:67:SET SESSION innodb_snapshot_isolation = OFF;   -- comportement antérieur, pour la session
+06-transactions-et-concurrence/09-snapshot-isolation.md:68:SET GLOBAL  innodb_snapshot_isolation = OFF;   -- pour les nouvelles sessions
+
+06-transactions-et-concurrence/05-deadlocks-resolution.md:59:TRANSACTION 24, ACTIVE 2 sec starting index read
+06-transactions-et-concurrence/05-deadlocks-resolution.md:60:UPDATE comptes SET solde = solde - 1 WHERE id = 1
+
+06-transactions-et-concurrence/05-deadlocks-resolution.md:66:TRANSACTION 23, ACTIVE 3 sec starting index read
+06-transactions-et-concurrence/05-deadlocks-resolution.md:67:UPDATE comptes SET solde = solde - 1 WHERE id = 2
+
+06-transactions-et-concurrence/05-deadlocks-resolution.md:98:DECLARE EXIT HANDLER FOR SQLSTATE '40001'   -- deadlock
+06-transactions-et-concurrence/05-deadlocks-resolution.md:99:BEGIN
+
+06-transactions-et-concurrence/01-concept-transaction-acid.md:16:UPDATE comptes SET solde = solde - 100 WHERE id = 1;  -- débit du compte A
+06-transactions-et-concurrence/01-concept-transaction-acid.md:17:UPDATE comptes SET solde = solde + 100 WHERE id = 2;  -- crédit du compte B
+
+06-transactions-et-concurrence/03.2-read-committed.md:53:SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+06-transactions-et-concurrence/03.2-read-committed.md:54:START TRANSACTION;
+
+06-transactions-et-concurrence/03.4-serializable.md:63:SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+06-transactions-et-concurrence/03.4-serializable.md:64:START TRANSACTION;
+
+06-transactions-et-concurrence/02-gestion-transactions.md:22:UPDATE comptes SET solde = solde - 100 WHERE id = 1;
+06-transactions-et-concurrence/02-gestion-transactions.md:23:UPDATE comptes SET solde = solde + 100 WHERE id = 2;
+
+06-transactions-et-concurrence/02-gestion-transactions.md:119:COMMIT   [WORK] [AND [NO] CHAIN] [[NO] RELEASE];
+06-transactions-et-concurrence/02-gestion-transactions.md:120:ROLLBACK [WORK] [AND [NO] CHAIN] [[NO] RELEASE];
+
+06-transactions-et-concurrence/03.1-read-uncommitted.md:47:SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+06-transactions-et-concurrence/03.1-read-uncommitted.md:48:START TRANSACTION;
+
+partie-03-index-transactions-performance.md:111:FROM documents
+partie-03-index-transactions-performance.md:112:ORDER BY similarity
+
+partie-03-index-transactions-performance.md:112:ORDER BY similarity
+partie-03-index-transactions-performance.md:113:LIMIT 10;
+
+partie-03-index-transactions-performance.md:268:FROM knowledge_base
+partie-03-index-transactions-performance.md:269:ORDER BY similarity
+
+partie-03-index-transactions-performance.md:269:ORDER BY similarity
+partie-03-index-transactions-performance.md:270:LIMIT 5;
+
+07-moteurs-de-stockage/10.3-spider.md:79:CREATE TABLE clients_distants
+07-moteurs-de-stockage/10.3-spider.md:80:ENGINE = spider
+
+07-moteurs-de-stockage/10.3-spider.md:80:ENGINE = spider
+07-moteurs-de-stockage/10.3-spider.md:81:COMMENT = 'table "clients", database "crm", host "192.168.0.50",
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:94:SELECT COUNT AS history_len
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:95:FROM information_schema.INNODB_METRICS
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:95:FROM information_schema.INNODB_METRICS
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:96:WHERE NAME = 'trx_rseg_history_len';
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:110:FROM information_schema.INNODB_TRX
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:111:ORDER BY trx_started
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:111:ORDER BY trx_started
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:112:LIMIT 10;
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:121:innodb_undo_tablespaces  = 3        # défaut depuis 11.0
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:122:innodb_undo_log_truncate = ON       # active la troncature automatique
+
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:122:innodb_undo_log_truncate = ON       # active la troncature automatique
+07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md:123:innodb_max_undo_log_size = 1G       # seuil de déclenchement (défaut : 10 Mo)
+
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:85:INSTALL SONAME 'ha_connect';                 -- moteur CONNECT
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:86:INSTALL PLUGIN spider SONAME 'ha_spider.so'; -- moteur Spider
+
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:110:SELECT ENGINE, SUPPORT, TRANSACTIONS, XA, SAVEPOINTS
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:111:FROM INFORMATION_SCHEMA.ENGINES
+
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:111:FROM INFORMATION_SCHEMA.ENGINES
+07-moteurs-de-stockage/01-vue-ensemble-architecture.md:112:ORDER BY ENGINE;
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:19:innodb_buffer_pool_size             = 12G   # principal levier ; ~50–75 % de la RAM (serveur dédié) ; dynamique
+07-moteurs-de-stockage/02.4-innodb-configuration.md:20:innodb_log_buffer_size              = 64M   # tampon des enregistrements redo avant écriture sur disque
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:20:innodb_log_buffer_size              = 64M   # tampon des enregistrements redo avant écriture sur disque
+07-moteurs-de-stockage/02.4-innodb-configuration.md:21:innodb_buffer_pool_dump_at_shutdown = ON    # sauvegarde l'état du cache à l'arrêt
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:21:innodb_buffer_pool_dump_at_shutdown = ON    # sauvegarde l'état du cache à l'arrêt
+07-moteurs-de-stockage/02.4-innodb-configuration.md:22:innodb_buffer_pool_load_at_startup  = ON    # le recharge au démarrage (évite un démarrage « à froid »)
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:33:innodb_log_file_size           = 2G    # fichier unique ib_logfile0 ; dynamique depuis 10.9
+07-moteurs-de-stockage/02.4-innodb-configuration.md:34:innodb_flush_log_at_trx_commit = 1     # 1 = durabilité ACID ; 2/0 = plus de débit, perte ≤ ~1 s sur crash
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:34:innodb_flush_log_at_trx_commit = 1     # 1 = durabilité ACID ; 2/0 = plus de débit, perte ≤ ~1 s sur crash
+07-moteurs-de-stockage/02.4-innodb-configuration.md:35:innodb_undo_tablespaces        = 3     # défaut depuis 11.0 (permet la troncature des undo)
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:35:innodb_undo_tablespaces        = 3     # défaut depuis 11.0 (permet la troncature des undo)
+07-moteurs-de-stockage/02.4-innodb-configuration.md:36:innodb_undo_log_truncate       = ON    # récupère l'espace des undo tablespaces volumineux
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:36:innodb_undo_log_truncate       = ON    # récupère l'espace des undo tablespaces volumineux
+07-moteurs-de-stockage/02.4-innodb-configuration.md:37:innodb_max_undo_log_size       = 1G    # seuil de déclenchement de la troncature
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:51:innodb_io_capacity      = 2000      # à adapter aux IOPS soutenues du stockage (SSD : plus élevé)
+07-moteurs-de-stockage/02.4-innodb-configuration.md:52:innodb_io_capacity_max  = 4000      # plafond lors des pics de flushing
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:52:innodb_io_capacity_max  = 4000      # plafond lors des pics de flushing
+07-moteurs-de-stockage/02.4-innodb-configuration.md:53:innodb_flush_method     = O_DIRECT  # défaut sur Unix depuis 10.6
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:53:innodb_flush_method     = O_DIRECT  # défaut sur Unix depuis 10.6
+07-moteurs-de-stockage/02.4-innodb-configuration.md:54:innodb_doublewrite      = ON        # protège des écritures de pages partielles
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:54:innodb_doublewrite      = ON        # protège des écritures de pages partielles
+07-moteurs-de-stockage/02.4-innodb-configuration.md:55:innodb_read_io_threads  = 8
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:55:innodb_read_io_threads  = 8
+07-moteurs-de-stockage/02.4-innodb-configuration.md:56:innodb_write_io_threads = 8
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:71:innodb_file_per_table     = ON       # un fichier .ibd par table (défaut)
+07-moteurs-de-stockage/02.4-innodb-configuration.md:72:innodb_default_row_format = dynamic  # format de ligne par défaut
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:72:innodb_default_row_format = dynamic  # format de ligne par défaut
+07-moteurs-de-stockage/02.4-innodb-configuration.md:73:innodb_data_file_path     = ibdata1:12M:autoextend   # tablespace système
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:83:innodb_lock_wait_timeout = 50   # délai d'attente d'un verrou, en secondes
+07-moteurs-de-stockage/02.4-innodb-configuration.md:84:innodb_deadlock_detect   = ON   # détection automatique des interblocages
+
+07-moteurs-de-stockage/02.4-innodb-configuration.md:95:innodb_stats_persistent  = ON   # statistiques persistées sur disque (stables entre redémarrages)
+07-moteurs-de-stockage/02.4-innodb-configuration.md:96:innodb_stats_auto_recalc = ON   # recalcul automatique après modifications importantes
+
+07-moteurs-de-stockage/06-moteur-s3.md:55:plugin-load-add = ha_s3
+07-moteurs-de-stockage/06-moteur-s3.md:56:s3             = ON
+
+07-moteurs-de-stockage/06-moteur-s3.md:56:s3             = ON
+07-moteurs-de-stockage/06-moteur-s3.md:57:s3-bucket      = mariadb-archive
+
+07-moteurs-de-stockage/06-moteur-s3.md:57:s3-bucket      = mariadb-archive
+07-moteurs-de-stockage/06-moteur-s3.md:58:s3-access-key  = AKIA…            # identifiants IAM RESTREINTS de préférence
+
+07-moteurs-de-stockage/06-moteur-s3.md:58:s3-access-key  = AKIA…            # identifiants IAM RESTREINTS de préférence
+07-moteurs-de-stockage/06-moteur-s3.md:59:s3-secret-key  = ……              # stockés en clair : limiter strictement les droits
+
+07-moteurs-de-stockage/06-moteur-s3.md:59:s3-secret-key  = ……              # stockés en clair : limiter strictement les droits
+07-moteurs-de-stockage/06-moteur-s3.md:60:s3-region      = eu-north-1
+
+07-moteurs-de-stockage/06-moteur-s3.md:60:s3-region      = eu-north-1
+07-moteurs-de-stockage/06-moteur-s3.md:61:s3-host-name   = s3.amazonaws.com
+
+07-moteurs-de-stockage/06-moteur-s3.md:66:s3-bucket     = mariadb-archive
+07-moteurs-de-stockage/06-moteur-s3.md:67:s3-access-key = AKIA…
+
+07-moteurs-de-stockage/06-moteur-s3.md:67:s3-access-key = AKIA…
+07-moteurs-de-stockage/06-moteur-s3.md:68:s3-secret-key = ……
+
+07-moteurs-de-stockage/06-moteur-s3.md:68:s3-secret-key = ……
+07-moteurs-de-stockage/06-moteur-s3.md:69:s3-region     = eu-north-1
+
+07-moteurs-de-stockage/06-moteur-s3.md:69:s3-region     = eu-north-1
+07-moteurs-de-stockage/06-moteur-s3.md:70:s3-host-name  = s3.amazonaws.com
+
+07-moteurs-de-stockage/06-moteur-s3.md:77:plugin-load-add = ha_s3
+07-moteurs-de-stockage/06-moteur-s3.md:78:s3            = ON
+
+07-moteurs-de-stockage/06-moteur-s3.md:78:s3            = ON
+07-moteurs-de-stockage/06-moteur-s3.md:79:s3-bucket     = storage-engine
+
+07-moteurs-de-stockage/06-moteur-s3.md:79:s3-bucket     = storage-engine
+07-moteurs-de-stockage/06-moteur-s3.md:80:s3-access-key = minio
+
+07-moteurs-de-stockage/06-moteur-s3.md:80:s3-access-key = minio
+07-moteurs-de-stockage/06-moteur-s3.md:81:s3-secret-key = minioadmin
+
+07-moteurs-de-stockage/06-moteur-s3.md:81:s3-secret-key = minioadmin
+07-moteurs-de-stockage/06-moteur-s3.md:82:s3-host-name  = 127.0.0.1
+
+07-moteurs-de-stockage/06-moteur-s3.md:82:s3-host-name  = 127.0.0.1
+07-moteurs-de-stockage/06-moteur-s3.md:83:s3-port       = 9000
+
+07-moteurs-de-stockage/06-moteur-s3.md:83:s3-port       = 9000
+07-moteurs-de-stockage/06-moteur-s3.md:84:s3-use-http   = ON
+
+07-moteurs-de-stockage/03-myisam.md:59:CHECK TABLE codes_pays;     -- diagnostiquer une éventuelle corruption
+07-moteurs-de-stockage/03-myisam.md:60:REPAIR TABLE codes_pays;    -- réparer la table
+
+07-moteurs-de-stockage/02.2-innodb-buffer-pool.md:67:innodb_buffer_pool_dump_at_shutdown = ON
+07-moteurs-de-stockage/02.2-innodb-buffer-pool.md:68:innodb_buffer_pool_load_at_startup  = ON
+
+07-moteurs-de-stockage/02.2-innodb-buffer-pool.md:74:SET GLOBAL innodb_buffer_pool_dump_now = ON;   -- sauvegarde immédiate
+07-moteurs-de-stockage/02.2-innodb-buffer-pool.md:75:SET GLOBAL innodb_buffer_pool_load_now = ON;    -- rechargement immédiat
+
+07-moteurs-de-stockage/04.1-aria-segmented-key-cache.md:33:aria_pagecache_buffer_size = 1G    # taille TOTALE du page cache (données + index)
+07-moteurs-de-stockage/04.1-aria-segmented-key-cache.md:34:aria_pagecache_segments    = 8     # 8 segments ⇒ ~128 Mo chacun ; défaut = 1 (cache unique)
+
+07-moteurs-de-stockage/04.1-aria-segmented-key-cache.md:53:SHOW VARIABLES LIKE 'aria_pagecache%';      -- voir buffer_size et segments
+07-moteurs-de-stockage/04.1-aria-segmented-key-cache.md:54:SHOW GLOBAL STATUS LIKE 'Aria_pagecache_read%';  -- reads vs read_requests
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:46:INSERT INTO documents (proprietaire_id, contenu, embedding)
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:47:VALUES (1234, 'Texte du document…', VEC_FromText('[0.12, -0.04, 0.88, …]'));
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:53:SELECT id, contenu
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:54:FROM documents
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:54:FROM documents
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:55:ORDER BY VEC_DISTANCE_COSINE(embedding, VEC_FromText('[…vecteur de la requête…]'))
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:55:ORDER BY VEC_DISTANCE_COSINE(embedding, VEC_FromText('[…vecteur de la requête…]'))
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:56:LIMIT 10;
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:98:SELECT id, contenu
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:99:FROM documents
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:99:FROM documents
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:100:WHERE proprietaire_id = 1234                                   -- filtre relationnel
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:100:WHERE proprietaire_id = 1234                                   -- filtre relationnel
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:101:ORDER BY VEC_DISTANCE_COSINE(embedding, VEC_FromText('[…]'))   -- proximité vectorielle
+
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:101:ORDER BY VEC_DISTANCE_COSINE(embedding, VEC_FromText('[…]'))   -- proximité vectorielle
+07-moteurs-de-stockage/07-moteur-vector-hnsw.md:102:LIMIT 10;
+
+07-moteurs-de-stockage/04-aria.md:75:aria_pagecache_buffer_size = 256M   # cache de pages Aria (données + index) ; défaut 128M
+07-moteurs-de-stockage/04-aria.md:76:aria_block_size            = 8K     # taille de page ; la modifier impose de recréer les tables Aria
+
+07-moteurs-de-stockage/04-aria.md:76:aria_block_size            = 8K     # taille de page ; la modifier impose de recréer les tables Aria
+07-moteurs-de-stockage/04-aria.md:77:aria_checkpoint_interval   = 30     # intervalle des checkpoints, en secondes
+
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:24:SELECT TABLE_NAME, ENGINE
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:25:FROM INFORMATION_SCHEMA.TABLES
+
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:25:FROM INFORMATION_SCHEMA.TABLES
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:26:WHERE TABLE_SCHEMA = 'ma_base';
+
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:78:ALTER TABLE enfant DROP FOREIGN KEY fk_pe;   -- retirer chaque FK concernée
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:79:ALTER TABLE enfant ENGINE = Aria;            -- la conversion passe alors
+
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:107:FROM INFORMATION_SCHEMA.TABLES
+07-moteurs-de-stockage/09-conversion-entre-moteurs.md:108:WHERE TABLE_SCHEMA = 'ma_base'
+
+07-moteurs-de-stockage/10.4-connect.md:55:TABLE_TYPE = CSV
+07-moteurs-de-stockage/10.4-connect.md:56:FILE_NAME  = '/data/clients.csv'
+
+07-moteurs-de-stockage/10.4-connect.md:56:FILE_NAME  = '/data/clients.csv'
+07-moteurs-de-stockage/10.4-connect.md:57:HEADER     = 1
+
+07-moteurs-de-stockage/10.4-connect.md:57:HEADER     = 1
+07-moteurs-de-stockage/10.4-connect.md:58:SEP_CHAR   = ',';
+
+07-moteurs-de-stockage/10.4-connect.md:65:CREATE TABLE produits_externes
+07-moteurs-de-stockage/10.4-connect.md:66:ENGINE     = CONNECT
+
+07-moteurs-de-stockage/10.4-connect.md:66:ENGINE     = CONNECT
+07-moteurs-de-stockage/10.4-connect.md:67:TABLE_TYPE = ODBC
+
+07-moteurs-de-stockage/10.4-connect.md:67:TABLE_TYPE = ODBC
+07-moteurs-de-stockage/10.4-connect.md:68:CONNECTION = 'DSN=ma_source_postgres'
+
+07-moteurs-de-stockage/10.4-connect.md:68:CONNECTION = 'DSN=ma_source_postgres'
+07-moteurs-de-stockage/10.4-connect.md:69:TABNAME    = 'public.produits';
+
+07-moteurs-de-stockage/10.4-connect.md:74:CREATE TABLE commandes_distantes
+07-moteurs-de-stockage/10.4-connect.md:75:ENGINE     = CONNECT
+
+07-moteurs-de-stockage/10.4-connect.md:75:ENGINE     = CONNECT
+07-moteurs-de-stockage/10.4-connect.md:76:TABLE_TYPE = MYSQL
+
+07-moteurs-de-stockage/10.4-connect.md:76:TABLE_TYPE = MYSQL
+07-moteurs-de-stockage/10.4-connect.md:77:CONNECTION = 'mysql://user:motdepasse@192.168.0.50:3306/crm/commandes';
+
