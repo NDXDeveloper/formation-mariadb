@@ -1,905 +1,130 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 11.3 Modes SQL (sql_mode)
+# 11.3 — Modes SQL (`sql_mode`)
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 1.5-2 heures  
-> **Prérequis** :
-> - Section 11.2 (Variables système et de session)
-> - Connaissance SQL intermédiaire
-> - Expérience avec les contraintes et validations
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- **Comprendre** le rôle et l'impact du `sql_mode` sur le comportement MariaDB
-- **Distinguer** les modes stricts des modes permissifs
-- **Configurer** le `sql_mode` optimal pour votre environnement
-- **Anticiper** les différences de comportement entre modes
-- **Résoudre** les problèmes de compatibilité lors de migrations
-- **Émuler** d'autres SGBD (MySQL, Oracle, PostgreSQL) avec les modes appropriés
-- **Appliquer** les bonnes pratiques en production
+> Troisième section du chapitre 11. Après les fichiers de configuration (§11.1) et les variables (§11.2), on s'arrête sur une variable particulière, `sql_mode`, qui agit comme un interrupteur global sur deux dimensions essentielles : la **rigueur** avec laquelle MariaDB valide les données, et sa **compatibilité** avec d'autres SGBD.
 
 ---
 
-## Introduction
+## Qu'est-ce que `sql_mode` ?
 
-Le **sql_mode** est une variable système qui contrôle le **niveau de rigueur** et la **compatibilité** du moteur SQL de MariaDB. C'est l'une des variables les plus importantes car elle affecte :
+`sql_mode` est une variable système qui gouverne la manière dont MariaDB interprète et contrôle le SQL. Deux missions s'y croisent. D'une part, elle règle le **niveau d'exigence** vis-à-vis des données : faut-il refuser une valeur invalide ou tenter de l'ajuster silencieusement ? D'autre part, elle permet d'**émuler le comportement** d'autres bases — au premier rang desquelles Oracle — pour faciliter migrations et portabilité.
 
-- ✅ La **validation des données** insérées
-- ✅ Le **comportement des requêtes** SQL
-- ✅ La **gestion des erreurs** et warnings
-- ✅ La **compatibilité** avec d'autres SGBD
-- ✅ Les **conversions implicites** de types
-
-### Pourquoi sql_mode est crucial
-
-```
-Mode Permissif
-    ↓
-Données invalides acceptées silencieusement
-    ↓
-Corruption de données à long terme
-    ↓
-Problèmes de qualité et intégrité
-
-VS
-
-Mode Strict
-    ↓
-Validation rigoureuse des données
-    ↓
-Rejet immédiat des données invalides
-    ↓
-Intégrité garantie
-```
-
-💡 **Principe fondamental** : En production, préférez toujours un mode **strict** pour garantir l'intégrité des données, même si cela nécessite plus de travail au niveau applicatif.
+Comprendre `sql_mode` est doublement utile : c'est un garde-fou pour l'intégrité des données, et c'est aussi la source de surprises classiques, notamment lors d'une migration où un mode plus strict fait soudain échouer des requêtes qui passaient auparavant.
 
 ---
 
-## Consultation du sql_mode actuel
+## Comment le mode SQL se définit
 
-### Vérifier le mode en cours
+La valeur de `sql_mode` est une **chaîne d'options séparées par des virgules, sans espaces** ; les noms d'options sont insensibles à la casse. C'est une variable système ordinaire : elle existe en portée globale et de session, et elle est dynamique (modifiable à chaud). Les notions vues en 11.2 s'appliquent donc directement — une session hérite de la valeur globale à la connexion, et un changement de session n'affecte que le client courant.
 
-```sql
--- Méthode 1 : SELECT @@
-SELECT @@sql_mode;
-
--- Méthode 2 : SHOW VARIABLES
-SHOW VARIABLES LIKE 'sql_mode';
-
--- Méthode 3 : Scope explicite
-SELECT @@global.sql_mode AS mode_global;
-SELECT @@session.sql_mode AS mode_session;
-```
-
-**Sortie exemple MariaDB 11.8** :
-
-```
-STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
-```
-
-Le `sql_mode` est une **liste de modes** séparés par des virgules. Chaque mode active un comportement spécifique.
-
----
-
-## Modes individuels principaux
-
-### STRICT_TRANS_TABLES
-
-**Comportement** : Mode strict pour les tables **transactionnelles** (InnoDB).
+On la consulte avec la syntaxe `@@` et on la modifie avec `SET` (cf. 11.2.1) :
 
 ```sql
--- Sans STRICT_TRANS_TABLES
-SET sql_mode = '';
+-- Consulter
+SELECT @@sql_mode;          -- valeur de session
+SELECT @@global.sql_mode;   -- valeur globale
 
-CREATE TABLE users (
-    id INT PRIMARY KEY,
-    name VARCHAR(10)
-);
+-- Modifier la session courante
+SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';
 
--- Insertion dépassant la longueur (10 caractères)
-INSERT INTO users VALUES (1, 'NomTropLongQuiDepasse');
--- ⚠️ ACCEPTÉ : Valeur tronquée silencieusement à 'NomTropLon'
--- WARNING: Data truncated for column 'name'
-
--- Avec STRICT_TRANS_TABLES
-SET sql_mode = 'STRICT_TRANS_TABLES';
-
-INSERT INTO users VALUES (2, 'NomTropLongQuiDepasse');
--- ❌ ERREUR: Data too long for column 'name' at row 1
+-- Modifier la valeur globale (pour les nouvelles connexions)
+SET GLOBAL sql_mode = 'TRADITIONAL';
 ```
 
-**Recommandation** : **TOUJOURS activer** en production pour les tables InnoDB.
-
-### STRICT_ALL_TABLES
-
-**Comportement** : Mode strict pour **toutes** les tables (InnoDB + MyISAM/Aria).
-
-```sql
-SET sql_mode = 'STRICT_ALL_TABLES';
-
--- S'applique même aux tables MyISAM
-CREATE TABLE legacy_table (
-    code CHAR(5)
-) ENGINE=MyISAM;
-
-INSERT INTO legacy_table VALUES ('ABCDEFGH');
--- ❌ ERREUR: Data too long
-```
-
-**Différence avec STRICT_TRANS_TABLES** :
-- `STRICT_TRANS_TABLES` : Strict uniquement pour InnoDB
-- `STRICT_ALL_TABLES` : Strict pour tous les moteurs
-
-💡 **Usage** : Préférez `STRICT_ALL_TABLES` si vous utilisez MyISAM/Aria en production.
-
-### NO_ZERO_DATE
-
-**Comportement** : Interdit les dates `'0000-00-00'`.
-
-```sql
--- Sans NO_ZERO_DATE
-SET sql_mode = '';
-
-CREATE TABLE events (
-    id INT,
-    event_date DATE
-);
-
-INSERT INTO events VALUES (1, '0000-00-00');
--- ✅ ACCEPTÉ (mais invalide logiquement)
-
--- Avec NO_ZERO_DATE
-SET sql_mode = 'NO_ZERO_DATE';
-
-INSERT INTO events VALUES (2, '0000-00-00');
--- ❌ ERREUR: Invalid default value for 'event_date'
-```
-
-⚠️ **Note** : `'0000-00-00'` est une date **non-standard** et devrait être remplacée par `NULL`.
-
-### NO_ZERO_IN_DATE
-
-**Comportement** : Interdit les composants zéro dans les dates (`'2025-00-15'`, `'2025-12-00'`).
-
-```sql
-SET sql_mode = 'NO_ZERO_IN_DATE';
-
-INSERT INTO events VALUES (3, '2025-00-15');
--- ❌ ERREUR: Invalid date value
-
-INSERT INTO events VALUES (4, '2025-12-00');
--- ❌ ERREUR: Invalid date value
-```
-
-### ERROR_FOR_DIVISION_BY_ZERO
-
-**Comportement** : Division par zéro génère une **erreur** au lieu de `NULL`.
-
-```sql
--- Sans ERROR_FOR_DIVISION_BY_ZERO
-SET sql_mode = '';
-
-SELECT 10 / 0;
--- Résultat: NULL (avec warning)
-
--- Avec ERROR_FOR_DIVISION_BY_ZERO + mode strict
-SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO';
-
-SELECT 10 / 0;
--- ❌ ERREUR: Division by 0
-```
-
-💡 **Bonne pratique** : Activer pour détecter les bugs logiques dans les calculs.
-
-### NO_AUTO_VALUE_ON_ZERO
-
-**Comportement** : Empêche l'insertion de valeur `0` dans une colonne `AUTO_INCREMENT` de générer une nouvelle valeur.
-
-```sql
-CREATE TABLE products (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(50)
-);
-
--- Sans NO_AUTO_VALUE_ON_ZERO
-SET sql_mode = '';
-
-INSERT INTO products VALUES (0, 'Produit A');
--- id généré automatiquement (ex: 1)
-
--- Avec NO_AUTO_VALUE_ON_ZERO
-SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO';
-
-INSERT INTO products VALUES (0, 'Produit B');
--- id = 0 (valeur littérale respectée)
-```
-
-**Cas d'usage** : Import de données avec des IDs existants incluant `0`.
-
-### NO_ENGINE_SUBSTITUTION
-
-**Comportement** : Erreur si le moteur de stockage demandé n'est pas disponible.
-
-```sql
--- Sans NO_ENGINE_SUBSTITUTION
-SET sql_mode = '';
-
-CREATE TABLE test_engine (id INT) ENGINE=MoteurInexistant;
--- ⚠️ WARNING: Table créée avec moteur par défaut (InnoDB)
-
--- Avec NO_ENGINE_SUBSTITUTION
-SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
-
-CREATE TABLE test_engine (id INT) ENGINE=MoteurInexistant;
--- ❌ ERREUR: Unknown storage engine 'MoteurInexistant'
-```
-
-**Recommandation** : Activer pour éviter les surprises lors de restaurations.
-
-### NO_AUTO_CREATE_USER
-
-**Comportement** : Empêche `GRANT` de créer automatiquement un utilisateur sans mot de passe.
-
-```sql
--- Sans NO_AUTO_CREATE_USER (dangereux)
-SET sql_mode = '';
-
-GRANT SELECT ON mydb.* TO 'newuser'@'localhost';
--- ⚠️ Utilisateur créé SANS mot de passe !
-
--- Avec NO_AUTO_CREATE_USER
-SET sql_mode = 'NO_AUTO_CREATE_USER';
-
-GRANT SELECT ON mydb.* TO 'newuser'@'localhost';
--- ❌ ERREUR: Can't find user 'newuser'@'localhost'
-```
-
-**Sécurité** : **Toujours activer** pour éviter la création de comptes non sécurisés.
-
-### PIPES_AS_CONCAT
-
-**Comportement** : `||` devient l'opérateur de concaténation (comme PostgreSQL) au lieu de `OR`.
-
-```sql
--- Sans PIPES_AS_CONCAT (comportement SQL standard)
-SET sql_mode = '';
-
-SELECT 'Hello' || 'World';
--- Résultat: 0 (évalué comme OR logique)
-
-SELECT CONCAT('Hello', 'World');
--- Résultat: 'HelloWorld'
-
--- Avec PIPES_AS_CONCAT (compatible PostgreSQL)
-SET sql_mode = 'PIPES_AS_CONCAT';
-
-SELECT 'Hello' || 'World';
--- Résultat: 'HelloWorld'
-```
-
-**Migration PostgreSQL** : Facilite la compatibilité des requêtes.
-
-### ANSI_QUOTES
-
-**Comportement** : Double quotes `"` deviennent des délimiteurs d'identifiants (au lieu de chaînes).
-
-```sql
--- Sans ANSI_QUOTES
-SET sql_mode = '';
-
-SELECT "Hello";
--- Résultat: 'Hello' (interprété comme chaîne)
-
--- Avec ANSI_QUOTES (standard ANSI SQL)
-SET sql_mode = 'ANSI_QUOTES';
-
-SELECT "Hello";
--- ❌ ERREUR: Unknown column 'Hello'
-
-SELECT "name" FROM users;
--- ✅ Correct: "name" est un identifiant (colonne)
-
-SELECT 'Hello';
--- ✅ Correct: 'Hello' est une chaîne
-```
-
-**Standard SQL** : Les chaînes utilisent `'` (simple quote), les identifiants `"` (double quote).
-
-### ONLY_FULL_GROUP_BY
-
-**Comportement** : Impose que toutes les colonnes dans `SELECT` non-agrégées soient dans `GROUP BY`.
-
-```sql
--- Sans ONLY_FULL_GROUP_BY
-SET sql_mode = '';
-
-SELECT department, name, COUNT(*)
-FROM employees
-GROUP BY department;
--- ⚠️ ACCEPTÉ : 'name' n'est pas dans GROUP BY (résultat indéterminé)
-
--- Avec ONLY_FULL_GROUP_BY (standard SQL)
-SET sql_mode = 'ONLY_FULL_GROUP_BY';
-
-SELECT department, name, COUNT(*)
-FROM employees
-GROUP BY department;
--- ❌ ERREUR: 'name' isn't in GROUP BY
-
--- Solution correcte
-SELECT department, COUNT(*) AS total
-FROM employees
-GROUP BY department;
--- ✅ OK
-```
-
-**Standard SQL:2003** : Garantit la déterminisme des requêtes.
-
-### NO_UNSIGNED_SUBTRACTION
-
-**Comportement** : Autorise les résultats négatifs dans les soustractions d'UNSIGNED.
-
-```sql
--- Sans NO_UNSIGNED_SUBTRACTION
-SET sql_mode = '';
-
-SELECT CAST(5 AS UNSIGNED) - CAST(10 AS UNSIGNED);
--- ❌ ERREUR: BIGINT UNSIGNED value is out of range
-
--- Avec NO_UNSIGNED_SUBTRACTION
-SET sql_mode = 'NO_UNSIGNED_SUBTRACTION';
-
-SELECT CAST(5 AS UNSIGNED) - CAST(10 AS UNSIGNED);
--- Résultat: -5 (autorisé)
-```
-
----
-
-## Modes composés
-
-Les modes composés sont des **raccourcis** regroupant plusieurs modes individuels.
-
-### TRADITIONAL
-
-**Équivalent à** :
-```
-STRICT_TRANS_TABLES,
-STRICT_ALL_TABLES,
-NO_ZERO_IN_DATE,
-NO_ZERO_DATE,
-ERROR_FOR_DIVISION_BY_ZERO,
-NO_AUTO_CREATE_USER,
-NO_ENGINE_SUBSTITUTION
-```
-
-**Usage** : Mode **strict maximal** recommandé pour la production.
-
-```sql
-SET sql_mode = 'TRADITIONAL';
-
--- Équivalent à activer tous les modes stricts
-```
-
-**Avantages** :
-- ✅ Validation stricte des données
-- ✅ Détection précoce des erreurs
-- ✅ Intégrité garantie
-
-**Inconvénients** :
-- ⚠️ Peut casser des applications legacy tolérantes aux erreurs
-- ⚠️ Nécessite un code applicatif rigoureux
-
-### ANSI
-
-**Équivalent à** :
-```
-REAL_AS_FLOAT,
-PIPES_AS_CONCAT,
-ANSI_QUOTES,
-IGNORE_SPACE
-```
-
-**Usage** : Compatibilité avec le **standard ANSI SQL**.
-
-```sql
-SET sql_mode = 'ANSI';
-
--- Comportement proche SQL standard
-SELECT "column_name" || 'text';
-```
-
-### ORACLE
-
-**Équivalent à** :
-```
-PIPES_AS_CONCAT,
-ANSI_QUOTES,
-IGNORE_SPACE,
-NO_KEY_OPTIONS,
-NO_TABLE_OPTIONS,
-NO_FIELD_OPTIONS
-```
-
-**Usage** : **Émulation Oracle** pour faciliter les migrations.
-
-```sql
-SET sql_mode = 'ORACLE';
-
--- Comportement similaire à Oracle Database
-SELECT name || ' ' || surname AS full_name
-FROM employees;
-```
-
-**Limitations** : Émulation **partielle** uniquement. Oracle et MariaDB restent fondamentalement différents.
-
-### MSSQL / DB2 / POSTGRESQL
-
-Modes spécialisés pour la compatibilité avec d'autres SGBD.
-
-```sql
--- Compatibilité Microsoft SQL Server
-SET sql_mode = 'MSSQL';
-
--- Compatibilité IBM DB2
-SET sql_mode = 'DB2';
-
--- Compatibilité PostgreSQL
-SET sql_mode = 'POSTGRESQL';
-```
-
-⚠️ **Attention** : Ces modes ne garantissent **pas** une compatibilité totale. Ils facilitent la migration mais ne remplacent pas une adaptation approfondie.
-
----
-
-## Configuration du sql_mode
-
-### Au niveau global (serveur)
+Pour la rendre persistante, on l'inscrit dans un fichier de configuration (cf. 11.1), ou on la passe via l'option de démarrage `--sql-mode` :
 
 ```ini
-# Dans my.cnf
-[mysqld]
+[mariadbd]
 sql_mode = STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
 ```
 
-```sql
--- Via SQL (temporaire jusqu'au redémarrage)
-SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+---
 
--- Via SQL (persistant avec SET PERSIST)
-SET PERSIST sql_mode = 'TRADITIONAL';
-```
+## Le mode strict : le réglage le plus structurant
 
-### Au niveau session (connexion)
+Le cœur de `sql_mode` est le **mode strict**, actif dès lors que l'un des deux drapeaux `STRICT_TRANS_TABLES` ou `STRICT_ALL_TABLES` est présent. Il détermine la réaction du serveur face à une valeur invalide ou manquante dans une instruction qui modifie des données (`INSERT`, `UPDATE`) ou dans un `CREATE TABLE`.
+
+En **mode strict** — le comportement par défaut de MariaDB depuis la version 10.2.4 — une valeur incorrecte provoque une **erreur** et l'instruction est rejetée. En **mode permissif**, MariaDB **ajuste silencieusement** la valeur : il tronque une chaîne trop longue, ramène un nombre hors limites à la borne la plus proche, ou insère une valeur par défaut. L'exemple canonique est l'insertion d'une chaîne trop longue :
 
 ```sql
--- Pour la connexion courante uniquement
-SET SESSION sql_mode = 'TRADITIONAL';
+-- Colonne définie en VARCHAR(5)
+INSERT INTO produits (code) VALUES ('ABCDEFG');
 
--- Forme abrégée
-SET sql_mode = 'TRADITIONAL';
+-- Mode strict (défaut) : l'instruction échoue
+--   ERROR 1406 (22001): Data too long for column 'code' at row 1
+
+-- Mode permissif : la valeur est tronquée en 'ABCDE', avec un simple avertissement
 ```
 
-### Ajouter ou retirer un mode
+La différence entre les deux drapeaux stricts tient aux tables non transactionnelles : `STRICT_TRANS_TABLES` privilégie la cohérence (en évitant les mises à jour partielles), tandis que `STRICT_ALL_TABLES` est plus rigoureux mais peut laisser une table non transactionnelle partiellement modifiée si l'erreur survient en milieu d'instruction. Sur des tables InnoDB transactionnelles, la question ne se pose pas : l'instruction est annulée proprement. À noter que le mot-clé `IGNORE` dans une requête permet, ponctuellement, de retomber sur un comportement « avertissement » même en mode strict.
 
-```sql
--- Ajouter ONLY_FULL_GROUP_BY au mode actuel
-SET sql_mode = CONCAT(@@sql_mode, ',ONLY_FULL_GROUP_BY');
-
--- Retirer ONLY_FULL_GROUP_BY
-SET sql_mode = REPLACE(@@sql_mode, ',ONLY_FULL_GROUP_BY', '');
-SET sql_mode = REPLACE(@@sql_mode, 'ONLY_FULL_GROUP_BY,', '');
-```
-
-**Méthode plus propre avec sys_exec()** :
-
-```sql
--- Fonction helper (à créer)
-DELIMITER //
-CREATE FUNCTION add_sql_mode(mode_to_add VARCHAR(255))
-RETURNS VARCHAR(1024)
-DETERMINISTIC
-BEGIN
-    DECLARE current_mode VARCHAR(1024);
-    SET current_mode = @@sql_mode;
-
-    IF FIND_IN_SET(mode_to_add, current_mode) = 0 THEN
-        RETURN CONCAT(current_mode, ',', mode_to_add);
-    ELSE
-        RETURN current_mode;
-    END IF;
-END//
-DELIMITER ;
-
--- Utilisation
-SET sql_mode = add_sql_mode('ONLY_FULL_GROUP_BY');
-```
+L'enjeu est l'**intégrité des données** : le mode strict transforme une corruption discrète (une valeur tronquée à l'insu de l'application) en une erreur visible et traçable. C'est pourquoi on recommande très généralement de le conserver actif. Comme la valeur effective peut être modifiée par la distribution dans ses fichiers de configuration, le bon réflexe reste de **vérifier `@@sql_mode` sur l'instance réelle** plutôt que de présumer du défaut compilé.
 
 ---
 
-## Impact sur le comportement SQL
+## Des modes utiles à connaître
 
-### Insertion de données invalides
+Au-delà du mode strict, `sql_mode` rassemble de nombreux drapeaux. En voici une sélection parmi les plus courants.
 
-#### Mode permissif
+| Mode | Effet |
+|------|-------|
+| `STRICT_TRANS_TABLES` | Rejette les valeurs invalides/manquantes pour les tables transactionnelles |
+| `STRICT_ALL_TABLES` | Idem pour toutes les tables (risque de mise à jour partielle sur les non transactionnelles) |
+| `ERROR_FOR_DIVISION_BY_ZERO` | Erreur sur une division par zéro dans `INSERT`/`UPDATE` (au lieu d'un `NULL`) |
+| `NO_ZERO_DATE` / `NO_ZERO_IN_DATE` | Interdit les dates `'0000-00-00'` ou comportant une partie nulle |
+| `NO_ENGINE_SUBSTITUTION` | Erreur si le moteur demandé est indisponible, au lieu d'une substitution silencieuse |
+| `ONLY_FULL_GROUP_BY` | Rejette les `GROUP BY` ambigus (colonnes non agrégées absentes du `GROUP BY`) — cf. 3.2 |
+| `PIPES_AS_CONCAT` | `||` devient l'opérateur de concaténation de chaînes (au lieu du OU logique) |
+| `ANSI_QUOTES` | Les guillemets `"` délimitent un identifiant (au lieu d'une chaîne) |
 
-```sql
-SET sql_mode = '';
-
-CREATE TABLE test_strict (
-    age TINYINT,           -- -128 à 127
-    name VARCHAR(5)
-);
-
-INSERT INTO test_strict VALUES (300, 'NomTropLong');
--- ⚠️ ACCEPTÉ avec warnings
--- age tronqué à 127
--- name tronqué à 'NomTr'
-
-SELECT * FROM test_strict;
--- Résultat: 127 | NomTr (données corrompues)
-```
-
-#### Mode strict
-
-```sql
-SET sql_mode = 'STRICT_TRANS_TABLES';
-
-INSERT INTO test_strict VALUES (300, 'NomTropLong');
--- ❌ ERREUR: Out of range value for column 'age'
--- Transaction annulée, aucune donnée insérée
-```
-
-### Division par zéro
-
-```sql
--- Mode permissif
-SET sql_mode = '';
-SELECT 10 / 0;
--- Résultat: NULL (warning)
-
--- Mode strict
-SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO';
-SELECT 10 / 0;
--- ❌ ERREUR: Division by 0
-```
-
-### Dates invalides
-
-```sql
--- Mode permissif
-SET sql_mode = '';
-INSERT INTO events VALUES (1, '2025-02-30');  -- 30 février n'existe pas
--- ⚠️ ACCEPTÉ, converti en '0000-00-00'
-
--- Mode strict
-SET sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE';
-INSERT INTO events VALUES (1, '2025-02-30');
--- ❌ ERREUR: Invalid date
-```
-
-### GROUP BY non-standard
-
-```sql
-CREATE TABLE sales (
-    region VARCHAR(50),
-    salesperson VARCHAR(50),
-    amount DECIMAL(10,2)
-);
-
-INSERT INTO sales VALUES
-    ('Nord', 'Alice', 1000),
-    ('Nord', 'Bob', 1500),
-    ('Sud', 'Charlie', 2000);
-
--- Sans ONLY_FULL_GROUP_BY (non-standard, indéterministe)
-SET sql_mode = '';
-
-SELECT region, salesperson, SUM(amount)
-FROM sales
-GROUP BY region;
--- ⚠️ ACCEPTÉ
--- Résultat imprévisible pour 'salesperson' (Alice ou Bob ?)
-
--- Avec ONLY_FULL_GROUP_BY (standard SQL)
-SET sql_mode = 'ONLY_FULL_GROUP_BY';
-
-SELECT region, salesperson, SUM(amount)
-FROM sales
-GROUP BY region;
--- ❌ ERREUR: 'salesperson' isn't in GROUP BY
-
--- Solution correcte
-SELECT region, SUM(amount) AS total
-FROM sales
-GROUP BY region;
--- ✅ OK
-```
+Ces drapeaux se combinent librement. `ONLY_FULL_GROUP_BY`, par exemple, oblige à écrire des regroupements sans ambiguïté, ce qui rejoint les bonnes pratiques évoquées au chapitre 3 sur `GROUP BY` et `HAVING`.
 
 ---
 
-## Recommandations par environnement
+## Les modes combinés
 
-### Production
+Plutôt que d'énumérer chaque drapeau, on peut utiliser des **valeurs combinées** qui en activent plusieurs d'un coup.
 
-```ini
-# my.cnf - Production stricte
-[mysqld]
-sql_mode = STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE
-```
+`TRADITIONAL` fait se comporter MariaDB comme un serveur SQL traditionnel et exigeant ; il regroupe `STRICT_TRANS_TABLES`, `STRICT_ALL_TABLES`, `NO_ZERO_IN_DATE`, `NO_ZERO_DATE`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_AUTO_CREATE_USER` et `NO_ENGINE_SUBSTITUTION` (sous MariaDB, `NO_AUTO_CREATE_USER` en fait partie, contrairement à MySQL 8 qui l'a retiré). C'est un raccourci pratique quand on veut la rigueur maximale en matière d'intégrité.
 
-**Justification** :
-- ✅ Intégrité des données garantie
-- ✅ Détection précoce des bugs
-- ✅ Conformité aux standards
-
-### Développement
-
-```ini
-# my.cnf - Développement (encore plus strict)
-[mysqld]
-sql_mode = TRADITIONAL
-```
-
-**Justification** :
-- ✅ Force les développeurs à écrire du code correct
-- ✅ Détecte les problèmes avant la production
-- ✅ Réduit la dette technique
-
-### Migration depuis MySQL
-
-```ini
-# my.cnf - Compatibilité MySQL
-[mysqld]
-sql_mode = STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
-```
-
-**Justification** :
-- ✅ Compatible avec MySQL 5.7+
-- ✅ Mode par défaut MySQL 8.0
-- ✅ Facilite la migration
-
-### Migration depuis Oracle
-
-```sql
--- Session de migration
-SET sql_mode = 'ORACLE';
-
--- Permet l'utilisation de || pour la concaténation
--- Double quotes pour les identifiants
--- Comportement proche Oracle
-```
+`ANSI` rapproche MariaDB du standard SQL, en activant notamment `ANSI_QUOTES` et `PIPES_AS_CONCAT`. Il est utile pour écrire un SQL plus portable d'un SGBD à l'autre.
 
 ---
 
-## Détection et résolution des problèmes
+## Émuler un autre SGBD : le mode `ORACLE` et ses cousins
 
-### Application legacy incompatible avec mode strict
-
-**Symptôme** : Erreurs massives après activation de `STRICT_TRANS_TABLES`.
-
-**Diagnostic** :
+La seconde grande mission de `sql_mode` est l'émulation. Le mode le plus important à cet égard — et le plus présent dans cette formation — est **`ORACLE`**.
 
 ```sql
--- Tester en mode permissif
-SET sql_mode = '';
--- Requête fonctionne
-
--- Tester en mode strict
-SET sql_mode = 'STRICT_TRANS_TABLES';
--- Requête échoue
+-- Activer la compatibilité Oracle pour la session
+SET SESSION sql_mode = 'ORACLE';
 ```
 
-**Solutions** :
+Activer le mode Oracle modifie en profondeur l'interprétation du SQL : prise en charge d'une partie de la syntaxe PL/SQL, d'alias de types de données, et de comportements propres à Oracle. C'est précisément ce mode qui ouvre la porte aux nombreuses fonctionnalités de compatibilité Oracle abordées ailleurs dans la formation — la syntaxe `( + )` pour les jointures externes (§3.3.5), les fonctions `TO_DATE`, `TRUNC`, `TO_NUMBER` (§3.7.1), les tableaux associatifs (§8.1.4), `SYS_REFCURSOR` (§8.5.2). La migration depuis Oracle (§19.2.1) s'appuie largement sur ce levier.
 
-1. **Option 1 : Corriger le code applicatif** (recommandé)
-
-```sql
--- Avant (code legacy)
-INSERT INTO users (name) VALUES ('NomTropLongQuiDepasse');
-
--- Après (code corrigé)
-INSERT INTO users (name) VALUES (SUBSTRING('NomTropLongQuiDepasse', 1, 10));
-```
-
-2. **Option 2 : Mode strict sélectif** (temporaire)
-
-```sql
--- Désactiver strict uniquement pour certaines requêtes
-SET sql_mode = '';
-INSERT INTO users (name) VALUES ('NomTropLongQuiDepasse');
-SET sql_mode = 'STRICT_TRANS_TABLES';
-```
-
-3. **Option 3 : Mode permissif global** (déconseillé)
-
-```ini
-# À éviter en production
-[mysqld]
-sql_mode = ''
-```
-
-### ONLY_FULL_GROUP_BY casse les requêtes
-
-**Symptôme** : Erreur "isn't in GROUP BY" sur des requêtes legacy.
-
-**Solution 1 : Corriger la requête** (recommandé)
-
-```sql
--- Avant (incorrect)
-SELECT category, name, COUNT(*)
-FROM products
-GROUP BY category;
-
--- Après (correct)
-SELECT
-    category,
-    GROUP_CONCAT(name) AS names,  -- Agrégation
-    COUNT(*) AS total
-FROM products
-GROUP BY category;
-```
-
-**Solution 2 : Désactiver temporairement**
-
-```sql
-SET sql_mode = REPLACE(@@sql_mode, 'ONLY_FULL_GROUP_BY', '');
-```
-
-### Incompatibilité avec imports
-
-**Symptôme** : Import mysqldump échoue avec mode strict.
-
-**Solution** :
-
-```sql
--- Désactiver temporairement les checks
-SET SESSION sql_mode = '';
-SET SESSION foreign_key_checks = 0;
-SET SESSION unique_checks = 0;
-
--- Import
-SOURCE dump.sql;
-
--- Réactiver
-SET SESSION sql_mode = 'STRICT_TRANS_TABLES';
-SET SESSION foreign_key_checks = 1;
-SET SESSION unique_checks = 1;
-```
+MariaDB propose d'autres modes d'émulation visant des SGBD comme PostgreSQL, MS SQL Server ou DB2, mais leur portée est plus limitée et leur usage plus rare ; `ORACLE` est de loin le plus abouti et le plus employé.
 
 ---
 
-## Vérification de compatibilité
+## `OLD_MODE` : émuler d'anciennes versions
 
-### Script de test de compatibilité
-
-```sql
--- Créer une table de test
-CREATE TABLE compat_test (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    tiny_col TINYINT,
-    small_str VARCHAR(5),
-    date_col DATE,
-    calc_result DECIMAL(10,2)
-);
-
--- Test 1 : Dépassement de capacité
-INSERT INTO compat_test (tiny_col) VALUES (300);
--- Mode strict : ERREUR
--- Mode permissif : Tronqué à 127
-
--- Test 2 : Dépassement longueur
-INSERT INTO compat_test (small_str) VALUES ('ChaineTropLongue');
--- Mode strict : ERREUR
--- Mode permissif : Tronqué à 'Chain'
-
--- Test 3 : Date invalide
-INSERT INTO compat_test (date_col) VALUES ('2025-02-30');
--- Mode strict + NO_ZERO_DATE : ERREUR
--- Mode permissif : Converti en '0000-00-00'
-
--- Test 4 : Division par zéro
-INSERT INTO compat_test (calc_result) VALUES (10 / 0);
--- Mode strict + ERROR_FOR_DIVISION_BY_ZERO : ERREUR
--- Mode permissif : NULL
-
--- Nettoyage
-DROP TABLE compat_test;
-```
+Il existe une variable voisine mais distincte, `old_mode`. Là où `sql_mode` sert à émuler le comportement d'**autres serveurs**, `old_mode` sert à retrouver le comportement d'**anciennes versions** de MariaDB ou MySQL. C'est un outil de transition, utile lorsqu'une mise à jour modifie un comportement par défaut et qu'on souhaite, provisoirement, conserver l'ancien le temps d'adapter l'application. On la mentionne ici pour ne pas la confondre avec `sql_mode` ; son usage relève des scénarios de migration (chapitre 19).
 
 ---
 
-## Modes par défaut MariaDB
+## Portée, persistance et migration
 
-### Évolution historique
+Quelques principes pratiques pour finir. Pour une configuration cohérente de l'instance, on définit `sql_mode` **globalement** dans un fichier (cf. 11.1), valeur que les nouvelles connexions hériteront. La portée de **session** reste précieuse pour un traitement particulier — par exemple un script d'import ou de migration qui a besoin temporairement du mode Oracle ou d'un mode allégé, sans toucher au réglage global. Il faut aussi savoir que de nombreux connecteurs et ORM imposent leur propre `sql_mode` à la connexion : la valeur vue par l'application n'est donc pas toujours celle du serveur.
 
-| Version | sql_mode par défaut |
-|---------|---------------------|
-| MariaDB 10.2 | `NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION` |
-| MariaDB 10.3 | `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION` |
-| MariaDB 10.4+ | `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION` |
-| **MariaDB 11.8** | `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION` |
-
-💡 **Bonne nouvelle** : MariaDB adopte un mode **strict par défaut** depuis la version 10.3, améliorant l'intégrité des données.
+Le point de vigilance majeur concerne la **migration**. Un changement de `sql_mode` par défaut — typiquement le passage en mode strict lors d'une montée de version — peut faire échouer des `INSERT`/`UPDATE` qui, auparavant, étaient acceptés au prix d'un ajustement silencieux. La tentation est alors de désactiver le mode strict pour « débloquer » l'application ; c'est rarement le bon choix, car cela rétablit le risque de corruption discrète. La démarche recommandée est d'auditer et de corriger les requêtes ou les données fautives, en conservant l'intégrité offerte par le mode strict. Ces aspects sont approfondis dans la partie consacrée à la migration (chapitre 19).
 
 ---
 
-## Migration et compatibilité
+## En résumé
 
-### Migration MySQL → MariaDB
+`sql_mode` est l'interrupteur qui gouverne à la fois la rigueur de validation des données et la compatibilité de MariaDB avec d'autres SGBD. Sa pièce maîtresse est le **mode strict** (`STRICT_TRANS_TABLES`/`STRICT_ALL_TABLES`), actif par défaut, qui transforme une valeur invalide en erreur plutôt qu'en ajustement silencieux — un gage d'intégrité qu'il vaut mieux préserver. De nombreux drapeaux et des valeurs combinées (`TRADITIONAL`, `ANSI`) affinent ce comportement, tandis que le mode **`ORACLE`** ouvre la voie aux fonctionnalités de compatibilité disséminées dans la formation. Variable globale et de session, dynamique, `sql_mode` se pérennise par fichier et constitue un point d'attention central lors des migrations.
 
-```sql
--- Vérifier le sql_mode MySQL
--- Sur MySQL
-SHOW VARIABLES LIKE 'sql_mode';
-
--- Appliquer le même sur MariaDB (pour compatibilité)
-SET GLOBAL sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-```
-
-### Migration Oracle → MariaDB
-
-```sql
--- Phase 1 : Mode Oracle pour import initial
-SET sql_mode = 'ORACLE';
-
--- Importer les données...
-
--- Phase 2 : Tester progressivement avec mode MariaDB
-SET sql_mode = 'TRADITIONAL';
-
--- Identifier et corriger les incompatibilités
-```
-
-### Migration PostgreSQL → MariaDB
-
-```sql
--- Activer modes compatibles PostgreSQL
-SET sql_mode = 'POSTGRESQL';
-
--- Implique :
--- - PIPES_AS_CONCAT (|| = concat)
--- - ANSI_QUOTES (" = identifiant)
-```
-
----
-
-## ✅ Points clés à retenir
-
-- **sql_mode** contrôle la rigueur et la compatibilité SQL de MariaDB
-- **Deux philosophies** : Mode strict (TRADITIONAL) vs mode permissif ('')
-- **Production** : Toujours utiliser un mode strict pour l'intégrité des données
-- **Modes essentiels** : `STRICT_TRANS_TABLES`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_AUTO_CREATE_USER`
-- **ONLY_FULL_GROUP_BY** : Force le standard SQL pour les GROUP BY
-- **Modes composés** : TRADITIONAL (strict max), ANSI, ORACLE, POSTGRESQL
-- **Configuration** : Global (my.cnf), session (SET), persistant (SET PERSIST)
-- **Compatibilité** : Modes facilitent migrations mais ne garantissent pas compatibilité totale
-- **Tests** : Toujours tester en mode strict avant mise en production
-- **Migration** : Activer progressivement les modes stricts
-- **Défaut 11.8** : Mode déjà relativement strict par défaut
-- **Documentation** : Commenter les choix de sql_mode dans my.cnf
-
----
-
-## 🔗 Ressources et références
-
-- [📖 Documentation officielle - SQL Mode](https://mariadb.com/kb/en/sql-mode/)
-- [📖 Documentation officielle - sql_mode Full List](https://mariadb.com/kb/en/sql_mode-full-list/)
-- [📖 MySQL vs MariaDB - SQL Mode Differences](https://mariadb.com/kb/en/mariadb-vs-mysql-compatibility/)
-- [📖 Oracle Compatibility Mode](https://mariadb.com/kb/en/sql_modeoracle-from-mariadb-103/)
-- [📖 ANSI SQL Compatibility](https://mariadb.com/kb/en/sql-mode-ansi/)
-
----
-
-## ➡️ Section suivante
-
-**[11.4 Gestion des logs](./04-gestion-logs.md)** : Configuration et exploitation des différents types de logs MariaDB (error, slow query, general, binary) pour le diagnostic, l'audit et la réplication.
-
----
-
-**💡 Conseil final** : Le sql_mode n'est pas juste un détail technique — c'est une décision stratégique sur la **qualité de vos données**. Préférez toujours la rigueur à la permissivité. Vos futurs DBA vous remercieront ! 🛡️🎯
+La section suivante quitte le réglage du comportement pour la production de traces exploitables au quotidien — **11.4, Gestion des logs**.
 
 ⏭️ [Gestion des logs](/11-administration-configuration/04-gestion-logs.md)

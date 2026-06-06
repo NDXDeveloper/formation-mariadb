@@ -2,589 +2,110 @@
 
 # 12. Sauvegarde et Restauration
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 8-10 heures  
-> **Prérequis** : Administration MariaDB (Chapitre 11), Réplication (Chapitre 13), Notions de production et disponibilité
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de ce chapitre, vous serez capable de :
-
-- **Concevoir** une stratégie de sauvegarde adaptée aux besoins métier (RPO/RTO)
-- **Maîtriser** les outils de sauvegarde logique (mariadb-dump, mydumper) et physique (Mariabackup)
-- **Mettre en œuvre** des sauvegardes incrémentales et le Point-in-Time Recovery (PITR)
-- **Automatiser** les sauvegardes dans des environnements cloud et Kubernetes
-- **Tester** régulièrement les procédures de restauration et le Plan de Reprise d'Activité (PRA)
-- **Sécuriser** et optimiser le stockage des sauvegardes (chiffrement, compression, rétention)
+> **Partie 5 — Sécurité et Administration (DBA)**  
+> Version de référence : **MariaDB 12.3 LTS** · Niveau : Administrateur / DBA
 
 ---
 
 ## Introduction
 
-La sauvegarde et la restauration constituent **le pilier fondamental de la continuité d'activité** d'une infrastructure de bases de données. Aucune architecture haute disponibilité, aussi sophistiquée soit-elle, ne dispense d'une stratégie de backup rigoureuse et testée régulièrement.
+Pour la plupart des organisations, les données stockées dans une base sont l'actif le plus précieux et, surtout, le moins remplaçable du système d'information. Le code applicatif peut être réécrit, un serveur peut être réinstallé, une configuration peut être reconstruite — mais des données de production perdues sont fréquemment irrécupérables. C'est ce qui fait de la sauvegarde, non pas une tâche d'administration parmi d'autres, mais la dernière ligne de défense d'un système face à un éventail de scénarios de défaillance.
 
-### Pourquoi la sauvegarde est critique
+Ces scénarios sont nombreux et de natures très différentes : panne matérielle (disque défaillant, contrôleur RAID corrompu), bug logiciel, erreur humaine (un `DROP TABLE` exécuté sur la production, un `UPDATE` lancé sans clause `WHERE`), acte malveillant (rançongiciel, sabotage interne), corruption silencieuse de fichiers, ou encore sinistre majeur affectant un centre de données entier ou une région cloud. Aucune réplication ni aucune architecture haute disponibilité ne protège contre toutes ces situations : une suppression accidentelle ou une corruption logique se propage instantanément vers les répliques. La sauvegarde joue donc un rôle que la redondance ne peut pas assurer.
 
-Les données d'une organisation représentent souvent son actif le plus précieux. Leur perte peut résulter de :
-
-- **Erreurs humaines** : DROP TABLE accidentel, UPDATE sans WHERE, DELETE massif
-- **Corruptions matérielles** : Panne disque, corruption filesystem, problème RAID
-- **Incidents logiciels** : Bugs applicatifs, migrations ratées, conflits de réplication
-- **Attaques malveillantes** : Ransomware, sabotage interne, intrusions
-- **Catastrophes naturelles** : Incendie, inondation, séisme affectant le datacenter
-
-💡 **Principe fondamental** : *"Une sauvegarde non testée n'est pas une sauvegarde"*. De nombreuses organisations découvrent que leurs backups sont inexploitables au moment critique de la restauration.
-
-### Les métriques de disponibilité
-
-Toute stratégie de sauvegarde doit être définie en fonction de deux indicateurs clés :
-
-**RPO (Recovery Point Objective)** : Perte de données maximale acceptable
-- "Combien de données puis-je me permettre de perdre ?"
-- Exemple : RPO de 1 heure = accepter de perdre jusqu'à 1h de transactions
-- Impact : Détermine la fréquence des sauvegardes
-
-**RTO (Recovery Time Objective)** : Temps de restauration maximal acceptable
-- "Combien de temps puis-je rester hors ligne ?"
-- Exemple : RTO de 4 heures = restauration complète en moins de 4h
-- Impact : Détermine le type de sauvegarde et l'infrastructure de stockage
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    Timeline d'incident                               │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Dernière ──────►  Incident ──────►  Détection ──────►  Restauration │
-│  sauvegarde        survient        incident           complète       │
-│                                                                      │
-│  ◄────RPO────►                                                       │
-│               ◄──────────────RTO──────────────►                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### Panorama des stratégies de sauvegarde
-
-Ce chapitre couvre trois approches complémentaires :
-
-#### 1. Sauvegardes complètes (Full Backup)
-Copie intégrale de toutes les données à un instant T. Simple mais consommatrice en ressources.
-
-#### 2. Sauvegardes incrémentales (Incremental Backup)
-Ne sauvegarde que les modifications depuis la dernière sauvegarde (complète ou incrémentale). Économe en espace mais restauration plus complexe.
-
-#### 3. Sauvegardes différentielles (Differential Backup)
-Ne sauvegarde que les modifications depuis la dernière sauvegarde complète. Compromis entre full et incrémentale.
+Il faut enfin insister sur un point que le titre de ce chapitre rend explicite en associant les deux termes : ce qui compte n'est pas de *sauvegarder*, mais de pouvoir *restaurer*. Une sauvegarde dont la restauration n'a jamais été testée n'est pas une sauvegarde, c'est une espérance. La capacité à remettre un système en service dans un délai maîtrisé, avec une perte de données acceptable, est l'unique critère qui valide une stratégie.
 
 ---
 
-## Vue d'ensemble des outils MariaDB
+## Deux métriques qui structurent toute stratégie
 
-### Sauvegardes logiques : Export SQL
+Avant de choisir des outils ou des fréquences, une stratégie de sauvegarde se définit à partir de deux indicateurs métier qui guideront ensuite toutes les décisions techniques :
 
-Les sauvegardes logiques exportent les données sous forme de requêtes SQL (`CREATE TABLE`, `INSERT`).
+- Le **RPO** (*Recovery Point Objective*) répond à la question : « quelle quantité de données peut-on accepter de perdre ? », exprimée en temps. Un RPO de 24 heures autorise la perte d'une journée de transactions ; un RPO de quelques secondes impose une approche en continu, typiquement adossée aux *binary logs*.
+- Le **RTO** (*Recovery Time Objective*) répond à la question : « combien de temps peut-on rester indisponible ? ». Il conditionne le choix entre une restauration logique (souvent plus lente) et une restauration physique, ainsi que le niveau d'automatisation requis.
 
-**mariadb-dump (mysqldump)**
-- ✅ Simplicité d'utilisation
-- ✅ Portabilité entre versions/plateformes
-- ✅ Filtrage granulaire (bases, tables, lignes)
-- ⚠️ Plus lent que les backups physiques
-- ⚠️ Verrouille les tables pendant l'export (sans `--single-transaction`)
-
-**mydumper / myloader**
-- ✅ Export/import parallélisé (multithreading)
-- ✅ Jusqu'à 10x plus rapide que mysqldump
-- ✅ Sauvegarde cohérente avec réplication GTID
-- ✅ Compression native et chunking intelligent
-
-```sql
--- Exemple : Export d'une base avec mariadb-dump
-mariadb-dump \
-  --single-transaction \
-  --routines \
-  --triggers \
-  --events \
-  --databases myapp > myapp_backup.sql
-```
-
-### Sauvegardes physiques : Copie des fichiers
-
-Les sauvegardes physiques copient directement les fichiers de données InnoDB, Aria, etc.
-
-**Mariabackup** 🆕
-- ✅ Backup à chaud (hot backup) sans interruption de service
-- ✅ Incrémental et différentiel natifs
-- ✅ **Support BACKUP STAGE** (MariaDB 11.8) : amélioration performance
-- ✅ Compatible avec tous les moteurs transactionnels
-- ✅ Restauration plus rapide que logique
-
-```bash
-# Backup complet avec Mariabackup
-mariabackup --backup \
-  --target-dir=/backups/full-2025-12-13 \
-  --user=backup_user \
-  --password=secure_password
-```
-
-🆕 **Nouveauté MariaDB 11.8** : Le support de `BACKUP STAGE` améliore la coordination entre Mariabackup et le serveur, réduisant les verrouillages et augmentant les performances des backups sur des bases volumineuses.
+Ces deux exigences, presque toujours en tension avec le coût et la complexité, déterminent l'ensemble des arbitrages présentés dans ce chapitre.
 
 ---
 
-## Architecture de sauvegarde en production
+## Les grands axes du chapitre
 
-### Stratégie hybride recommandée
+Sauvegarder une base MariaDB revient à se positionner sur plusieurs dimensions complémentaires, que le chapitre aborde successivement :
 
-Une architecture professionnelle combine généralement plusieurs types de sauvegardes :
+La **portée et la fréquence** d'abord, avec la distinction entre sauvegardes complète, incrémentale et différentielle, qui détermine le compromis entre espace de stockage, durée de sauvegarde et complexité de restauration.
 
-```
-┌────────────────────────────────────────────────────────────┐
-│              Stratégie de backup recommandée               │
-├────────────────────────────────────────────────────────────┤
-│                                                            │
-│  Dimanche      : Full backup (Mariabackup)                 │
-│  Lun-Sam       : Incremental backup (Mariabackup)          │
-│  En continu    : Binary logs (PITR)                        │
-│  Hebdomadaire  : Logical backup (mariadb-dump) - Validation│
-│  Mensuel       : Archivage longue durée (S3 Glacier)       │
-│                                                            │
-└────────────────────────────────────────────────────────────┘
-```
+La **méthode** ensuite, qui oppose la sauvegarde *logique* (un export des données et de leur structure sous forme d'instructions SQL, portable et lisible) à la sauvegarde *physique* (une copie des fichiers du moteur, plus rapide et mieux adaptée aux gros volumes).
 
-### Règle du 3-2-1
+La **continuité** enfin, assurée par les *binary logs*, qui permettent de rejouer les transactions survenues après la dernière sauvegarde et constituent le socle de la restauration à un instant précis (*Point-in-Time Recovery*).
 
-La règle d'or pour une protection optimale des données :
-
-- **3** copies des données (production + 2 backups)
-- **2** supports de stockage différents (disque local + cloud)
-- **1** copie hors site (datacenter distant, cloud, etc.)
-
-```
-Production DB ──┬──► Backup local (NAS)
-                │
-                ├──► Backup cloud (S3/Azure/GCS)
-                │
-                └──► Backup archivé hors site (Glacier/Cold Storage)
-```
-
-💡 **Bonne pratique** : Chiffrer systématiquement les backups, surtout ceux stockés hors site ou dans le cloud.
+À ces fondations s'ajoutent les dimensions opérationnelles indispensables en production : l'**automatisation** des sauvegardes, la **vérification régulière des restaurations** et la construction d'un plan de reprise d'activité (PRA), puis l'ouverture vers les approches **cloud-native** (stockage objet S3, *snapshots* de volumes Kubernetes) qui prennent une place croissante dans les architectures modernes.
 
 ---
 
-## Point-in-Time Recovery (PITR)
+## Le paysage des outils MariaDB
 
-Le PITR permet de restaurer une base de données à n'importe quel instant précis, en combinant :
+MariaDB propose un écosystème d'outils dédiés, chacun couvrant un besoin particulier. Ce chapitre les présentera en détail ; en voici la vue d'ensemble :
 
-1. **Une sauvegarde complète** (point de départ)
-2. **Les binary logs** (rejeu des transactions jusqu'à l'instant T)
+| Outil | Type | Usage principal |
+|-------|------|-----------------|
+| `mariadb-dump` (`mysqldump`) | Logique | Export SQL portable, idéal pour volumes modérés et migrations |
+| `mydumper` / `myloader` | Logique | Export et import logiques **parallélisés**, pour de meilleures performances |
+| **Mariabackup** | Physique | Sauvegarde « à chaud » des fichiers, complète ou incrémentale, avec support `BACKUP STAGE` |
+| *Binary logs* | Journalisation | Base de la restauration à un instant précis (PITR) |
+| Stockage objet / `VolumeSnapshots` | Cloud-native | Externalisation des sauvegardes (S3, Kubernetes) |
 
-### Cas d'usage typiques
-
-**Scénario 1 : Suppression accidentelle**
-```
-09h00 : Sauvegarde complète
-14h37 : DELETE FROM orders WHERE ... (erreur !)
-14h45 : Détection du problème
-
-→ Restaurer la base au 14h36 (juste avant l'erreur)
-```
-
-**Scénario 2 : Corruption de données**
-```
-Mardi : Sauvegarde complète
-Jeudi 10h : Mise à jour applicative buggée corrompt les données
-Jeudi 16h : Détection de l'anomalie
-
-→ Restaurer au Jeudi 09h59 (avant la corruption)
-```
-
-### Architecture PITR
-
-```
-Full Backup          Binary Logs           Point de restauration
-(Dimanche)          (Lun-Ven)                  (Jeudi 14h30)
-    │                   │                           │
-    ▼                   ▼                           ▼
-┌─────────┐       ┌──────────────┐             ┌──────────┐
-│ Base    │──────►│ bin.000001   │────────────►│ État     │
-│ Complete│       │ bin.000002   │             │ Jeudi    │
-│ Dim 00h │       │ bin.000003   │             │ 14h30    │
-└─────────┘       │ ...          │             └──────────┘
-                  └──────────────┘
-```
-
-⚠️ **Attention** : Le PITR n'est possible que si les binary logs sont activés et conservés suffisamment longtemps.
+L'outillage logique a récemment gagné en souplesse — `mariadb-dump` prend en charge les *wildcards* (motifs avec jokers) via l'option `-L` depuis la **12.1** (et donc dans la 12.3 LTS) —, tandis que les approches physiques et cloud restent les piliers des environnements à fort volume ou conteneurisés. Le détail de ces fonctionnalités est traité dans les sections concernées.
 
 ---
 
-## Automatisation des sauvegardes
+## Un principe directeur : la règle 3-2-1
 
-### Planification avec cron
-
-```bash
-# /etc/cron.d/mariadb-backups
-
-# Backup complet quotidien à 2h du matin
-0 2 * * * backup_user /scripts/full_backup.sh
-
-# Backup incrémental toutes les 4 heures
-0 */4 * * * backup_user /scripts/incremental_backup.sh
-
-# Rotation et nettoyage des anciennes sauvegardes
-0 3 * * 0 backup_user /scripts/cleanup_old_backups.sh
-```
-
-### Notification et monitoring
-
-Un système de backup professionnel doit inclure :
-
-- ✅ **Notifications** : Email/Slack en cas de succès/échec
-- ✅ **Métriques** : Durée, taille, taux de compression
-- ✅ **Alertes** : Backup non effectué, espace insuffisant
-- ✅ **Dashboards** : Visualisation historique (Grafana)
-
-```bash
-# Exemple de script avec notification
-#!/bin/bash
-BACKUP_DIR="/backups/$(date +%Y%m%d)"
-
-if mariabackup --backup --target-dir=$BACKUP_DIR; then
-  echo "✅ Backup successful" | mail -s "MariaDB Backup OK" admin@example.com
-else
-  echo "❌ Backup FAILED" | mail -s "ALERT: MariaDB Backup Failed" admin@example.com
-fi
-```
+Au-delà des outils, une bonne pratique fait consensus et sert de fil conducteur à ce chapitre : la règle **3-2-1**. Elle recommande de conserver au moins **3** copies des données, sur **2** supports de nature différente, dont **1** copie hors site. Appliquée à MariaDB, cette règle invite à ne jamais se reposer sur une sauvegarde unique stockée sur le même serveur que la base de production, et à toujours prévoir une copie externalisée — un objectif que les approches cloud-native facilitent grandement.
 
 ---
 
-## Sauvegardes cloud-native
+## Objectifs pédagogiques
 
-### Stockage objet S3
+À l'issue de ce chapitre, vous serez capable de :
 
-MariaDB peut sauvegarder directement vers AWS S3, MinIO, ou tout compatible S3 :
-
-```bash
-# Backup vers S3 avec compression et chiffrement
-mariabackup --backup \
-  --stream=xbstream \
-  --target-dir=. | \
-  gzip | \
-  aws s3 cp - s3://my-backups/mariadb/backup-$(date +%Y%m%d).xbstream.gz \
-    --storage-class INTELLIGENT_TIERING \
-    --server-side-encryption AES256
-```
-
-**Avantages S3** :
-- ✅ Durabilité 99.999999999% (11 neuf)
-- ✅ Stockage illimité avec coûts dégressifs
-- ✅ Lifecycle policies automatiques
-- ✅ Versioning et Object Lock (protection ransomware)
-
-### Kubernetes VolumeSnapshots
-
-Pour les déploiements Kubernetes, les snapshots de volumes offrent une alternative performante :
-
-```yaml
-apiVersion: snapshot.storage.k8s.io/v1
-kind: VolumeSnapshot
-metadata:
-  name: mariadb-snapshot-daily
-spec:
-  volumeSnapshotClassName: csi-snapshot-class
-  source:
-    persistentVolumeClaimName: mariadb-pvc
-```
-
-**Avantages VolumeSnapshots** :
-- ✅ Snapshot instantané (Copy-on-Write)
-- ✅ Restauration rapide (quelques secondes)
-- ✅ Intégration native avec mariadb-operator
-- ✅ Orchestration via CronJob Kubernetes
+- distinguer les stratégies complète, incrémentale et différentielle, et choisir celle qui correspond à vos contraintes de RPO/RTO ;
+- arbitrer entre sauvegarde logique et sauvegarde physique selon le volume et le type de base ;
+- mettre en œuvre `mariadb-dump`, `mydumper`/`myloader` et Mariabackup ;
+- exploiter les *binary logs* pour réaliser une restauration à un instant précis (PITR) ;
+- automatiser et superviser vos sauvegardes ;
+- valider votre dispositif par des tests de restauration et formaliser un plan de reprise d'activité (PRA) ;
+- concevoir une stratégie de sauvegarde adaptée aux environnements cloud et Kubernetes.
 
 ---
 
-## Chiffrement et sécurité des backups
+## Prérequis
 
-### Chiffrement à la volée
+Pour tirer pleinement parti de ce chapitre, il est recommandé d'avoir assimilé :
 
-**Avec mariadb-dump** :
-```bash
-mariadb-dump --all-databases | \
-  openssl enc -aes-256-cbc -pbkdf2 -salt -pass pass:$BACKUP_PASSWORD | \
-  aws s3 cp - s3://backups/encrypted-backup.sql.enc
-```
-
-**Avec Mariabackup** :
-```bash
-mariabackup --backup --stream=xbstream --target-dir=. | \
-  openssl enc -aes-256-gcm -pbkdf2 -salt -pass file:/etc/backup-key | \
-  gzip > /backups/encrypted.xbstream.gz.enc
-```
-
-### Gestion des clés de chiffrement
-
-⚠️ **CRITICAL** : Les clés de chiffrement doivent être :
-- Stockées séparément des backups
-- Sauvegardées en lieu sûr (coffre-fort, HSM, KMS)
-- Régulièrement testées lors des exercices de restauration
-
-💡 **Recommandation** : Utiliser un KMS (AWS KMS, Azure Key Vault, HashiCorp Vault) pour la gestion centralisée des clés.
+- les **transactions et les propriétés ACID** (chapitre 6), pour comprendre la notion de cohérence d'une sauvegarde ;
+- le fonctionnement des **moteurs de stockage**, en particulier **InnoDB** (chapitre 7) ;
+- les bases de l'**administration**, notamment les *binary logs* abordés au chapitre 11 (section 11.5) ;
+- une aisance minimale avec la **ligne de commande Linux** et la planification de tâches (`cron`, *systemd timers*).
 
 ---
 
-## Tests et validation
+## Structure du chapitre
 
-### Fréquence des tests de restauration
-
-| Environnement | Fréquence minimale | Portée |
-|--------------|-------------------|--------|
-| Production critique | Mensuelle | Restauration complète + PITR |
-| Production standard | Trimestrielle | Restauration complète |
-| Développement | Semestrielle | Validation procédures |
-
-### Checklist de validation
-
-Un test de restauration doit vérifier :
-
-- [ ] Intégrité des fichiers de backup (checksums)
-- [ ] Restauration complète fonctionnelle
-- [ ] PITR jusqu'à un instant précis
-- [ ] Temps de restauration conforme au RTO
-- [ ] Cohérence des données restaurées
-- [ ] Applications fonctionnelles post-restauration
-- [ ] Documentation à jour et procédures claires
-
-```bash
-# Validation automatique de l'intégrité
-md5sum -c backup.md5 && echo "✅ Backup integrity OK"
-
-# Test de restauration en environnement isolé
-docker run -d --name restore-test \
-  -e MARIADB_ROOT_PASSWORD=test \
-  mariadb:11.8
-
-# Restauration et validation
-docker exec -i restore-test mariadb < backup.sql
-docker exec restore-test mariadb -e "SHOW DATABASES; SELECT COUNT(*) FROM myapp.users;"
-```
+- 12.1 — [Stratégies de sauvegarde : Full, Incrémentale, Différentielle](01-strategies-sauvegarde.md)
+- 12.2 — [Sauvegarde logique](02-sauvegarde-logique.md)
+- 12.3 — [Sauvegarde physique (Mariabackup)](03-sauvegarde-physique-mariabackup.md)
+- 12.4 — [Sauvegarde incrémentale avec binary logs](04-sauvegarde-incrementale-binlog.md)
+- 12.5 — [Restauration](05-restauration.md)
+- 12.6 — [Automatisation des sauvegardes](06-automatisation-sauvegardes.md)
+- 12.7 — [Tests de restauration et plan de reprise (PRA)](07-tests-restauration-pra.md)
+- 12.8 — [Sauvegarde cloud-native](08-sauvegarde-cloud-native.md)
 
 ---
 
-## Plan de Reprise d'Activité (PRA)
-
-### Composantes d'un PRA
-
-Un PRA complet pour MariaDB inclut :
-
-1. **Documentation** :
-   - Procédures de restauration étape par étape
-   - Contacts d'urgence (équipes, fournisseurs)
-   - Inventaire des ressources (serveurs, stockage, réseaux)
-
-2. **Infrastructure de secours** :
-   - Serveurs de restauration pré-provisionnés
-   - Accès réseau sécurisé aux backups
-   - Outils et scripts de restauration testés
-
-3. **Procédures opérationnelles** :
-   - Scénarios de disaster recovery documentés
-   - Arbre de décision (quel type de restauration utiliser)
-   - Communication avec les parties prenantes
-
-4. **Tests réguliers** :
-   - Exercices de simulation (tabletop exercises)
-   - Restaurations complètes en environnement de test
-   - Mesure et amélioration continue des RTO/RPO
-
-### Matrice de décision de restauration
-
-```
-┌────────────────────────────────────────────────────────────┐
-│ Type d'incident        │ Solution recommandée              │
-├────────────────────────────────────────────────────────────┤
-│ Corruption limitée     │ PITR jusqu'avant incident         │
-│ DROP TABLE accidentel  │ PITR ou restauration table seule  │
-│ Panne disque           │ Restauration full backup          │
-│ Datacenter détruit     │ Failover vers backup distant      │
-│ Ransomware             │ Restauration backup pré-infection │
-│ Corruption généralisée │ Restauration full + binary logs   │
-└────────────────────────────────────────────────────────────┘
-```
+> **À retenir avant de commencer.** Une stratégie de sauvegarde ne se mesure pas à la régularité de ses sauvegardes, mais à sa capacité prouvée à restaurer les données dans les délais et avec la perte acceptable définis par l'organisation. Gardez cette idée en tête tout au long du chapitre : chaque technique présentée n'a de valeur qu'au regard de la restauration qu'elle rend possible.
 
 ---
 
-## Considérations de performance
-
-### Impact sur la production
-
-Les opérations de backup peuvent affecter les performances :
-
-**Sauvegardes logiques (mariadb-dump)** :
-- Impact CPU : Moyen (génération SQL)
-- Impact I/O : Faible à moyen
-- Impact réseau : Négligeable
-- Verrouillage : Possible sans `--single-transaction`
-
-**Sauvegardes physiques (Mariabackup)** :
-- Impact CPU : Faible (copie fichiers)
-- Impact I/O : Moyen à élevé (lecture intensive)
-- Impact réseau : Négligeable (sauf copie distante)
-- Verrouillage : Minimal (flush logs uniquement)
-
-### Optimisations
-
-```ini
-# Configuration pour minimiser l'impact des backups
-[mariadb]
-# Limiter l'impact I/O de Mariabackup
-innodb_io_capacity = 2000
-innodb_io_capacity_max = 4000
-
-# Buffer pool suffisant pour éviter les flush excessifs
-innodb_buffer_pool_size = 16G
-
-# Compression des backups pour réduire I/O réseau
-[mariabackup]
-compress
-compress-threads = 4
-```
-
-💡 **Astuce** : Planifier les backups complets pendant les heures creuses (nuit, week-end) et privilégier les backups incrémentaux en journée.
-
----
-
-## Conformité réglementaire
-
-### Exigences courantes
-
-Certaines réglementations imposent des contraintes spécifiques :
-
-**RGPD (GDPR)** :
-- Droit à l'oubli : Capacité de supprimer définitivement les données personnelles
-- Conservation limitée : Durée de rétention documentée et justifiée
-- Sécurité : Chiffrement obligatoire des backups
-
-**SOC 2 / ISO 27001** :
-- Backups testés régulièrement (preuves documentées)
-- Séparation des rôles (backup ≠ restauration)
-- Audit trail des opérations de backup/restore
-
-**PCI-DSS** (données cartes bancaires) :
-- Chiffrement fort (AES-256 minimum)
-- Clés de chiffrement gérées séparément
-- Backups stockés dans des zones sécurisées
-
-### Documentation requise
-
-- Politique de sauvegarde formalisée
-- Procédures opérationnelles détaillées
-- Registre des tests de restauration
-- Rapports d'incidents et actions correctives
-
----
-
-## Architecture de référence
-
-Voici une architecture de sauvegarde complète pour un environnement de production critique :
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Production MariaDB                        │
-│                   (Primary + Replicas)                      │
-└───────────────────┬─────────────────────────────────────────┘
-                    │
-        ┌───────────┴───────────┬──────────────┬──────────────┐
-        │                       │              │              │
-        ▼                       ▼              ▼              ▼
-┌───────────────┐    ┌──────────────┐  ┌──────────┐  ┌──────────┐
-│ Mariabackup   │    │ Binary Logs  │  │ mydumper │  │ Volume   │
-│ (Full Daily)  │    │ (Continue)   │  │ (Weekly) │  │ Snapshot │
-│               │    │              │  │          │  │ (Hourly) │
-└───────┬───────┘    └──────┬───────┘  └────┬─────┘  └────┬─────┘
-        │                   │               │             │
-        └─────────┬─────────┴───────┬───────┴─────────────┘
-                  │                 │
-                  ▼                 ▼
-          ┌──────────────┐   ┌──────────────┐
-          │ Local NAS    │   │ Cloud S3     │
-          │ (Hot Backup) │   │ (Warm Backup)│
-          └──────┬───────┘   └──────┬───────┘
-                 │                  │
-                 │                  ▼
-                 │          ┌───────────────┐
-                 │          │ Glacier       │
-                 │          │ (Cold Archive)│
-                 │          └───────────────┘
-                 │
-                 ▼
-         ┌──────────────┐
-         │ Restore Test │
-         │ Environment  │
-         │ (Monthly)    │
-         └──────────────┘
-```
-
----
-
-## ✅ Points clés à retenir
-
-- **RPO/RTO** définissent la stratégie de sauvegarde ; tout découle de ces métriques métier
-- **Règle 3-2-1** : 3 copies, 2 supports, 1 hors site — pas de compromis en production
-- **Mariabackup** est l'outil recommandé pour les sauvegardes physiques en production (hot backup, incrémental, support BACKUP STAGE 🆕)
-- **PITR** nécessite binary logs activés et conservés — combiner full backup + binlogs
-- **Tests réguliers** sont obligatoires — une sauvegarde non testée est une illusion de sécurité
-- **Automatisation** est essentielle — cron, notifications, monitoring, alertes
-- **Chiffrement** systématique des backups, surtout cloud et hors site
-- **Cloud-native** (S3, VolumeSnapshots) simplifie la durabilité et la scalabilité
-- **Documentation** : PRA formalisé, procédures à jour, contacts d'urgence identifiés
-
----
-
-## 🔗 Ressources et références
-
-### Documentation officielle MariaDB
-
-- [📖 Mariabackup - MariaDB Knowledge Base](https://mariadb.com/kb/en/mariabackup/)
-- [📖 mariadb-dump - MariaDB Knowledge Base](https://mariadb.com/kb/en/mariadb-dump/)
-- [📖 Binary Log - MariaDB Knowledge Base](https://mariadb.com/kb/en/binary-log/)
-- [📖 Point-in-Time Recovery - MariaDB Docs](https://mariadb.com/kb/en/point-in-time-recovery/)
-
-### Outils tiers
-
-- [mydumper/myloader - GitHub](https://github.com/mydumper/mydumper)
-- [Percona XtraBackup](https://www.percona.com/software/mysql-database/percona-xtrabackup) (alternative compatible)
-
-### Articles et guides
-
-- [MariaDB Backup Best Practices - MariaDB Corporation](https://mariadb.com/resources/blog/mariadb-backup-best-practices/)
-- [Disaster Recovery Planning for Databases](https://www.percona.com/blog/disaster-recovery-planning/)
-
-### Conformité
-
-- [GDPR Compliance for Databases](https://gdpr.eu/)
-- [PCI-DSS Requirements v4.0](https://www.pcisecuritystandards.org/)
-
----
-
-## ➡️ Sections suivantes
-
-Les sections 12.1 à 12.8 détailleront chacun des aspects abordés dans cette introduction :
-
-**[12.1 - Stratégies de sauvegarde](./01-strategies-sauvegarde.md)** : Comparaison approfondie Full / Incrémentale / Différentielle avec cas d'usage et dimensionnement.
-
-**[12.2 - Sauvegarde logique](./02-sauvegarde-logique.md)** : Guide complet mariadb-dump et mydumper avec options avancées et optimisations.
-
-**[12.3 - Sauvegarde physique (Mariabackup)](./03-sauvegarde-physique-mariabackup.md)** : Full backup, incremental backup, et nouveauté 🆕 Support BACKUP STAGE.
-
-**[12.4 - Sauvegarde incrémentale avec binary logs](./04-sauvegarde-incrementale-binlog.md)** : Configuration, rotation, et stratégies de rétention.
-
-**[12.5 - Restauration](./05-restauration.md)** : Procédures de restauration complète et Point-in-Time Recovery détaillées.
-
-**[12.6 - Automatisation des sauvegardes](./06-automatisation-sauvegardes.md)** : Scripts, planification, monitoring et alerting.
-
-**[12.7 - Tests de restauration et PRA](./07-tests-restauration-pra.md)** : Méthodologie de tests, scénarios d'incident, documentation du PRA.
-
-**[12.8 - Sauvegarde cloud-native](./08-sauvegarde-cloud-native.md)** : S3/Object Storage, Kubernetes VolumeSnapshots, stratégies multi-cloud.
-
----
-
+⏮️ [Partie 5 — Sécurité et Administration](../partie-05-securite-administration.md) · ⏭️ [12.1 — Stratégies de sauvegarde](01-strategies-sauvegarde.md)
 
 ⏭️ [Stratégies de sauvegarde : Full, Incrémentale, Différentielle](/12-sauvegarde-restauration/01-strategies-sauvegarde.md)

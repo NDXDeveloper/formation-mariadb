@@ -1,949 +1,173 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 11.9 Monitoring et métriques importantes
+# 11.9 — Monitoring et métriques importantes
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 2-3 heures  
-> **Prérequis** :
-> - Sections 11.1-11.8 (Configuration, logs, maintenance, espace disque)
-> - Chapitre 7 (Moteurs de stockage)
-> - Compréhension des performances système
-> - Expérience en administration
+Superviser un serveur MariaDB ne consiste pas à regarder des chiffres après coup, mais à **détecter les problèmes avant qu'ils ne deviennent des incidents**, à planifier la capacité et à disposer des éléments de diagnostic quand une lenteur survient. Cette discipline repose sur trois activités complémentaires : **collecter** les métriques, établir une **ligne de référence** (baseline) du comportement normal, et **alerter** sur les écarts significatifs.
 
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- **Identifier** les métriques critiques à surveiller en production
-- **Utiliser** SHOW STATUS, SHOW VARIABLES et Performance Schema
-- **Surveiller** les performances (Buffer Pool, requêtes, threads)
-- **Détecter** les problèmes avant qu'ils n'impactent les utilisateurs
-- **Configurer** des alertes proactives
-- **Exploiter** les outils de monitoring (Prometheus, Grafana, PMM)
-- **Analyser** les tendances et planifier la capacité
-- **Monitorer** le Thread Pool et les nouveautés MariaDB 11.8
+Cette section présente les **sources** de métriques offertes par MariaDB et les **métriques essentielles** à surveiller, organisées par domaine. La mise en place d'une chaîne de collecte et de tableaux de bord (Prometheus/Grafana) est traitée au chapitre [16.9](../16-devops-automatisation/09-monitoring-prometheus-grafana.md), l'observabilité au sens large en [16.10](../16-devops-automatisation/10-observabilite.md), et l'alerting en [16.11](../16-devops-automatisation/11-alerting-incident-response.md). Les requêtes SQL de monitoring prêtes à l'emploi figurent en [Annexe C.2](../annexes/c-requetes-sql-reference/02-requetes-monitoring.md).
 
 ---
 
-## Introduction
+## Les sources de métriques dans MariaDB
 
-Le **monitoring** est la pratique de **surveiller continuellement** l'état et les performances de MariaDB pour :
+MariaDB expose son état interne à travers plusieurs interfaces, du plus simple au plus détaillé :
 
-- 🚨 **Détecter** les anomalies avant qu'elles ne deviennent critiques
-- 📊 **Mesurer** les performances et identifier les goulots d'étranglement
-- 📈 **Analyser** les tendances pour la planification de capacité
-- ⚡ **Optimiser** les performances basées sur des métriques réelles
-- 🔍 **Diagnostiquer** rapidement les incidents
-- 📉 **Valider** l'impact des changements de configuration
-
-### Monitoring proactif vs réactif
-
-```
-Monitoring RÉACTIF (mauvais):
-    Problème → Utilisateurs se plaignent → Investigation → Résolution
-    RTO élevé, Impact utilisateurs, Stress
-
-Monitoring PROACTIF (bon):
-    Métrique dégradée → Alerte automatique → Investigation → Résolution préventive
-    RTO faible, Pas d'impact utilisateurs, Contrôle
-```
-
-💡 **Principe fondamental** : "You can't improve what you don't measure" - Peter Drucker. Le monitoring n'est pas optionnel en production.
+- **Variables d'état** (`SHOW [GLOBAL] STATUS`) : les compteurs et jauges fondamentaux du serveur. C'est la source la plus utilisée pour le monitoring continu.
+- **Variables système** (`SHOW [GLOBAL] VARIABLES`) : la configuration, indispensable pour **contextualiser** les métriques (par exemple comparer `Max_used_connections` à `max_connections`).
+- **`SHOW ENGINE INNODB STATUS`** : une « radiographie » détaillée du moteur InnoDB (verrous, transactions, buffer pool, journaux).
+- **`SHOW [FULL] PROCESSLIST`** et `INFORMATION_SCHEMA.PROCESSLIST` : l'activité en cours, session par session.
+- **`INFORMATION_SCHEMA`** : tailles des tables, `INNODB_METRICS`, tablespaces, etc. (voir [9.7.1](../09-vues-et-donnees-virtuelles/07.1-information-schema.md)).
+- **`PERFORMANCE_SCHEMA`** : l'instrumentation bas niveau des événements (requêtes, attentes, étapes). Implémentée comme un moteur de stockage, elle est **désactivée par défaut** et s'active au démarrage (voir [9.7.2](../09-vues-et-donnees-virtuelles/07.2-performance-schema.md)).
+- **Schéma `sys`** : des vues lisibles construites au-dessus de `PERFORMANCE_SCHEMA` et d'`INFORMATION_SCHEMA`, disponibles depuis MariaDB 10.6 (donc présentes en 12.3).
+- **Niveau système d'exploitation** : CPU, mémoire, I/O disque et **espace disque** (voir [11.7](07-gestion-espace-disque.md)). Aucun monitoring de base de données n'est complet sans la supervision de l'OS sous-jacent.
 
 ---
 
-## Métriques essentielles par catégorie
+## Compteurs cumulatifs ou jauges : lire correctement les variables d'état
 
-### 1. Santé générale du serveur
+C'est l'erreur la plus fréquente en monitoring MariaDB, et elle invalide toute interprétation si on l'ignore : **la plupart des variables d'état sont des compteurs cumulatifs** depuis le démarrage du serveur (ou la dernière remise à zéro via `FLUSH STATUS`). Leur valeur brute, prise isolément, ne signifie rien.
 
-#### Uptime et disponibilité
+Ce qui compte est le **taux**, c'est-à-dire la variation (delta) sur un intervalle de temps. Par exemple, `Questions` totalise toutes les requêtes depuis le démarrage ; le débit (requêtes par seconde) se calcule comme `Δ(Questions) / Δ(temps)` entre deux relevés. Un serveur affichant `Questions = 5 000 000 000` n'apprend rien ; savoir qu'il traite **3 000 requêtes par seconde en moyenne** est exploitable.
 
-```sql
--- Temps depuis le dernier démarrage
-SHOW STATUS LIKE 'Uptime';
--- Uptime = 2592000 (30 jours)
+À l'inverse, certaines variables sont des **jauges**, qui reflètent un état instantané : `Threads_connected`, `Threads_running`, `Innodb_buffer_pool_pages_free`. Celles-ci se lisent directement.
 
--- Nombre de connexions échouées
-SHOW STATUS LIKE 'Aborted_connects';
-SHOW STATUS LIKE 'Aborted_clients';
-
--- Threads actifs
-SHOW STATUS LIKE 'Threads_connected';
-SHOW STATUS LIKE 'Threads_running';
-SHOW STATUS LIKE 'Max_used_connections';
-```
-
-**Métriques clés** :
-
-| Métrique | Description | Seuil alerte |
-|----------|-------------|--------------|
-| `Uptime` | Secondes depuis démarrage | - |
-| `Aborted_connects` | Échecs de connexion | Augmentation soudaine |
-| `Threads_connected` | Connexions actives | > 80% de max_connections |
-| `Threads_running` | Requêtes en exécution | > 50 (serveur surchargé) |
-| `Max_used_connections` | Pic connexions | > 80% de max_connections |
-
-#### Version et configuration
-
-```sql
--- Version MariaDB
-SELECT VERSION();
--- 11.8.0-MariaDB
-
--- Variables critiques
-SHOW VARIABLES LIKE 'max_connections';
-SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
-SHOW VARIABLES LIKE 'query_cache_type';
-```
-
-### 2. Performance des requêtes
-
-#### Slow queries
-
-```sql
--- Requêtes lentes
-SHOW STATUS LIKE 'Slow_queries';
-
--- Taux de requêtes lentes
-SELECT
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Slow_queries') /
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Questions') * 100
-    AS slow_query_rate;
-```
-
-**Interprétation** :
-- **< 0.05%** : Excellent
-- **0.05-0.5%** : Acceptable
-- **> 0.5%** : Investigation nécessaire
-
-#### Requêtes par seconde (QPS)
-
-```sql
--- Questions (requêtes totales)
-SHOW STATUS LIKE 'Questions';
-
--- Calcul QPS (sur 1 minute)
--- Nécessite 2 mesures à 60 secondes d'intervalle
--- QPS = (Questions_t2 - Questions_t1) / 60
-```
-
-#### Débit de requêtes par type
-
-```sql
--- Répartition des opérations
-SHOW STATUS LIKE 'Com_select';
-SHOW STATUS LIKE 'Com_insert';
-SHOW STATUS LIKE 'Com_update';
-SHOW STATUS LIKE 'Com_delete';
-
--- Ratio lecture/écriture
-SELECT
-    ROUND(
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Com_select') /
-        ((SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Com_insert') +
-         (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Com_update') +
-         (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Com_delete')),
-        2
-    ) AS read_write_ratio;
-```
-
-### 3. InnoDB Buffer Pool (métrique #1)
-
-Le **Buffer Pool** est la **métrique la plus critique** pour InnoDB.
-
-```sql
--- Taille du Buffer Pool
-SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
-
--- Statistiques d'utilisation
-SHOW STATUS LIKE 'Innodb_buffer_pool_pages_total';
-SHOW STATUS LIKE 'Innodb_buffer_pool_pages_free';
-SHOW STATUS LIKE 'Innodb_buffer_pool_pages_data';
-SHOW STATUS LIKE 'Innodb_buffer_pool_pages_dirty';
-
--- Taux de hit du Buffer Pool (CRITIQUE)
-SHOW STATUS LIKE 'Innodb_buffer_pool_read_requests';
-SHOW STATUS LIKE 'Innodb_buffer_pool_reads';
-```
-
-**Calcul du hit rate** :
-
-```sql
-SELECT
-    ROUND(
-        (1 - (
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests')
-        )) * 100,
-        2
-    ) AS buffer_pool_hit_rate_pct;
-```
-
-**Objectifs** :
-- **> 99%** : Excellent (recommandé)
-- **95-99%** : Acceptable
-- **< 95%** : Buffer Pool trop petit, augmenter innodb_buffer_pool_size
-
-#### Pages dirty ratio
-
-```sql
-SELECT
-    ROUND(
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_dirty') /
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') * 100,
-        2
-    ) AS dirty_pages_pct;
-```
-
-**Interprétation** :
-- **< 75%** : Normal
-- **75-90%** : Haute charge écriture, surveiller
-- **> 90%** : Flush trop lent, risque de stall
-
-### 4. Connexions
-
-```sql
--- Connexions actuelles vs max
-SELECT
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') AS current,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Max_used_connections') AS peak,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'max_connections') AS max_allowed,
-    ROUND(
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') /
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'max_connections') * 100,
-        2
-    ) AS utilization_pct;
-```
-
-**Alertes** :
-- **> 80%** : Warning - Approche de la limite
-- **> 90%** : Critical - Risque de refus de connexion
-
-#### Connexions refusées
-
-```sql
--- Erreurs de connexion
-SHOW STATUS LIKE 'Connection_errors_max_connections';
-SHOW STATUS LIKE 'Connection_errors_internal';
-SHOW STATUS LIKE 'Connection_errors_accept';
-```
-
-### 5. Tables temporaires
-
-```sql
--- Tables temporaires créées
-SHOW STATUS LIKE 'Created_tmp_tables';
-SHOW STATUS LIKE 'Created_tmp_disk_tables';
-
--- Ratio tables sur disque (doit être < 25%)
-SELECT
-    ROUND(
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Created_tmp_disk_tables') /
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Created_tmp_tables') * 100,
-        2
-    ) AS tmp_disk_ratio_pct;
-```
-
-### 6. Verrous et concurrence
-
-```sql
--- Attentes de verrous InnoDB
-SHOW STATUS LIKE 'Innodb_row_lock_waits';
-SHOW STATUS LIKE 'Innodb_row_lock_time';
-SHOW STATUS LIKE 'Innodb_row_lock_time_avg';
-
--- Table locks
-SHOW STATUS LIKE 'Table_locks_waited';
-SHOW STATUS LIKE 'Table_locks_immediate';
-
--- Deadlocks
-SHOW STATUS LIKE 'Innodb_deadlocks';
-```
-
-### 7. Réplication (si applicable)
-
-```sql
--- État réplication sur slave
-SHOW SLAVE STATUS\G
-
--- Métriques critiques :
--- - Slave_IO_Running: Yes
--- - Slave_SQL_Running: Yes
--- - Seconds_Behind_Master: < 10 (idéalement 0)
--- - Last_Error: (vide)
-```
-
-**Lag de réplication** :
-
-```sql
--- Sur le slave
-SELECT
-    TIMESTAMPDIFF(SECOND,
-        STR_TO_DATE(SUBSTRING_INDEX(SUBSTRING_INDEX(SHOW_SLAVE_STATUS, 'Read_Master_Log_Pos', -1), '\n', 1), '%Y%m%d%H%i%s'),
-        NOW()
-    ) AS replication_lag_seconds;
-```
-
-### 8. Espace disque et I/O
-
-```sql
--- Écritures InnoDB
-SHOW STATUS LIKE 'Innodb_data_written';
-SHOW STATUS LIKE 'Innodb_data_read';
-
--- Opérations fsync
-SHOW STATUS LIKE 'Innodb_data_fsyncs';
-
--- Logs
-SHOW STATUS LIKE 'Innodb_os_log_written';
-
--- Taille des bases
-SELECT
-    TABLE_SCHEMA,
-    ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024 / 1024, 2) AS size_gb
-FROM information_schema.TABLES
-GROUP BY TABLE_SCHEMA;
-```
+Cette distinction est précisément ce qu'un système de collecte time-series (chapitre [16.9](../16-devops-automatisation/09-monitoring-prometheus-grafana.md)) gère automatiquement en calculant les taux. C'est aussi la raison pour laquelle on ne doit **pas** piloter la supervision de production par des `SELECT` manuels ponctuels : ils ne donnent qu'un instantané sans tendance.
 
 ---
 
-## Outils de monitoring natifs MariaDB
+## Les métriques essentielles par domaine
 
-### SHOW STATUS
+### Disponibilité et connexions
+
+`Uptime` indique la durée de fonctionnement depuis le dernier démarrage ; une chute signale un redémarrage (planifié ou crash). `Threads_connected` (jauge) compte les connexions ouvertes, mais le vrai signal de charge est `Threads_running`, le nombre de connexions **en train d'exécuter** une requête : une montée soudaine traduit une saturation ou un blocage. `Max_used_connections`, comparé à `max_connections`, révèle si l'on approche de la limite de connexions.
+
+Côté anomalies, `Aborted_connects` compte les tentatives de connexion **échouées** (authentification, réseau, TLS), tandis que `Aborted_clients` compte les connexions **interrompues** parce que le client ne s'est pas déconnecté proprement. Enfin, `Threads_created` rapproché du nombre de connexions mesure l'efficacité du cache de threads (`thread_cache_size`) — à interpréter différemment lorsque le Thread Pool est actif (voir [11.10](10-thread-pool.md)).
 
 ```sql
--- Toutes les statistiques
-SHOW GLOBAL STATUS;
-
--- Filtrage
-SHOW GLOBAL STATUS LIKE 'Innodb%';
-SHOW GLOBAL STATUS LIKE '%connect%';
-
--- Format vertical (plus lisible)
-SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool%'\G
+SHOW GLOBAL STATUS WHERE Variable_name IN
+  ('Uptime', 'Threads_connected', 'Threads_running', 'Max_used_connections',
+   'Aborted_connects', 'Aborted_clients', 'Threads_created');
 ```
 
-### SHOW VARIABLES
+### Débit (throughput)
+
+`Questions` et `Queries` totalisent les requêtes reçues ; leur delta donne le débit. Les compteurs `Com_select`, `Com_insert`, `Com_update` et `Com_delete` détaillent la **nature** de la charge (proportion lecture/écriture), une information clé pour le dimensionnement et le choix d'architecture. `Slow_queries` compte les requêtes ayant dépassé `long_query_time` : c'est un indicateur de premier ordre, à analyser ensuite via le slow query log ([15.7](../15-performance-tuning/07-analyse-requetes-lentes.md)).
+
+### Buffer pool InnoDB
+
+C'est le domaine le plus déterminant pour les performances d'un serveur InnoDB. Le **taux de hit** du buffer pool mesure la part des lectures servies depuis la mémoire plutôt que depuis le disque. Il se calcule à partir de `Innodb_buffer_pool_read_requests` (lectures logiques) et `Innodb_buffer_pool_reads` (lectures physiques sur disque) :
 
 ```sql
--- Configuration actuelle
-SHOW GLOBAL VARIABLES;
-
--- Filtrage
-SHOW VARIABLES LIKE 'innodb%';
-SHOW VARIABLES LIKE '%cache%';
+SELECT ROUND(
+  (1 - (
+    (SELECT variable_value FROM information_schema.global_status
+       WHERE variable_name = 'Innodb_buffer_pool_reads')
+    /
+    (SELECT variable_value FROM information_schema.global_status
+       WHERE variable_name = 'Innodb_buffer_pool_read_requests')
+  )) * 100, 4) AS buffer_pool_hit_ratio_pct;
 ```
 
-### SHOW PROCESSLIST
+Sur une charge bien dimensionnée, ce ratio doit être **très élevé** (de l'ordre de 99,9 %). Un ratio qui se dégrade durablement signale un buffer pool sous-dimensionné par rapport au jeu de données actif. Deux autres signaux complètent le tableau : `Innodb_buffer_pool_pages_free` / `_dirty` / `_total` renseignent sur l'occupation, et surtout `Innodb_buffer_pool_wait_free` doit rester à **zéro** — toute valeur positive indique que des requêtes ont attendu qu'une page se libère, symptôme d'un buffer pool trop petit ou d'un flush qui ne suit pas. Le dimensionnement est traité en [15.2.1](../15-performance-tuning/02.1-innodb-buffer-pool.md).
+
+### I/O et journalisation InnoDB
+
+`Innodb_data_reads` / `_writes` et `Innodb_data_read` / `_written` quantifient l'activité disque d'InnoDB. `Innodb_os_log_written` mesure le volume écrit dans le redo log. `Innodb_log_waits` doit rester à **zéro** : une valeur positive révèle un `innodb_log_buffer_size` insuffisant. Du côté de la concurrence, `Innodb_row_lock_waits`, `Innodb_row_lock_time` et `Innodb_row_lock_current_waits` mesurent la contention sur les verrous de ligne — une contention élevée renvoie à l'analyse des verrous et des deadlocks ([6.4](../06-transactions-et-concurrence/04-verrous.md), [6.5](../06-transactions-et-concurrence/05-deadlocks-resolution.md)).
+
+### Tables temporaires et tris
+
+`Created_tmp_tables` compte les tables temporaires internes créées **en mémoire**, ce qui est normal. Le signal à surveiller est `Created_tmp_disk_tables` : les tables temporaires ayant **débordé sur disque**, faute de tenir dans `tmp_memory_table_size`. Un taux élevé de tables temporaires sur disque trahit des requêtes mal optimisées ou un plafond mémoire trop bas. Côté tris, `Sort_merge_passes` doit rester faible — une valeur élevée indique un `sort_buffer_size` insuffisant ou des tris non indexés.
 
 ```sql
--- Requêtes en cours d'exécution
-SHOW FULL PROCESSLIST;
+SHOW GLOBAL STATUS WHERE Variable_name IN
+  ('Created_tmp_tables', 'Created_tmp_disk_tables', 'Created_tmp_files',
+   'Sort_merge_passes', 'Sort_scan', 'Sort_rows');
+```
 
--- Identification requêtes lentes
+Ces métriques se complètent des variables d'état `tmp_space_used` et `max_tmp_space_used`, ainsi que de la colonne `TMP_SPACE_USED` d'`INFORMATION_SCHEMA.PROCESSLIST`, qui permettent de suivre et de borner l'espace disque temporaire (voir la section [11.8](08-controle-espace-temporaire.md)).
+
+### Utilisation des index et balayages complets
+
+Le rapport entre `Handler_read_rnd_next` (lecture séquentielle de la ligne suivante, typique d'un balayage de table) et `Handler_read_key` (lecture via un index) donne une indication globale sur l'usage des index : une prédominance de `Handler_read_rnd_next` suggère de nombreux balayages complets et donc des index manquants. Plus précis encore, `Select_scan` compte les requêtes qui balaient entièrement la première table, et `Select_full_join` les jointures effectuées **sans index** — cette dernière valeur devrait rester proche de zéro, car une jointure sans index est l'une des causes les plus sérieuses de lenteur. L'identification des requêtes fautives se fait ensuite via le schéma `sys` (plus bas) et le chapitre [5](../05-index-et-performance/README.md).
+
+### Verrous au niveau table
+
+`Table_locks_waited` rapporté à `Table_locks_immediate` mesure la contention sur les verrous de **table** (principalement MyISAM/Aria). Pour InnoDB, qui pratique le verrouillage au niveau ligne, on s'appuie sur les compteurs `Innodb_row_lock_*` vus plus haut et sur `SHOW ENGINE INNODB STATUS`.
+
+### Cache de tables et fichiers ouverts
+
+Un taux de croissance élevé de `Opened_tables` par rapport à `Open_tables` indique un `table_open_cache` sous-dimensionné : le serveur rouvre sans cesse des descripteurs de table. `Open_files` permet de surveiller la consommation de descripteurs de fichiers au regard de la limite système.
+
+### Journal binaire et réplication
+
+`Binlog_cache_use` et `Binlog_cache_disk_use` mesurent l'usage du cache de binlog par transaction : un `Binlog_cache_disk_use` fréquemment positif signale un `binlog_cache_size` trop petit. Pour la réplication, le retard du réplica (`Seconds_Behind_Master`, et la sortie de `SHOW REPLICA STATUS`) est la métrique critique, traitée en détail en [13.7](../13-replication/07-monitoring-troubleshooting.md).
+
+> 🔔 **Note 12.3** : avec le nouveau journal binaire intégré à InnoDB (fichiers `.ibb`, voir [11.5.4](05.4-binlog-innodb-performance.md)), l'instrumentation dans `performance_schema` n'est pas encore complète — les tables d'instances de fichiers ne reflètent pas fidèlement ces fichiers. Par ailleurs, `sync_binlog` est silencieusement ignoré avec ce format : il ne doit donc **pas** être utilisé comme indicateur de durabilité du binlog dans la supervision.
+
+---
+
+## `SHOW ENGINE INNODB STATUS` : la radiographie d'InnoDB
+
+Cette commande fournit un cliché détaillé du moteur, irremplaçable pour le diagnostic ponctuel. On y trouve notamment : les attentes sur sémaphores et mutex (contention interne), le **dernier deadlock** détecté avec les transactions impliquées, la liste des transactions actives, l'état du buffer pool et de la mémoire, le détail des opérations sur les lignes, ainsi que l'état des journaux et du checkpoint. La **history list length** y figure également : une valeur qui croît durablement signale une purge en retard, souvent due à une transaction restée ouverte, avec un impact direct sur la taille des logs undo (voir [11.7](07-gestion-espace-disque.md)).
+
+On la consulte typiquement lors d'un incident (contention, deadlock, ralentissement soudain), en complément des compteurs continus.
+
+---
+
+## Performance Schema et schéma `sys`
+
+`PERFORMANCE_SCHEMA` instrumente finement les événements internes (requêtes, attentes, étapes d'exécution). Désactivé par défaut, il s'active au démarrage par `performance_schema=ON` ; son surcoût est modéré et il permet une instrumentation **sélective** (n'activer que les instruments utiles). Sa fonctionnalité la plus précieuse pour le DBA est l'**agrégation des requêtes par empreinte** (digests), qui révèle les *familles* de requêtes les plus coûteuses, indépendamment de leurs valeurs littérales :
+
+```sql
 SELECT
-    ID,
-    USER,
-    HOST,
-    DB,
-    COMMAND,
-    TIME,
-    STATE,
-    LEFT(INFO, 100) AS QUERY_PREVIEW
-FROM information_schema.PROCESSLIST
-WHERE COMMAND != 'Sleep'
-    AND TIME > 5  -- Plus de 5 secondes
-ORDER BY TIME DESC;
-```
-
-### INFORMATION_SCHEMA
-
-```sql
--- Tables volumineuses
-SELECT
-    TABLE_SCHEMA,
-    TABLE_NAME,
-    ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) AS size_mb,
-    TABLE_ROWS
-FROM information_schema.TABLES
-WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC
-LIMIT 20;
-
--- Fragmentation
-SELECT
-    TABLE_SCHEMA,
-    TABLE_NAME,
-    ROUND(DATA_FREE / 1024 / 1024, 2) AS free_mb,
-    ROUND((DATA_FREE / (DATA_LENGTH + INDEX_LENGTH + DATA_FREE)) * 100, 2) AS fragmentation_pct
-FROM information_schema.TABLES
-WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-    AND DATA_FREE > 0
-ORDER BY fragmentation_pct DESC
-LIMIT 20;
-```
-
-### Performance Schema
-
-**Activation** :
-
-```ini
-# my.cnf
-[mysqld]
-performance_schema = ON
-```
-
-**Exemples d'utilisation** :
-
-```sql
--- Top requêtes par temps total
-SELECT
-    DIGEST_TEXT AS query,
-    COUNT_STAR AS exec_count,
-    ROUND(AVG_TIMER_WAIT / 1000000000, 3) AS avg_seconds,
-    ROUND(SUM_TIMER_WAIT / 1000000000, 3) AS total_seconds
+    digest_text                              AS empreinte,
+    count_star                               AS executions,
+    ROUND(sum_timer_wait / 1e12, 2)          AS total_s,
+    ROUND(avg_timer_wait / 1e9, 2)           AS moyenne_ms,
+    sum_rows_examined                        AS lignes_examinees,
+    sum_rows_sent                            AS lignes_renvoyees
 FROM performance_schema.events_statements_summary_by_digest
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT 10;
-
--- Requêtes avec full table scans
-SELECT
-    DIGEST_TEXT,
-    COUNT_STAR,
-    SUM_NO_INDEX_USED,
-    SUM_NO_GOOD_INDEX_USED
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SUM_NO_INDEX_USED > 0
-   OR SUM_NO_GOOD_INDEX_USED > 0
-ORDER BY SUM_NO_INDEX_USED DESC
-LIMIT 10;
-
--- Attentes I/O par fichier
-SELECT
-    FILE_NAME,
-    COUNT_STAR AS events,
-    ROUND(SUM_TIMER_WAIT / 1000000000, 3) AS total_wait_seconds
-FROM performance_schema.file_summary_by_instance
-ORDER BY SUM_TIMER_WAIT DESC
+ORDER BY sum_timer_wait DESC
 LIMIT 10;
 ```
 
----
-
-## Thread Pool (monitoring spécifique)
-
-### Configuration du Thread Pool
+Le schéma `sys` (disponible depuis la 10.6) rend ces données plus accessibles via des vues prêtes à l'emploi. Parmi les plus utiles : `sys.metrics`, qui **consolide** en une seule table les variables d'état globales, les métriques InnoDB et les statistiques mémoire ; `sys.statements_with_full_table_scans`, qui liste directement les requêtes effectuant des balayages complets ; `sys.statement_analysis` pour une vue d'ensemble des requêtes ; et `sys.innodb_lock_waits` pour les attentes de verrous InnoDB en cours.
 
 ```sql
--- Vérifier si Thread Pool est actif
-SHOW VARIABLES LIKE 'thread_handling';
--- thread_handling = pool-of-threads
+-- Métriques unifiées (status global + InnoDB + mémoire)
+SELECT * FROM sys.metrics WHERE Variable_name LIKE 'innodb_buffer_pool%';
 
--- Variables Thread Pool
-SHOW VARIABLES LIKE 'thread_pool%';
+-- Requêtes effectuant des balayages complets de table
+SELECT * FROM sys.statements_with_full_table_scans LIMIT 10;
+
+-- Attentes de verrous InnoDB en cours
+SELECT * FROM sys.innodb_lock_waits\G
 ```
 
-**Variables importantes** :
-
-| Variable | Description | Valeur recommandée |
-|----------|-------------|-------------------|
-| `thread_pool_size` | Nombre de groupes | = Nombre de CPU cores |
-| `thread_pool_max_threads` | Threads max total | 1000-2000 |
-| `thread_pool_idle_timeout` | Timeout thread inactif | 60 secondes |
-| `thread_pool_stall_limit` | Détection stall (ms) | 500 |
-| `thread_pool_oversubscribe` | Threads actifs/groupe | 3 |
-
-### Métriques Thread Pool
-
-```sql
--- Statistiques Thread Pool
-SHOW STATUS LIKE 'Threadpool%';
-```
-
-**Métriques clés** :
-
-```sql
--- Threads actifs
-SHOW STATUS LIKE 'Threadpool_threads';
-
--- Threads idle
-SHOW STATUS LIKE 'Threadpool_idle_threads';
-
--- Stalls détectés
-SHOW STATUS LIKE 'Threadpool_stall_count';
-```
-
-**Analyse de santé** :
-
-```sql
-SELECT
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threadpool_threads') AS total_threads,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threadpool_idle_threads') AS idle_threads,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') AS connections,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'thread_pool_size') AS pool_groups;
-```
-
-**Alertes Thread Pool** :
-- **Threadpool_stall_count** augmente rapidement → Requêtes lentes bloquent le pool
-- **Threadpool_idle_threads = 0** → Pool saturé
-- **Threadpool_threads proche de thread_pool_max_threads** → Augmenter la limite
+L'exploitation approfondie de `PERFORMANCE_SCHEMA` et de `sys` pour l'optimisation est développée en [15.8](../15-performance-tuning/08-performance-schema-sys.md).
 
 ---
 
-## Dashboard de monitoring complet
+## Méthode : ligne de référence, signaux d'alerte et tendances
 
-### Script SQL de tableau de bord
+Disposer des métriques ne suffit pas ; encore faut-il les exploiter avec méthode.
 
-```sql
--- ========================================
--- MARIADB MONITORING DASHBOARD
--- ========================================
+D'abord, établir une **ligne de référence**. Une anomalie se définit par rapport à un comportement normal : sans connaître le débit, la latence et les ratios habituels du serveur, on ne peut pas qualifier un écart. La baseline se capture sur plusieurs jours représentatifs, en tenant compte des cycles (heures de pointe, traitements nocturnes).
 
--- 1. SANTÉ GÉNÉRALE
-SELECT 'SANTÉ GÉNÉRALE' AS section;
+Ensuite, raisonner en **taux et en tendances**, jamais en valeurs absolues pour les compteurs cumulatifs. Une alerte pertinente combine généralement un **seuil** et une **tendance**, avec plusieurs niveaux de gravité.
 
-SELECT
-    'Version' AS metric,
-    VERSION() AS value;
+Les signaux à privilégier pour l'alerting sont, en synthèse :
 
-SELECT
-    'Uptime' AS metric,
-    CONCAT(
-        FLOOR((SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Uptime') / 86400), ' jours ',
-        FLOOR(((SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Uptime') % 86400) / 3600), ' heures'
-    ) AS value;
+- l'**espace disque** sur tous les volumes concernés (voir [11.7](07-gestion-espace-disque.md)), avant tout ;
+- une montée anormale de `Threads_running` (saturation ou blocage) ;
+- le **retard de réplication** ([13.7](../13-replication/07-monitoring-troubleshooting.md)) ;
+- une dégradation du taux de hit du buffer pool, *a fortiori* couplée à `Innodb_buffer_pool_wait_free > 0` ;
+- un taux élevé de `Created_tmp_disk_tables` ou de `Slow_queries` ;
+- un pic d'`Aborted_connects` (problème d'authentification, de réseau ou attaque) ;
+- l'approche de la saturation des connexions (`Max_used_connections` proche de `max_connections`).
 
--- 2. CONNEXIONS
-SELECT 'CONNEXIONS' AS section;
+Enfin, **externaliser la collecte**. La supervision de production doit reposer sur un système de collecte time-series qui historise, calcule les taux et déclenche les alertes — Prometheus/Grafana via `mysqld_exporter`, ou une solution intégrée type PMM (voir [16.9](../16-devops-automatisation/09-monitoring-prometheus-grafana.md) et [16.10](../16-devops-automatisation/10-observabilite.md)). Les relevés SQL manuels restent un outil de diagnostic ponctuel, pas un dispositif de surveillance.
 
-SELECT
-    'Connexions actuelles' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') AS value,
-    CONCAT(
-        ROUND(
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'max_connections') * 100,
-            2
-        ), '%'
-    ) AS utilization;
-
-SELECT
-    'Threads running' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_running') AS value;
-
-SELECT
-    'Connexions refusées' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Connection_errors_max_connections') AS value;
-
--- 3. BUFFER POOL
-SELECT 'BUFFER POOL INNODB' AS section;
-
-SELECT
-    'Buffer Pool Size' AS metric,
-    CONCAT(
-        ROUND((SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'innodb_buffer_pool_size') / 1024 / 1024 / 1024, 2),
-        ' GB'
-    ) AS value;
-
-SELECT
-    'Buffer Pool Hit Rate' AS metric,
-    CONCAT(
-        ROUND(
-            (1 - (
-                (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-                (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests')
-            )) * 100,
-            2
-        ), '%'
-    ) AS value;
-
-SELECT
-    'Dirty Pages' AS metric,
-    CONCAT(
-        ROUND(
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_dirty') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') * 100,
-            2
-        ), '%'
-    ) AS value;
-
--- 4. REQUÊTES
-SELECT 'REQUÊTES' AS section;
-
-SELECT
-    'Slow Queries' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Slow_queries') AS value;
-
-SELECT
-    'Tables Temporaires (Disque)' AS metric,
-    CONCAT(
-        ROUND(
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Created_tmp_disk_tables') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Created_tmp_tables') * 100,
-            2
-        ), '%'
-    ) AS value;
-
--- 5. VERROUS
-SELECT 'VERROUS ET CONCURRENCE' AS section;
-
-SELECT
-    'Deadlocks' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_deadlocks') AS value;
-
-SELECT
-    'Row Lock Waits' AS metric,
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_row_lock_waits') AS value;
-
--- 6. TOP TABLES
-SELECT 'TOP 5 TABLES PAR TAILLE' AS section;
-
-SELECT
-    CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS table_name,
-    ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) AS size_mb
-FROM information_schema.TABLES
-WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC
-LIMIT 5;
-```
-
-### Script Bash de monitoring système
-
-```bash
-#!/bin/bash
-# /usr/local/bin/mariadb-monitoring.sh
-
-LOG_FILE="/var/log/mysql/monitoring-$(date +%Y%m%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
-log "=== MARIADB MONITORING ==="
-
-# 1. Uptime
-UPTIME=$(mariadb -sN -e "SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Uptime'")
-UPTIME_DAYS=$((UPTIME / 86400))
-log "Uptime: $UPTIME_DAYS jours"
-
-# 2. Connexions
-CONN_CURRENT=$(mariadb -sN -e "SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected'")
-CONN_MAX=$(mariadb -sN -e "SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'max_connections'")
-CONN_PCT=$((CONN_CURRENT * 100 / CONN_MAX))
-log "Connexions: $CONN_CURRENT / $CONN_MAX ($CONN_PCT%)"
-
-if [ $CONN_PCT -gt 80 ]; then
-    log "ALERTE: Connexions > 80%"
-fi
-
-# 3. Buffer Pool Hit Rate
-HIT_RATE=$(mariadb -sN -e "
-    SELECT ROUND(
-        (1 - (
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests')
-        )) * 100, 2
-    )
-")
-log "Buffer Pool Hit Rate: ${HIT_RATE}%"
-
-if [ $(echo "$HIT_RATE < 95" | bc) -eq 1 ]; then
-    log "ALERTE: Buffer Pool Hit Rate < 95%"
-fi
-
-# 4. Slow Queries
-SLOW_QUERIES=$(mariadb -sN -e "SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Slow_queries'")
-log "Slow Queries: $SLOW_QUERIES"
-
-# 5. Espace disque
-DISK_USAGE=$(df -h /var/lib/mysql | awk 'NR==2 {print $5}' | sed 's/%//')
-log "Espace disque datadir: ${DISK_USAGE}%"
-
-if [ $DISK_USAGE -gt 80 ]; then
-    log "ALERTE: Disque > 80%"
-    echo "Disque MariaDB à ${DISK_USAGE}%" | mail -s "MariaDB Disk Alert" dba@example.com
-fi
-
-log "=== FIN MONITORING ==="
-```
-
----
-
-## Outils de monitoring externes
-
-### Prometheus + mysqld_exporter
-
-**Installation mysqld_exporter** :
-
-```bash
-# Télécharger mysqld_exporter
-wget https://github.com/prometheus/mysqld_exporter/releases/download/v0.15.0/mysqld_exporter-0.15.0.linux-amd64.tar.gz
-tar xvfz mysqld_exporter-0.15.0.linux-amd64.tar.gz
-sudo mv mysqld_exporter-0.15.0.linux-amd64/mysqld_exporter /usr/local/bin/
-
-# Créer utilisateur MariaDB pour exporter
-mariadb -e "
-    CREATE USER 'exporter'@'localhost' IDENTIFIED BY 'password';
-    GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'localhost';
-    FLUSH PRIVILEGES;
-"
-
-# Créer fichier config
-cat > /etc/.mysqld_exporter.cnf <<EOF
-[client]
-user=exporter
-password=password
-host=localhost
-EOF
-
-chmod 600 /etc/.mysqld_exporter.cnf
-
-# Créer service systemd
-cat > /etc/systemd/system/mysqld_exporter.service <<EOF
-[Unit]
-Description=MySQL Exporter
-After=network.target
-
-[Service]
-Type=simple
-User=mysql
-ExecStart=/usr/local/bin/mysqld_exporter --config.my-cnf=/etc/.mysqld_exporter.cnf
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Démarrer
-sudo systemctl daemon-reload
-sudo systemctl enable mysqld_exporter
-sudo systemctl start mysqld_exporter
-```
-
-**Prometheus configuration** :
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'mariadb'
-    static_configs:
-      - targets: ['localhost:9104']
-```
-
-**Métriques Prometheus principales** :
-- `mysql_global_status_threads_connected`
-- `mysql_global_status_innodb_buffer_pool_read_requests`
-- `mysql_global_status_slow_queries`
-- `mysql_global_variables_max_connections`
-
-### Grafana Dashboards
-
-**Dashboards recommandés** :
-- **MySQL Overview** : ID 7362
-- **MySQL InnoDB Metrics** : ID 7365
-- **MySQL Performance Schema** : ID 7366
-
-### PMM (Percona Monitoring and Management)
-
-**Installation PMM Server** (Docker) :
-
-```bash
-docker pull percona/pmm-server:2
-docker create --volume pmm-data:/srv \
-    --name pmm-server \
-    --restart always \
-    --publish 443:443 \
-    percona/pmm-server:2
-docker start pmm-server
-```
-
-**Installation PMM Client** :
-
-```bash
-wget https://downloads.percona.com/downloads/pmm2/2.40.0/binary/debian/bullseye/x86_64/pmm2-client_2.40.0-1.bullseye_amd64.deb
-sudo dpkg -i pmm2-client_2.40.0-1.bullseye_amd64.deb
-
-# Configurer
-sudo pmm-admin config --server-insecure-tls --server-url=https://admin:admin@localhost:443
-
-# Ajouter MariaDB
-sudo pmm-admin add mysql --username=pmm --password=password --query-source=perfschema
-```
-
----
-
-## Alerting et notifications
-
-### Script d'alerte simple
-
-```bash
-#!/bin/bash
-# /usr/local/bin/mariadb-alerts.sh
-
-ALERT_EMAIL="dba@example.com"
-
-# Fonction d'alerte
-alert() {
-    local severity=$1
-    local message=$2
-    echo "[$severity] $message" | mail -s "[$severity] MariaDB Alert" "$ALERT_EMAIL"
-}
-
-# 1. Vérifier connexions
-CONN_PCT=$(mariadb -sN -e "
-    SELECT ROUND(
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Threads_connected') /
-        (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME = 'max_connections') * 100, 2
-    )
-")
-
-if [ $(echo "$CONN_PCT > 90" | bc) -eq 1 ]; then
-    alert "CRITICAL" "Connexions à ${CONN_PCT}%"
-elif [ $(echo "$CONN_PCT > 75" | bc) -eq 1 ]; then
-    alert "WARNING" "Connexions à ${CONN_PCT}%"
-fi
-
-# 2. Vérifier Buffer Pool Hit Rate
-HIT_RATE=$(mariadb -sN -e "
-    SELECT ROUND(
-        (1 - (
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-            (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests')
-        )) * 100, 2
-    )
-")
-
-if [ $(echo "$HIT_RATE < 90" | bc) -eq 1 ]; then
-    alert "WARNING" "Buffer Pool Hit Rate faible: ${HIT_RATE}%"
-fi
-
-# 3. Vérifier réplication (si slave)
-if mariadb -e "SHOW SLAVE STATUS\G" >/dev/null 2>&1; then
-    LAG=$(mariadb -sN -e "SHOW SLAVE STATUS\G" | grep "Seconds_Behind_Master" | awk '{print $2}')
-
-    if [ "$LAG" != "0" ] && [ "$LAG" != "NULL" ]; then
-        if [ "$LAG" -gt 60 ]; then
-            alert "CRITICAL" "Réplication lag: ${LAG} secondes"
-        elif [ "$LAG" -gt 10 ]; then
-            alert "WARNING" "Réplication lag: ${LAG} secondes"
-        fi
-    fi
-fi
-
-# 4. Vérifier deadlocks
-DEADLOCKS=$(mariadb -sN -e "SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME = 'Innodb_deadlocks'")
-# Comparer avec valeur précédente stockée dans un fichier
-# Si augmentation significative, alerter
-```
-
-### Configuration cron
-
-```bash
-# /etc/cron.d/mariadb-monitoring
-
-# Monitoring toutes les 5 minutes
-*/5 * * * * root /usr/local/bin/mariadb-monitoring.sh
-
-# Alertes toutes les minutes
-* * * * * root /usr/local/bin/mariadb-alerts.sh
-```
-
----
-
-## Bonnes pratiques de monitoring
-
-### ✅ À FAIRE
-
-1. **Monitorer en continu** : Pas seulement lors des problèmes
-2. **Alertes intelligentes** : Seuils adaptés à votre charge
-3. **Graphiques temporels** : Analyser tendances, pas juste valeurs ponctuelles
-4. **Baseline** : Établir des valeurs normales pour comparaison
-5. **Monitoring proactif** : Détecter avant l'impact utilisateur
-6. **Documenter** : Valeurs normales, seuils d'alerte
-7. **Tester les alertes** : Vérifier qu'elles fonctionnent
-8. **Tableaux de bord** : Vue d'ensemble rapide (Grafana)
-9. **Rétention historique** : Garder 30-90 jours de métriques
-10. **Automatiser** : Scripts, cron, systemd timers
-
-### ❌ À ÉVITER
-
-1. **Alertes trop fréquentes** : Fatigue d'alerte, ignorées
-2. **Pas de contexte** : Métriques isolées difficiles à interpréter
-3. **Monitoring ponctuel** : Snapshots vs tendances
-4. **Ignorer les warnings** : Attendre le critical
-5. **Pas de documentation** : Que signifie cette métrique ?
-6. **Oublier les logs** : Métriques + logs = complet
-7. **Monitoring sans action** : Surveiller sans réagir
-8. **Surcharger Performance Schema** : Impact performance
-
----
-
-## Checklist de monitoring
-
-### Quotidien (automatisé)
-
-- [ ] Uptime > 0 (serveur actif)
-- [ ] Threads_connected < 80% max_connections
-- [ ] Buffer Pool Hit Rate > 95%
-- [ ] Slow_queries (augmentation normale ?)
-- [ ] Espace disque < 80%
-- [ ] Réplication lag < 10 secondes
-- [ ] Error log (erreurs récentes ?)
-
-### Hebdomadaire
-
-- [ ] Analyser slow query log (pt-query-digest)
-- [ ] Vérifier fragmentation tables
-- [ ] Revue des connexions refusées
-- [ ] Tendances croissance données
-- [ ] Deadlocks (investigation si > 10/jour)
-- [ ] Thread Pool stalls
-
-### Mensuel
-
-- [ ] Revue complète dashboards
-- [ ] Planification capacité (projection 6 mois)
-- [ ] Optimisation tables fragmentées
-- [ ] Revue configuration vs charge réelle
-- [ ] Audit sécurité (connexions, privilèges)
-
----
-
-## ✅ Points clés à retenir
-
-- **Métriques critiques** : Buffer Pool Hit Rate (> 99%), Connexions (< 80%), Slow Queries, Espace disque
-- **SHOW STATUS** : Statistiques en temps réel
-- **Performance Schema** : Analyse détaillée requêtes et attentes
-- **Thread Pool** : Monitoring via Threadpool_* status variables
-- **Buffer Pool** : Métrique #1 pour performances InnoDB
-- **Alerting** : Proactif (75% warning, 90% critical)
-- **Outils externes** : Prometheus + Grafana, PMM pour visualisation avancée
-- **Tendances** : Plus importantes que valeurs ponctuelles
-- **Baseline** : Établir valeurs normales pour comparaison
-- **Automatisation** : Cron, systemd timers, alertes email
-- **Documentation** : Seuils, procédures, valeurs normales
-- **Réplication** : Lag < 10 secondes, IO/SQL threads actifs
-
----
-
-## 🔗 Ressources et références
-
-- [📖 Documentation officielle - Server Status Variables](https://mariadb.com/kb/en/server-status-variables/)
-- [📖 Documentation officielle - Performance Schema](https://mariadb.com/kb/en/performance-schema/)
-- [📖 Documentation officielle - Thread Pool](https://mariadb.com/kb/en/thread-pool-in-mariadb/)
-- [🔧 Prometheus MySQL Exporter](https://github.com/prometheus/mysqld_exporter)
-- [📊 Grafana MySQL Dashboards](https://grafana.com/grafana/dashboards/)
-- [📊 Percona Monitoring and Management](https://www.percona.com/software/database-tools/percona-monitoring-and-management)
-- [🔧 Percona Toolkit](https://www.percona.com/software/database-tools/percona-toolkit)
-
----
-
-## ➡️ Section suivante
-
-**[11.10 Thread Pool et gestion de la concurrence](./10-thread-pool.md)** : Configuration avancée du Thread Pool, optimisation pour haute concurrence, comparaison avec le modèle one-thread-per-connection.
-
----
-
-**💡 Conseil final** : "In God we trust, all others must bring data" - W. Edwards Deming. Le monitoring transforme l'intuition en certitude. Mesurez tout, analysez les tendances, alertez intelligemment. Votre production vous remerciera ! 📊🚀
+En combinant ces métriques avec le contrôle de l'espace disque ([11.7](07-gestion-espace-disque.md)) et de l'espace temporaire ([11.8](08-controle-espace-temporaire.md)), puis en les intégrant à une chaîne d'observabilité et d'alerting ([16.9](../16-devops-automatisation/09-monitoring-prometheus-grafana.md)–[16.11](../16-devops-automatisation/11-alerting-incident-response.md)), on transforme un ensemble de compteurs en une véritable capacité à anticiper et à diagnostiquer — l'objectif final du monitoring.
 
 ⏭️ [Thread Pool et gestion de la concurrence](/11-administration-configuration/10-thread-pool.md)

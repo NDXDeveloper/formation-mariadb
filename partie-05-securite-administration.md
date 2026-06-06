@@ -25,7 +25,7 @@ L'objectif de cette partie est de vous donner les **compétences et la méthodol
 ## 📚 Les trois modules de cette partie
 
 ### Module 10 : Sécurité et Gestion des Utilisateurs
-**11 sections | Durée : ~2 jours**
+**12 sections | Durée : ~2 jours**
 
 Ce module couvre l'ensemble du spectre de la sécurité MariaDB, de l'authentification au chiffrement en passant par l'audit :
 
@@ -39,23 +39,24 @@ Ce module couvre l'ensemble du spectre de la sécurité MariaDB, de l'authentifi
 - **GRANT et REVOKE** : Attribution et révocation de droits
 - **Privilèges essentiels** : `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `SUPER`, etc.
 - **Audit des privilèges** : Vérifier qui peut faire quoi
-- 🆕 **Privilèges granulaires améliorés (11.8)** : Contrôle encore plus fin des permissions
+- **Privilèges granulaires (depuis 11.8)** : Contrôle encore plus fin des permissions
 
 #### 👥 Rôles et délégation
 - **CREATE ROLE** : Définir des ensembles de privilèges réutilisables
 - **SET ROLE** et **DEFAULT ROLE** : Activation et gestion des rôles
 - **Patterns organisationnels** : Rôles par fonction (dev, readonly, admin)
+- 🆕 **SET SESSION AUTHORIZATION (12.0)** : Exécuter des actions au nom d'un autre utilisateur (*impersonation*, privilège `SET USER`)
 
 #### 🔑 Authentification moderne
 - **Plugins d'authentification** : mysql_native_password, ed25519, PAM, LDAP, GSSAPI/Kerberos
-- 🆕 **Plugin PARSEC (11.8)** : Nouveau plugin de sécurité pour authentification renforcée
+- **Plugin PARSEC (depuis 11.8)** : Authentification par mot de passe renforcée (PBKDF2 + ed25519)
 - **Authentification multi-facteurs** : Approches pour MFA
 - **Intégration enterprise** : LDAP/Active Directory
 
 #### 🔒 Chiffrement des communications
 - **SSL/TLS** : Configuration serveur et client
 - **Certificats et CA** : Gestion du PKI
-- 🆕 **TLS activé par défaut (11.8)** : Sécurité renforcée dès l'installation
+- **TLS activé par défaut (depuis 11.8)** : Sécurité renforcée dès l'installation
 - **Chiffrement obligatoire** : Forcer SSL pour utilisateurs ou globalement
 
 #### 📜 Audit et conformité
@@ -102,7 +103,7 @@ Ce module vous enseigne l'administration quotidienne et la configuration optimal
 - **Surveillance de l'espace** : Prévenir les saturation disque
 - **Purge des logs** : Binary logs, slow logs
 - **Tablespaces** : InnoDB file-per-table vs shared
-- 🆕 **Contrôle espace temporaire (11.8)** : `max_tmp_space_usage`, `max_total_tmp_space_usage`
+- **Contrôle espace temporaire (depuis 11.8)** : `max_tmp_session_space_usage`, `max_tmp_total_space_usage`
 
 #### 📊 Monitoring et observabilité
 - **Métriques clés** : Connexions, throughput, latence, buffer pool
@@ -111,12 +112,12 @@ Ce module vous enseigne l'administration quotidienne et la configuration optimal
 - **Thread Pool** : Gestion de la concurrence à haute échelle
 
 #### 🌍 Internationalisation
-- 🆕 **Charset utf8mb4 par défaut (11.8)** : Unicode complet activé dès l'installation
-- 🆕 **Collations UCA 14.0.0 (11.8)** : Support linguistique moderne
+- **Charset utf8mb4 par défaut (depuis 11.8)** : Unicode complet activé dès l'installation
+- **Collations UCA 14.0.0 (depuis 11.8)** : Support linguistique moderne
 - **Migration des charsets** : Conversion safe depuis latin1/utf8
 
 #### ⏰ Gestion du temps
-- 🆕 **Extension TIMESTAMP 2038→2106 (11.8)** : Résolution du problème Y2038
+- **Extension TIMESTAMP 2038→2106 (depuis 11.8)** : Résolution du problème Y2038
 - **Timezones** : Configuration et gestion
 - **Tables temporelles** : Impact de l'extension TIMESTAMP
 
@@ -142,17 +143,17 @@ Ce module couvre la protection ultime des données : les sauvegardes et la capac
 - **mydumper/myloader** : Alternative parallélisée pour grandes bases
 
 #### 📦 Sauvegarde physique
-- **Mariabackup** : Hot backup InnoDB sans interruption 🔄
+- **Mariabackup** : Hot backup InnoDB sans interruption
   - Full backup : Copie complète des fichiers
   - Incremental backup : Seules les modifications depuis dernier backup
-  - 🆕 **Support BACKUP STAGE (11.8)** : Meilleure coordination des backups
+  - **Support `BACKUP STAGE`** : coordination fine et non bloquante des sauvegardes
 - **Avantages** : Rapidité, pas d'impact performance, restauration rapide
 - **Cas d'usage** : Production critique, grandes bases (100GB+)
 
 #### 📜 Sauvegarde incrémentale avec binary logs
 - **Point-in-time recovery (PITR)** : Restaurer à une seconde précise
 - **Stratégie combinée** : Full backup + binary logs = protection complète
-- **Mysqlbinlog** : Rejouer les transactions depuis un point donné
+- **mariadb-binlog** (ex-`mysqlbinlog`) : Rejouer les transactions depuis un point donné
 
 #### 🔄 Restauration
 - **Tests réguliers** : La règle d'or — tester AVANT d'en avoir besoin
@@ -182,13 +183,13 @@ Ce module couvre la protection ultime des données : les sauvegardes et la capac
 
 ---
 
-## 🆕 Nouveautés MariaDB 11.8 pour la sécurité et l'administration
+## 🔐 Le socle moderne de sécurité et d'administration
 
-MariaDB 11.8 LTS introduit des améliorations majeures en matière de sécurité et d'administration, renforçant la posture de sécurité par défaut et facilitant la conformité réglementaire.
+La formation prend pour référence **MariaDB 12.3 LTS**. Plusieurs avancées majeures de sécurité et d'administration ont été introduites lors du cycle **11.8 LTS** (la LTS précédente) et constituent désormais le **socle standard** de la 12.3 : sécurité renforcée par défaut, authentification moderne, Unicode complet, résolution du Y2038. Les sections ci-dessous les récapitulent ; les nouveautés propres à la série **12.x** sont, elles, signalées par le marqueur 🆕 dans les chapitres (par exemple le binlog intégré à InnoDB, § 11.5.4).
 
 ### 🔐 Sécurité renforcée par défaut
 
-#### 1. TLS/SSL activé par défaut 🆕
+#### 1. TLS/SSL activé par défaut (depuis 11.8)
 
 ```ini
 # MariaDB 11.8 : TLS activé automatiquement
@@ -203,28 +204,16 @@ require_secure_transport = ON  # Peut être activé pour forcer TLS
 - ✅ Protection contre l'écoute réseau (man-in-the-middle)
 - ✅ Conformité facilitée (RGPD, HIPAA exigent le chiffrement en transit)
 
-#### 2. Plugin d'authentification PARSEC 🆕
+#### 2. Plugin d'authentification PARSEC (depuis 11.8)
 
-Le nouveau plugin PARSEC (Platform AbstRaction for SECurity) offre une authentification renforcée avec support hardware security modules (HSM) :
-
-```sql
--- Création d'utilisateur avec PARSEC
-CREATE USER 'secure_admin'@'localhost' 
-IDENTIFIED VIA parsec 
-USING 'password_hash';
-
--- Support HSM pour clés cryptographiques
-ALTER USER 'secure_admin'@'localhost' 
-IDENTIFIED VIA parsec 
-USING 'hsm:token1:key_id';
-```
+Le plugin **PARSEC** (*Password Authentication using Response Signed with Elliptic Curve*) renforce l'authentification par mot de passe : celui-ci est salé puis dérivé par **PBKDF2** (SHA-512/SHA-256, nombre d'itérations paramétrable), et la réponse d'authentification est signée par **ed25519**. C'est une évolution plus robuste que le plugin `ed25519`, conçue pour résister au rejeu et à l'interception. Disponible depuis la **11.6** (donc dans la 11.8 LTS), il est destiné à devenir le plugin par défaut dans une version future. Sa mise en œuvre détaillée est traitée en section 10.6.
 
 **Avantages** :
-- 🔑 Intégration HSM pour clés cryptographiques hardware
-- 🛡️ Protection contre extraction de secrets
-- 🏢 Conformité SOC 2, PCI-DSS niveau 3+
+- 🔑 Dérivation de clé **PBKDF2** + signature **ed25519** (jamais de mot de passe en clair sur le réseau)
+- 🛡️ Résistance accrue au rejeu et à l'attaque de l'intercepteur (*man-in-the-middle*)
+- 🏢 Authentification moderne, adaptée aux exigences de conformité
 
-#### 3. Privilèges granulaires améliorés 🆕
+#### 3. Privilèges granulaires (depuis 11.8)
 
 MariaDB 11.8 introduit des privilèges encore plus fins pour le contrôle d'accès :
 
@@ -238,7 +227,7 @@ TO 'analyst'@'%';
 GRANT EXECUTE ON PROCEDURE calculate_report 
 TO 'reporting_user'@'%';
 
--- Nouveau : Privilège sur types de requêtes
+-- Limite de ressources de compte : nombre de requêtes par heure
 GRANT SELECT, INSERT 
 ON orders 
 TO 'app_user'@'%' 
@@ -251,7 +240,7 @@ WITH MAX_QUERIES_PER_HOUR 10000;
 
 ### 🔧 Administration simplifiée
 
-#### 4. Charset UTF-8 par défaut (utf8mb4) 🆕
+#### 4. Charset UTF-8 par défaut (utf8mb4, depuis 11.8)
 
 ```ini
 # MariaDB 11.8 : Plus besoin de configuration manuelle
@@ -267,7 +256,7 @@ collation-server = utf8mb4_uca1400_ai_ci  # UCA 14.0.0
 
 **Migration** : Les bases existantes peuvent être migrées progressivement sans interruption.
 
-#### 5. Extension TIMESTAMP jusqu'en 2106 🆕
+#### 5. Extension TIMESTAMP jusqu'en 2106 (depuis 11.8)
 
 Le problème Y2038 (limitation du TIMESTAMP Unix à 2038-01-19) est résolu :
 
@@ -289,17 +278,17 @@ VALUES ('2050-12-31 23:59:59');  -- ✅ Fonctionne parfaitement
 - ✅ Données financières et contrats long terme
 - ✅ Systèmes industriels avec planification décennale
 
-#### 6. Contrôle de l'espace temporaire 🆕
+#### 6. Contrôle de l'espace temporaire (depuis 11.8)
 
 Prévention des saturation disque par requêtes mal optimisées :
 
 ```ini
 [mysqld]
 # Limite par session
-max_tmp_space_usage = 10G
+max_tmp_session_space_usage = 10G
 
 # Limite globale pour toutes les sessions
-max_total_tmp_space_usage = 100G
+max_tmp_total_space_usage = 100G
 ```
 
 **Bénéfices** :
@@ -311,25 +300,20 @@ max_total_tmp_space_usage = 100G
 
 ### 🔄 Sauvegarde améliorée
 
-#### 7. Support BACKUP STAGE dans Mariabackup 🆕
+#### 7. `BACKUP STAGE` exploité automatiquement par Mariabackup
 
-Coordination améliorée des backups sur systèmes répliqués :
+Mariabackup s'appuie sur le protocole `BACKUP STAGE` pour réaliser des sauvegardes physiques **non bloquantes** — sans aucune option à activer : il fige chaque table juste le temps de sa copie et ne suspend les commits qu'un bref instant en fin de parcours.
 
 ```bash
-# Mariabackup 11.8 : Utilisation automatique de BACKUP STAGE
+# BACKUP STAGE est géré en interne : aucune option dédiée à passer
 mariabackup --backup \
   --target-dir=/backup/full \
-  --user=backup_user \
-  --password=*** \
-  --backup-stage  # Nouvelle option pour coordination
-
-# Avantages :
-# - Cohérence améliorée sur clusters
-# - Moins d'impact sur réplication
-# - Coordination automatique avec MaxScale
+  --user=backup_user --password=***
 ```
 
-**Impact** : Backups plus fiables sur architectures haute disponibilité.
+> Depuis MariaDB **10.11.8** (MDEV-32932), l'édition **Community** parcourt l'ensemble des étapes `BACKUP STAGE` (comme l'édition Enterprise), copiant les tables non transactionnelles tôt pour réduire au minimum la fenêtre de blocage des commits. Détails en section 12.3.3.
+
+**Impact** : Sauvegardes fiables et non bloquantes, y compris sur architectures haute disponibilité.
 
 ---
 
@@ -575,7 +559,7 @@ Toute tâche répétée >2 fois doit être automatisée :
 echo "=== Monthly Backup Restoration Test ==="
 
 # 1. Créer environnement de test
-docker run -d --name restore-test mariadb:11.8
+docker run -d --name restore-test mariadb:12.3
 
 # 2. Restaurer dernier backup
 mariabackup --copy-back \
@@ -702,7 +686,7 @@ Bienvenue dans le monde de l'administration professionnelle ! 🔐
 
 ---
 
-**MariaDB** : Version 11.8 LTS  
-**Conformité** : RGPD, HIPAA, PCI-DSS, SOC 2
+**MariaDB** : Version 12.3 LTS (LTS précédente de référence : 11.8)  
+**Conformité** : RGPD, HIPAA, PCI-DSS, SOC 2  
 
 ⏭️ [Sécurité et Gestion des Utilisateurs](/10-securite-gestion-utilisateurs/README.md)
