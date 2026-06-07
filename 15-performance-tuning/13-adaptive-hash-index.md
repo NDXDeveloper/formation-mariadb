@@ -1,803 +1,97 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 15.13 Adaptive Hash Index et Buffer Pool optimizations
+# 15.13 Adaptive Hash Index et optimisations du buffer pool
 
-> **Niveau** : Expert  
-> **Durée estimée** : 3-4 heures  
-> **Prérequis** : 
-> - Sections 15.1-15.5 (Méthodologie, Mémoire, InnoDB)
-> - Compréhension profonde de l'architecture InnoDB
-> - Connaissance des index B-tree
-> - Expérience en tuning de performance
+Cette section traite de deux mécanismes internes d'InnoDB qui influencent les performances en lecture : l'**Adaptive Hash Index**, un index de hachage en mémoire construit automatiquement au-dessus des pages d'index les plus sollicitées, et les **optimisations du buffer pool** au-delà de son simple dimensionnement (vu aux §15.2.1 et §15.2.2) — son algorithme de remplacement, son réchauffement par sauvegarde/restauration, et son redimensionnement en ligne. Ces mécanismes sont en grande partie automatiques, mais les comprendre permet au DBA de les régler — ou de les désactiver — à bon escient.
 
----
+## L'Adaptive Hash Index (AHI)
 
-## 🎯 Objectifs d'apprentissage
+### Principe
 
-À l'issue de cette section, vous serez capable de :
+InnoDB observe en permanence les motifs de recherche dans les index. Lorsqu'il constate que certaines pages d'index sont consultées fréquemment selon un même motif de préfixe de clé, il construit en mémoire un **index de hachage** qui associe directement ces préfixes aux enregistrements. Une recherche qui exigerait normalement la traversée d'un arbre B (coût logarithmique) se ramène alors à un accès quasi direct par hachage, pour les données les plus chaudes.
 
-- **Comprendre l'Adaptive Hash Index** et son fonctionnement interne
-- **Identifier les workloads** bénéficiant de l'AHI
-- **Configurer et optimiser** l'AHI pour votre environnement
-- **Maîtriser les optimisations** avancées du Buffer Pool
-- **Optimiser les instances** multiples du Buffer Pool
-- **Configurer le prefetching** et le read-ahead
-- **Monitorer les performances** de l'AHI et du Buffer Pool
-- **Diagnostiquer les problèmes** de contention
-- **Appliquer les best practices** de production
-- **Exploiter les nouveautés** MariaDB 11.8
+Cet index est bâti **à la demande**, uniquement pour les pages fréquemment accédées, et il est entièrement automatique et auto-régulé : on ne le crée ni ne le maintient manuellement. Il réside dans le buffer pool, dont il consomme une partie de la mémoire. Quand le jeu de travail tient largement en RAM et que les accès sont répétitifs, l'AHI permet à InnoDB de se comporter davantage comme une base en mémoire.
 
----
+### Un mécanisme désactivé par défaut depuis MariaDB 10.5
 
-## Introduction
+C'est le point essentiel de cette section. L'AHI est piloté par la variable `innodb_adaptive_hash_index` (`ON`/`OFF`). Il était **activé par défaut jusqu'à MariaDB 10.5**, mais il est **désactivé par défaut depuis** cette version — et donc en 12.3.
 
-L'**Adaptive Hash Index (AHI)** et le **Buffer Pool** sont deux mécanismes internes d'InnoDB qui ont un **impact majeur** sur les performances :
+Ce changement de défaut s'explique par plusieurs constats. D'une part, l'AHI a été à l'origine de bugs et d'un risque de corruption de données dans certaines conditions. D'autre part, il consomme de la mémoire du buffer pool, ce qui peut dégrader les performances précisément lorsque le jeu de travail tiendrait presque entièrement dans ce buffer pool — l'espace soustrait par l'AHI provoquant alors davantage d'évictions. À cela s'ajoute la contention sur le verrou de l'AHI dans les charges à forte concurrence. Pour ces raisons, MariaDB a fait le choix conservateur de le désactiver par défaut (une décision qu'a également suivie MySQL dans ses versions récentes).
 
-```
-┌────────────────────────────────────────────────────┐
-│  ARCHITECTURE INNODB : COMPOSANTS CRITIQUES        │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  ┌──────────────────────────────────────────────┐  │
-│  │         BUFFER POOL                          │  │
-│  │  ┌────────────────────────────────────────┐  │  │
-│  │  │  LRU List (pages fréquentes)           │  │  │
-│  │  │  Free List (pages libres)              │  │  │
-│  │  │  Flush List (pages dirty)              │  │  │
-│  │  └────────────────────────────────────────┘  │  │
-│  │                                              │  │
-│  │  ┌────────────────────────────────────────┐  │  │
-│  │  │  ADAPTIVE HASH INDEX                   │  │  │
-│  │  │  (Hash index in-memory)                │  │  │
-│  │  │  • Court-circuite B-tree               │  │  │
-│  │  │  • Accès O(1) vs O(log n)              │  │  │
-│  │  └────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────┘  │
-│                    ↓                               │
-│  ┌──────────────────────────────────────────────┐  │
-│  │         TABLESPACE (.ibd files)              │  │
-│  │  • Index B-tree (primaire et secondaires)    │  │
-│  │  • Data pages (16 KB)                        │  │
-│  └──────────────────────────────────────────────┘  │
-│                                                    │
-│  Flux normal :                                     │
-│  Query → B-tree index (log n lookups) → Data       │
-│                                                    │
-│  Avec AHI :                                        │
-│  Query → AHI (1 lookup) → Data ✅ RAPIDE           │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-### Impact sur les performances
-
-```
-Gain typique avec AHI :
-• Workload read-heavy avec patterns répétitifs : +20-40%
-• OLTP avec point selects : +15-30%
-• Workload avec full table scans : 0% (aucun gain)
-• Workload avec contention élevée : Négatif (ralentit)
-```
-
----
-
-## Adaptive Hash Index (AHI)
-
-### Principe de fonctionnement
-
-L'**Adaptive Hash Index** est un hash index automatique construit **en mémoire** par InnoDB pour accélérer les accès fréquents.
-
-```
-┌────────────────────────────────────────────────────┐
-│  FONCTIONNEMENT DE L'AHI                           │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  Requête typique sans AHI :                        │
-│  ─────────────────────────                         │
-│  SELECT * FROM users WHERE id = 12345;             │
-│                                                    │
-│  1. Recherche dans B-tree index                    │
-│     ├─ Root node                                   │
-│     ├─ Internal node(s)                            │
-│     └─ Leaf node → Data                            │
-│     Complexité : O(log n) = ~4-5 lookups           │
-│                                                    │
-│  Requête avec AHI activé :                         │
-│  ─────────────────────                             │
-│  SELECT * FROM users WHERE id = 12345;             │
-│                                                    │
-│  InnoDB détecte pattern répétitif :                │
-│  "WHERE id = ?" utilisé fréquemment                │
-│                                                    │
-│  Construit automatiquement hash index :            │
-│  ┌────────────────────────────────────┐            │
-│  │  AHI Hash Table                    │            │
-│  │  ───────────────                   │            │
-│  │  12345 → Pointeur direct vers page │            │
-│  │  67890 → Pointeur direct vers page │            │
-│  │  ...                               │            │
-│  └────────────────────────────────────┘            │
-│                                                    │
-│  1. Hash lookup : HASH(12345) → Page directement   │
-│     Complexité : O(1) = 1 lookup ✅                │
-│                                                    │
-│  Gain : 4-5 lookups → 1 lookup = 75-80% plus vite  │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-### Quand l'AHI est utile ✅
-
-```
-┌────────────────────────────────────────────────────┐
-│  WORKLOADS BÉNÉFICIANT DE L'AHI                    │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  1. OLTP avec POINT SELECTS répétitifs             │
-│     SELECT * FROM orders WHERE order_id = ?        │
-│     • Même pattern répété des millions de fois     │
-│     • Valeurs différentes mais même colonne        │
-│     → Gain : +20-40%                               │
-│                                                    │
-│  2. PRIMARY KEY lookups fréquents                  │
-│     SELECT * FROM users WHERE id = ?               │
-│     • Accès direct par clé primaire                │
-│     • Très fréquent en OLTP                        │
-│     → Gain : +15-30%                               │
-│                                                    │
-│  3. SECONDARY INDEX accès répétitifs               │
-│     SELECT * FROM products WHERE sku = ?           │
-│     • Index secondaire utilisé fréquemment         │
-│     • Patterns stables                             │
-│     → Gain : +10-25%                               │
-│                                                    │
-│  4. HIGH READ / LOW WRITE ratio                    │
-│     • 80%+ reads, <20% writes                      │
-│     • Données relativement stables                 │
-│     → AHI reste pertinent longtemps                │
-│                                                    │
-│  5. WORKING SET en mémoire                         │
-│     • Dataset tient dans buffer pool               │
-│     • Pas de disk I/O fréquent                     │
-│     → AHI maximise gains CPU                       │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-### Quand l'AHI est contre-productif ❌
-
-```
-┌────────────────────────────────────────────────────┐
-│  WORKLOADS OÙ DÉSACTIVER L'AHI                     │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  1. FULL TABLE SCANS fréquents                     │
-│     SELECT * FROM logs WHERE date > ?              │
-│     • Pas de patterns répétitifs                   │
-│     • AHI non applicable                           │
-│     → Overhead inutile                             │
-│                                                    │
-│  2. WRITE-HEAVY workload                           │
-│     • >50% writes (INSERT, UPDATE, DELETE)         │
-│     • AHI invalidé constamment                     │
-│     • Overhead de reconstruction                   │
-│     → Performance dégradée                         │
-│                                                    │
-│  3. HAUTES CONTENTIONS                             │
-│     • Beaucoup de threads concurrents              │
-│     • Contention sur AHI mutex/latches             │
-│     • MariaDB <10.5 : Mutex global (bottleneck)    │
-│     → Ralentissement significatif                  │
-│                                                    │
-│  4. PATTERNS D'ACCÈS ALÉATOIRES                    │
-│     SELECT * FROM table WHERE random_column = ?    │
-│     • Pas de répétition                            │
-│     • AHI ne trouve pas de patterns                │
-│     → Pas de construction, overhead uniquement     │
-│                                                    │
-│  5. MÉMOIRE LIMITÉE                                │
-│     • RAM insuffisante                             │
-│     • AHI consomme précieuse mémoire               │
-│     • Mieux utilisée pour buffer pool              │
-│     → Désactiver pour libérer RAM                  │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-### Configuration de l'AHI
+La variable est dynamique : on peut activer ou désactiver l'AHI à chaud, sans redémarrage.
 
 ```sql
--- Vérifier si AHI est activé
-SHOW VARIABLES LIKE 'innodb_adaptive_hash_index';
--- ON par défaut
-
--- Désactiver AHI (si contre-productif)
-SET GLOBAL innodb_adaptive_hash_index = OFF;
-
--- Réactiver
+-- Activer l'AHI à chaud (il est désactivé par défaut depuis MariaDB 10.5)
 SET GLOBAL innodb_adaptive_hash_index = ON;
-
--- Configuration permanente dans my.cnf
-[mariadb]
-innodb_adaptive_hash_index = ON  # ou OFF
 ```
 
-### Partitionnement de l'AHI (MariaDB 10.5+)
+### Partitionnement et contention
 
-**Problème historique** : Avant MariaDB 10.5, l'AHI utilisait un mutex global, créant une **contention massive** sur systèmes multi-cores.
+Lorsqu'il est actif, l'AHI est **partitionné en interne** — chaque partition étant protégée par un verrou distinct — afin de réduire la contention historiquement associée à son verrou unique, qui constituait un goulet d'étranglement sur les charges fortement concurrentes ; le nombre de partitions est paramétrable. Cette contention se surveille dans la section `SEMAPHORES` de `SHOW ENGINE INNODB STATUS` : de nombreux threads en attente sur les verrous de l'AHI signalent qu'il faut augmenter le nombre de partitions ou, plus radicalement, désactiver l'AHI.
 
-**Solution** : Partitionnement de l'AHI en multiples structures indépendantes.
+### Faut-il l'activer ?
+
+Il n'existe pas de réponse universelle : la seule démarche valable est de **mesurer**, en exécutant un benchmark représentatif avec l'AHI activé puis désactivé (au sens du §15.12). L'AHI peut aider sur les charges majoritairement en lecture, dominées par des recherches d'égalité répétitives sur un ensemble stable d'index chauds, lorsque les données tiennent largement en mémoire. Il peut au contraire nuire sur les charges mixtes à forte concurrence, sur celles aux motifs d'accès variés, en présence de nombreuses opérations DDL (les `DROP` et `TRUNCATE` doivent purger l'AHI), ou lorsque le jeu de travail remplit presque le buffer pool.
+
+Le défaut conservateur (désactivé) traduit le fait que, pour beaucoup de charges modernes, l'AHI coûte plus qu'il ne rapporte. On ne l'activera donc qu'après avoir mesuré un gain réel.
+
+### Surveiller l'AHI
+
+La section `INSERT BUFFER AND ADAPTIVE HASH INDEX` de `SHOW ENGINE INNODB STATUS` rapporte le nombre de recherches servies par hachage par seconde face aux recherches non hachées : ce rapport indique dans quelle mesure l'AHI est réellement utilisé. La taille de la table de hachage y révèle par ailleurs son empreinte mémoire.
+
+## Les optimisations du buffer pool
+
+Le buffer pool est le cache mémoire d'InnoDB pour les pages de données et d'index ; son dimensionnement (§15.2.1) et son découpage en instances (§15.2.2) en constituent les leviers de premier ordre. Cette section aborde les mécanismes internes qui régissent ce que le buffer pool conserve, la façon dont il se réchauffe et celle dont il se redimensionne.
+
+### L'algorithme LRU à point d'insertion médian
+
+InnoDB n'emploie pas un simple algorithme LRU. Il utilise une variante à **insertion médiane**, dans laquelle la liste des pages est scindée en deux sous-listes : la sous-liste « jeune » (pages récemment et fréquemment utilisées) et la sous-liste « ancienne ». Une page nouvellement lue n'entre pas en tête de la liste entière, mais au **point médian**, c'est-à-dire en tête de la sous-liste ancienne. Elle n'est promue vers la sous-liste jeune que si elle est consultée à nouveau **après** un délai de `innodb_old_blocks_time` millisecondes (1000 par défaut). La taille de la sous-liste ancienne est fixée par `innodb_old_blocks_pct` (environ 37 % par défaut).
+
+L'objectif est la **résistance aux scans**. Un balayage ponctuel et massif — une lecture de table complète, une sauvegarde — remplit la sous-liste ancienne de pages qui en sont rapidement évincées, sans déloger les pages chaudes installées dans la sous-liste jeune. Sans ce mécanisme, un seul gros balayage suffirait à polluer l'intégralité du cache et à en chasser les données réellement utiles. Pour des charges très marquées par les balayages, on peut renforcer cette protection en réduisant `innodb_old_blocks_pct` ou en augmentant `innodb_old_blocks_time`.
+
+### Réchauffement : sauvegarde et restauration du buffer pool
+
+Après un redémarrage, le buffer pool est vide : les premières requêtes sont lentes car servies depuis le disque, jusqu'à ce que le cache se remplisse de nouveau — c'est le problème du cache froid évoqué au §15.12. InnoDB le résout en **sauvegardant la liste des pages** présentes dans le buffer pool à l'arrêt, puis en la **rechargeant** au démarrage :
+
+- `innodb_buffer_pool_dump_at_shutdown` (activé par défaut) déclenche la sauvegarde à l'arrêt ;
+- `innodb_buffer_pool_load_at_startup` (activé par défaut) déclenche le rechargement au démarrage ;
+- `innodb_buffer_pool_dump_pct` (25 % par défaut) fixe la proportion des pages les plus récemment utilisées à sauvegarder.
+
+La sauvegarde ne porte que sur les **identifiants** des pages — un fichier de petite taille —, et non sur les données elles-mêmes, qui sont relues depuis le disque lors du chargement. Une commande manuelle reste possible à tout moment :
 
 ```sql
--- MariaDB 10.5+ : AHI partitionné par défaut
--- Nombre de partitions = innodb_adaptive_hash_index_parts
-
-SHOW VARIABLES LIKE 'innodb_adaptive_hash_index_parts';
--- Valeur par défaut : 8
-
--- Augmenter pour réduire contention (serveurs >32 cores)
-SET GLOBAL innodb_adaptive_hash_index_parts = 16;
-
--- Configuration my.cnf
-[mariadb]
-innodb_adaptive_hash_index_parts = 8  # 8, 16, 32, 64
+-- Déclencher manuellement la sauvegarde puis le rechargement du buffer pool
+SET GLOBAL innodb_buffer_pool_dump_now = ON;  
+SET GLOBAL innodb_buffer_pool_load_now = ON;  
 ```
 
-**Recommandations** :
-- Serveurs ≤16 cores : `parts = 8` (défaut)
-- Serveurs 16-32 cores : `parts = 16`
-- Serveurs 32-64 cores : `parts = 32`
-- Serveurs >64 cores : `parts = 64`
+Ce dispositif raccourcit considérablement la montée en température après un redémarrage planifié ou une mise à niveau.
 
-### Monitoring de l'AHI
+### Redimensionnement en ligne
+
+Le buffer pool peut être redimensionné **sans redémarrage**, en modifiant dynamiquement sa taille :
 
 ```sql
--- Statistiques AHI
-SHOW ENGINE INNODB STATUS\G
-
--- Section "INSERT BUFFER AND ADAPTIVE HASH INDEX"
-/*
--------------------------------------
-INSERT BUFFER AND ADAPTIVE HASH INDEX
--------------------------------------
-Ibuf: size 1, free list len 0, seg size 2, 0 merges
-merged operations:
- insert 0, delete mark 0, delete 0
-discarded operations:
- insert 0, delete mark 0, delete 0
-Hash table size 276671, node heap has 0 buffer(s)
-Hash table size 276671, node heap has 0 buffer(s)
-...
-2.50 hash searches/s, 15.23 non-hash searches/s  ← Ratio important
-*/
-
--- Métriques clés :
--- hash searches/s : Accès via AHI (rapides)
--- non-hash searches/s : Accès via B-tree (lents)
--- Ratio : hash / (hash + non-hash) × 100 = % hits AHI
-
--- Exemple :
--- hash : 2.50/s
--- non-hash : 15.23/s
--- Total : 17.73/s
--- % AHI : 2.50 / 17.73 × 100 = 14% ← Faible, AHI peu utilisé
-
--- Idéal : >50% pour workload OLTP
-
--- Via INFORMATION_SCHEMA (MariaDB 10.5+)
-SELECT * FROM INFORMATION_SCHEMA.INNODB_METRICS
-WHERE NAME LIKE '%adaptive_hash%';
+-- Redimensionner le buffer pool à 8 Gio en ligne
+SET GLOBAL innodb_buffer_pool_size = 8589934592;
 ```
 
-### Exemple de monitoring automatisé
+Sur MariaDB 12.3, ce redimensionnement est **fin** (par incréments souples) et plafonné par `innodb_buffer_pool_size_max` fixé au démarrage ; l'ancien découpage en *chunks* (`innodb_buffer_pool_chunk_size`) est désormais **déprécié et sans effet**, comme l'explique le §15.2.1. Fait notable qui relie les deux thèmes de cette section, InnoDB **désactive temporairement l'AHI** pendant le redimensionnement, puis le reconstruit une fois l'opération terminée, en même temps qu'il redimensionne ses tables de hachage internes. Le redimensionnement en ligne permet d'adapter la mémoire allouée à une charge évolutive sans interruption de service.
 
-```sql
--- Vue de monitoring AHI
-CREATE OR REPLACE VIEW v_ahi_stats AS
-SELECT 
-    VARIABLE_NAME,
-    VARIABLE_VALUE
-FROM INFORMATION_SCHEMA.GLOBAL_STATUS
-WHERE VARIABLE_NAME LIKE 'Innodb_adaptive_hash%';
+### Le vidage des pages modifiées
 
--- Utiliser
-SELECT * FROM v_ahi_stats;
+Le buffer pool contient des pages « sales » (modifiées) qui doivent être périodiquement écrites sur disque. Le rythme de ce vidage est gouverné par un ensemble de paramètres traités ailleurs dans ce chapitre : `innodb_io_capacity` et `innodb_io_capacity_max` (§15.4.1), `innodb_flush_method` (§15.4.2), ainsi que le vidage adaptatif (`innodb_adaptive_flushing`), le seuil de pages modifiées (`innodb_max_dirty_pages_pct`) et le vidage des pages voisines (`innodb_flush_neighbors`). On retiendra ici simplement que ce vidage est l'opération qui relie le buffer pool au sous-système d'entrées/sorties, et que son réglage conditionne la régularité des écritures.
 
--- Procédure d'alerte
-DELIMITER //
-CREATE OR REPLACE PROCEDURE check_ahi_efficiency()
-BEGIN
-    DECLARE v_hash_searches BIGINT;
-    DECLARE v_nonhash_searches BIGINT;
-    DECLARE v_ahi_hit_rate DECIMAL(5,2);
-    
-    -- Récupérer métriques depuis SHOW ENGINE INNODB STATUS
-    -- (parsing nécessaire en réel)
-    -- Ici simplifié
-    
-    SET v_hash_searches = 250;  -- Exemple
-    SET v_nonhash_searches = 1523;
-    
-    SET v_ahi_hit_rate = 
-        v_hash_searches * 100.0 / 
-        NULLIF(v_hash_searches + v_nonhash_searches, 0);
-    
-    IF v_ahi_hit_rate < 30 THEN
-        SELECT CONCAT('WARNING: AHI hit rate faible : ', 
-                      v_ahi_hit_rate, '%',
-                      ' - Considérer désactivation AHI') as alert;
-    ELSEIF v_ahi_hit_rate > 70 THEN
-        SELECT CONCAT('OK: AHI très efficace : ', 
-                      v_ahi_hit_rate, '%') as status;
-    ELSE
-        SELECT CONCAT('OK: AHI hit rate acceptable : ', 
-                      v_ahi_hit_rate, '%') as status;
-    END IF;
-END //
-DELIMITER ;
-```
+### Surveiller le buffer pool
 
----
+L'indicateur fondamental est le **taux de succès** du buffer pool, que l'on calcule en rapprochant `Innodb_buffer_pool_read_requests` (lectures logiques) de `Innodb_buffer_pool_reads` (lectures ayant dû atteindre le disque). Un taux proche de 100 % signifie que la quasi-totalité des lectures sont servies depuis la mémoire. La section `BUFFER POOL AND MEMORY` de `SHOW ENGINE INNODB STATUS`, ainsi que la table `INFORMATION_SCHEMA.INNODB_BUFFER_POOL_STATS`, en fournissent l'état détaillé. Un taux de succès durablement faible indique que le buffer pool est sous-dimensionné par rapport au jeu de travail — un signal qui renvoie au dimensionnement du §15.2.1.
 
-## Buffer Pool Optimizations
+## Évolutions de la série 12.x
 
-### Architecture du Buffer Pool
+La série 12.x a poursuivi le travail d'amélioration de la concurrence et de la gestion mémoire d'InnoDB. Conjuguées à la réécriture du binlog intégré à InnoDB (§11.5.4), ces évolutions contribuent aux gains observés sur le chemin d'écriture de cette série. Pour le comportement spécifique d'une version donnée, on se reportera aux notes de version correspondantes.
 
-```
-┌────────────────────────────────────────────────────┐
-│  BUFFER POOL : STRUCTURE INTERNE                   │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  ┌──────────────────────────────────────────────┐  │
-│  │  BUFFER POOL                                 │  │
-│  │  (innodb_buffer_pool_size = 75% RAM)         │  │
-│  │                                              │  │
-│  │  ┌────────────────────────────────────────┐  │  │
-│  │  │  LRU LIST (Least Recently Used)        │  │  │
-│  │  │  ────────────────────────────          │  │  │
-│  │  │  • Young sublist (5/8 = 62.5%)         │  │  │
-│  │  │    Pages récemment accédées            │  │  │
-│  │  │                                        │  │  │
-│  │  │  • Old sublist (3/8 = 37.5%)           │  │  │
-│  │  │    Pages moins récentes                │  │  │
-│  │  │                                        │  │  │
-│  │  │  Midpoint : Insertion point            │  │  │
-│  │  └────────────────────────────────────────┘  │  │
-│  │                                              │  │
-│  │  ┌────────────────────────────────────────┐  │  │
-│  │  │  FREE LIST                             │  │  │
-│  │  │  Pages libres disponibles              │  │  │
-│  │  └────────────────────────────────────────┘  │  │
-│  │                                              │  │
-│  │  ┌────────────────────────────────────────┐  │  │
-│  │  │  FLUSH LIST                            │  │  │
-│  │  │  Pages dirty (modifiées, pas écrites)  │  │  │
-│  │  └────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────┘  │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
+## En conclusion
 
-### Multiple Buffer Pool Instances
-
-**Problème** : Un seul buffer pool = contention sur mutex global.
-
-**Solution** : Diviser en multiples instances indépendantes.
-
-```sql
--- Configuration instances multiples
--- Recommandation : 1 instance par 1 GB de buffer pool
-
--- Exemple : Buffer pool 64 GB
-[mariadb]
-innodb_buffer_pool_size = 64G
-innodb_buffer_pool_instances = 8  # 8 instances de 8 GB
-
--- Calcul optimal :
--- instances = buffer_pool_size_GB / 8
--- Minimum : 1 GB par instance
--- Maximum : 64 instances
-
--- Vérifier configuration
-SHOW VARIABLES LIKE 'innodb_buffer_pool_instances';
-
--- Trop d'instances = overhead
--- Trop peu = contention
--- Sweet spot : 8-16 instances pour serveurs modernes
-```
-
-**Impact sur performance** :
-- 1 instance : Baseline (contention élevée)
-- 8 instances : +15-25% throughput (OLTP)
-- 16 instances : +20-30% throughput (high concurrency)
-- 64 instances : Diminishing returns, overhead
-
-### LRU Algorithm et Midpoint Insertion
-
-```
-┌────────────────────────────────────────────────────┐
-│  LRU avec MIDPOINT INSERTION                       │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  Problème des full table scans :                   │
-│  ───────────────────────────────                   │
-│  SELECT COUNT(*) FROM huge_table;                  │
-│  • Scan de millions de pages                       │
-│  • Si insertion en tête LRU :                      │
-│    → Éviction de pages hot (fréquentes)            │
-│    → Performance dégradée                          │
-│                                                    │
-│  Solution : Midpoint Insertion                     │
-│  ─────────────────────────                         │
-│                                                    │
-│  ┌─────────────────────────────────────┐           │
-│  │  YOUNG SUBLIST (62.5%)              │           │
-│  │  Pages fréquemment accédées         │           │
-│  │  • Protégées des scans              │           │
-│  └─────────────────────────────────────┘           │
-│            ▲                                       │
-│            │ Promotion si accédée dans 1s          │
-│            │                                       │
-│  ┌─────────┴───────────────────────────┐           │
-│  │  MIDPOINT (insertion point)         │           │
-│  └─────────────────────────────────────┘           │
-│            │                                       │
-│            │ Nouvelle page insérée ici             │
-│            ▼                                       │
-│  ┌─────────────────────────────────────┐           │
-│  │  OLD SUBLIST (37.5%)                │           │
-│  │  Pages scan, récentes mais uniques  │           │
-│  │  • Évictées rapidement              │           │
-│  └─────────────────────────────────────┘           │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-**Configuration** :
-
-```sql
--- Position du midpoint (% depuis fin de LRU)
--- Défaut : 37 (37% depuis fin = 63% young)
-SHOW VARIABLES LIKE 'innodb_old_blocks_pct';
-
-[mariadb]
-innodb_old_blocks_pct = 37  # Défaut recommandé
-
--- Temps avant promotion de old → young
--- Défaut : 1000ms
-SHOW VARIABLES LIKE 'innodb_old_blocks_time';
-
-[mariadb]
-innodb_old_blocks_time = 1000  # 1 seconde
-
--- Workload avec beaucoup de scans :
-innodb_old_blocks_time = 2000  # 2 secondes
-# Pages scan restent dans old plus longtemps
-# Protège mieux young sublist
-```
-
-### Read-Ahead et Prefetching
-
-InnoDB peut précharger des pages **anticipativement** pour optimiser les scans séquentiels.
-
-```
-┌────────────────────────────────────────────────────┐
-│  READ-AHEAD MECHANISM                              │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  Linear Read-Ahead :                               │
-│  ──────────────────                                │
-│  Détecte scan séquentiel                           │
-│  → Précharge pages suivantes                       │
-│                                                    │
-│  Exemple :                                         │
-│  Application lit pages : 100, 101, 102, 103...     │
-│  InnoDB détecte pattern séquentiel                 │
-│  → Précharge 104-167 (64 pages) en background      │
-│                                                    │
-│  Random Read-Ahead :                               │
-│  ───────────────────                               │
-│  Détecte 13 pages consécutives dans extent         │
-│  → Précharge tout l'extent                         │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-**Configuration** :
-
-```sql
--- Linear read-ahead (recommandé)
-SHOW VARIABLES LIKE 'innodb_read_ahead_threshold';
--- Défaut : 56 pages sur 64 dans extent
--- 0 = Désactivé
--- 64 = Très agressif
-
-[mariadb]
-innodb_read_ahead_threshold = 56  # Défaut
-
--- Pour scans fréquents :
-innodb_read_ahead_threshold = 32  # Plus agressif
-
--- Random read-ahead (déprécié, OFF par défaut)
-SHOW VARIABLES LIKE 'innodb_random_read_ahead';
--- OFF recommandé (overhead > bénéfice)
-```
-
-### Flushing Optimization
-
-```sql
--- Adaptive flushing (activé par défaut)
-SHOW VARIABLES LIKE 'innodb_adaptive_flushing';
--- ON
-
--- Algorithme adaptatif pour dirty pages
--- Ajuste vitesse de flush selon :
--- • Redo log space utilisé
--- • Taux de modification
--- • I/O capacity
-
--- Low water mark (commence flush)
-SHOW VARIABLES LIKE 'innodb_adaptive_flushing_lwm';
--- Défaut : 10% redo log
-
-[mariadb]
-innodb_adaptive_flushing = ON
-innodb_adaptive_flushing_lwm = 10
-
--- Configuration avancée
-innodb_max_dirty_pages_pct = 90  # SSD/NVMe
-innodb_max_dirty_pages_pct_lwm = 50
-innodb_io_capacity = 2000  # IOPS disque
-innodb_io_capacity_max = 4000
-```
-
-### Buffer Pool Dump/Load
-
-Préserver le buffer pool chaud au redémarrage.
-
-```sql
--- Dump buffer pool au shutdown
-SHOW VARIABLES LIKE 'innodb_buffer_pool_dump_at_shutdown';
--- ON par défaut
-
--- Load buffer pool au startup
-SHOW VARIABLES LIKE 'innodb_buffer_pool_load_at_startup';
--- ON par défaut
-
--- Fichier dump
-SHOW VARIABLES LIKE 'innodb_buffer_pool_filename';
--- ib_buffer_pool
-
--- Dump manuel
-SET GLOBAL innodb_buffer_pool_dump_now = ON;
-
--- Load manuel
-SET GLOBAL innodb_buffer_pool_load_now = ON;
-
--- Vérifier progression
-SHOW STATUS LIKE 'Innodb_buffer_pool_dump_status';
-SHOW STATUS LIKE 'Innodb_buffer_pool_load_status';
-
--- Configuration
-[mariadb]
-innodb_buffer_pool_dump_at_shutdown = ON
-innodb_buffer_pool_load_at_startup = ON
-innodb_buffer_pool_dump_pct = 25  # Dumper 25% pages plus chaudes
-```
-
----
-
-## Monitoring avancé
-
-### Dashboard Buffer Pool
-
-```sql
--- Vue complète Buffer Pool
-CREATE OR REPLACE VIEW v_buffer_pool_stats AS
-SELECT 
-    'Size' as metric,
-    ROUND(@@innodb_buffer_pool_size / 1024 / 1024 / 1024, 2) as value_gb,
-    'Total size allocated' as description
-UNION ALL
-SELECT 
-    'Instances',
-    @@innodb_buffer_pool_instances,
-    'Number of BP instances'
-UNION ALL
-SELECT 
-    'Pages Total',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total'),
-    'Total pages in pool'
-UNION ALL
-SELECT 
-    'Pages Data',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_data'),
-    'Pages containing data'
-UNION ALL
-SELECT 
-    'Pages Dirty',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_dirty'),
-    'Modified pages not flushed'
-UNION ALL
-SELECT 
-    'Pages Free',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_free'),
-    'Free pages available'
-UNION ALL
-SELECT 
-    'Hit Rate %',
-    ROUND(
-        (1 - (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-              WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-             NULLIF((SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-              WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
-        ) * 100, 
-        2
-    ),
-    'Buffer pool hit rate (target >99%)'
-UNION ALL
-SELECT 
-    'Read-ahead',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_ahead'),
-    'Pages read by read-ahead'
-UNION ALL
-SELECT 
-    'Read-ahead evicted',
-    (SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_ahead_evicted'),
-    'Read-ahead pages evicted (waste)'
-;
-
--- Utiliser
-SELECT * FROM v_buffer_pool_stats;
-```
-
-### Analyse de contention
-
-```sql
--- Vérifier contention sur buffer pool (MariaDB 10.5+)
-SELECT 
-    NAME,
-    COUNT
-FROM INFORMATION_SCHEMA.INNODB_METRICS
-WHERE NAME LIKE '%buffer_pool%mutex%'
-   OR NAME LIKE '%buffer_pool%spin%';
-
--- Contention élevée si :
--- • Spin waits >> 0
--- • Rounds >> 0
-
--- Solution : Augmenter instances
-```
-
----
-
-## Nouveautés MariaDB 11.8
-
-### Optimizations AHI
-
-```
-MariaDB 11.8 apporte des améliorations à l'AHI :
-
-1. Réduction de la contention
-   • Algorithme de hashing optimisé
-   • Moins de collisions
-
-2. Éviction plus intelligente
-   • Meilleure prédiction des patterns
-   • Moins de reconstructions inutiles
-
-3. Monitoring amélioré
-   • Nouvelles métriques INFORMATION_SCHEMA
-   • Visibilité par partition
-
-Impact : +5-10% sur workloads OLTP high-concurrency
-```
-
-### Buffer Pool enhancements
-
-```
-1. Flushing plus efficace
-   • Algorithme adaptatif amélioré pour SSD
-   • Moins de stalls sur writes intensifs
-
-2. Prefetch optimisé
-   • Détection patterns améliorée
-   • Moins de waste (evicted pages)
-
-3. LRU tuning
-   • Éviction plus intelligente
-   • Meilleure protection pages hot
-```
-
----
-
-## Best Practices production
-
-### Checklist configuration optimale
-
-```sql
--- Buffer Pool
-innodb_buffer_pool_size = <75% RAM>
-innodb_buffer_pool_instances = <RAM_GB / 8>
-innodb_buffer_pool_dump_at_shutdown = ON
-innodb_buffer_pool_load_at_startup = ON
-innodb_buffer_pool_dump_pct = 25
-
--- LRU
-innodb_old_blocks_pct = 37
-innodb_old_blocks_time = 1000  # Ou 2000 si beaucoup de scans
-
--- Read-Ahead
-innodb_read_ahead_threshold = 56  # Ou 32 si scans fréquents
-innodb_random_read_ahead = OFF
-
--- Flushing
-innodb_adaptive_flushing = ON
-innodb_adaptive_flushing_lwm = 10
-innodb_max_dirty_pages_pct = 90
-innodb_max_dirty_pages_pct_lwm = 50
-
--- AHI
-innodb_adaptive_hash_index = ON  # Ou OFF si write-heavy
-innodb_adaptive_hash_index_parts = 8  # 16-32 pour >32 cores
-```
-
-### Décision AHI ON/OFF
-
-```
-✅ ACTIVER AHI si :
-• Workload OLTP read-heavy (>70% reads)
-• Point selects répétitifs
-• Dataset tient en mémoire
-• <32 cores (peu de contention)
-
-❌ DÉSACTIVER AHI si :
-• Workload write-heavy (>50% writes)
-• Full table scans fréquents
-• Haute contention observée
-• AHI hit rate <30%
-
-Test : Mesurer avant/après avec sysbench
-```
-
----
-
-## ✅ Points clés à retenir
-
-- 🔍 **AHI = hash index automatique** : O(1) vs O(log n) pour patterns répétitifs
-- 📊 **Gain AHI** : +20-40% sur OLTP read-heavy, 0% sur scans, négatif si write-heavy
-- 🔧 **Partitionnement AHI** : 8-64 partitions selon cores pour réduire contention
-- 💾 **Buffer Pool instances** : 1 instance par 8 GB, optimal 8-16 instances
-- 📈 **LRU midpoint** : Protège pages hot des full scans (37% old sublist)
-- ⚡ **Read-ahead** : Prefetch 64 pages pour scans séquentiels
-- 💿 **BP dump/load** : Préserve warmup au redémarrage (ON par défaut)
-- 📊 **Monitoring** : Hit rate >99% cible, AHI hit rate >50% si activé
-- 🆕 **MariaDB 11.8** : AHI et flushing optimisés pour SSD
-- ⚙️ **Décision AHI** : Tester avant/après, mesurer gain réel
-
----
-
-## 🔗 Ressources et références
-
-### Documentation MariaDB
-
-- [📖 InnoDB Buffer Pool](https://mariadb.com/kb/en/innodb-buffer-pool/)
-- [📖 Adaptive Hash Index](https://mariadb.com/kb/en/innodb-adaptive-hash-index/)
-- [📖 InnoDB Performance](https://mariadb.com/kb/en/innodb-performance/)
-
-### Blogs techniques
-
-- [Percona - AHI Analysis](https://www.percona.com/blog/)
-- [MariaDB Foundation Blog](https://mariadb.org/blog/)
-
----
-
-*L'AHI et le Buffer Pool sont le cœur de la performance InnoDB. Leur optimisation peut transformer un système correct en système haute performance, mais nécessite compréhension profonde et monitoring rigoureux.*
+L'Adaptive Hash Index et les mécanismes internes du buffer pool sont en grande partie automatiques, mais ils ne dispensent pas le DBA de trois décisions : dimensionner correctement le buffer pool (§15.2.1), déterminer **par la mesure** si l'AHI apporte un gain sur sa charge — sachant qu'il est désormais désactivé par défaut —, et tirer parti du réchauffement et du redimensionnement en ligne pour limiter l'impact des redémarrages et des variations de charge. La section suivante (§15.14) se tourne vers l'optimiseur lui-même, et notamment l'amélioration de son modèle de coût pour tenir compte des disques SSD.
 
 ⏭️ [Cost-based optimizer amélioré (prise en compte SSD)](/15-performance-tuning/14-cost-based-optimizer-ssd.md)

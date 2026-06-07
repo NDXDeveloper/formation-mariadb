@@ -1,858 +1,104 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 15.14 Cost-based optimizer amélioré (prise en compte SSD)
+# 15.14 L'optimiseur basé sur les coûts amélioré (prise en compte SSD)
 
-> **Niveau** : Expert  
-> **Durée estimée** : 3-4 heures  
-> **Prérequis** : 
-> - Sections 15.1-15.13 (Performance, Optimisation, AHI, Buffer Pool)
-> - Compréhension des plans d'exécution (EXPLAIN)
-> - Connaissance de l'architecture I/O (HDD vs SSD vs NVMe)
-> - Expérience en analyse de requêtes
+L'optimiseur de requêtes de MariaDB choisit le plan d'exécution en estimant le **coût** de chaque alternative possible. La qualité d'un plan dépend donc directement de la justesse de ces estimations. En MariaDB 11.0, ce modèle de coût a été profondément réécrit : passage d'un modèle en partie fondé sur des règles à un modèle **purement basé sur les coûts**, recalibré pour le matériel moderne — au premier rang duquel les disques SSD. C'est ce modèle qui est en vigueur en 12.3.
 
----
+Cette section explique la refonte, ses hypothèses relatives au SSD, les variables de coût ajustables et la façon de les inspecter — tout en insistant sur un point : les valeurs par défaut sont bonnes, et leur ajustement relève d'une démarche d'expert, en dernier recours.
 
-## 🎯 Objectifs d'apprentissage
+## Le rôle de l'optimiseur basé sur les coûts
 
-À l'issue de cette section, vous serez capable de :
+Pour une même requête, plusieurs plans d'exécution sont généralement envisageables : quel index utiliser, dans quel ordre joindre les tables, faut-il un balayage de table ou une recherche par index, recourir à une fusion d'index, etc. L'optimiseur attribue un coût estimé à chacun de ces plans et retient le moins coûteux. Si l'estimation est juste, le plan choisi est efficace ; si elle est faussée, l'optimiseur peut retenir un plan sous-optimal.
 
-- **Comprendre le cost-based optimizer** et son fonctionnement
-- **Identifier les différences** HDD vs SSD en termes de coûts
-- **Exploiter les nouveautés MariaDB 11.8** pour SSD
-- **Configurer l'optimizer** pour votre stockage
-- **Analyser les plans d'exécution** optimaux
-- **Diagnostiquer les mauvais choix** de l'optimizer
-- **Forcer des plans** quand nécessaire (hints)
-- **Monitorer l'impact** des optimisations
-- **Valider les gains** en production
-- **Migrer** depuis anciennes versions
+C'est précisément pour corriger des estimations imparfaites que le modèle a été refondu. Ce mécanisme s'articule avec l'analyse des plans d'exécution (`EXPLAIN`, §5.7) et l'optimisation des requêtes (§5.8) ; lorsqu'il se trompe malgré tout, les Optimizer Hints (§15.15) permettent de forcer un choix précis.
 
----
+## La refonte du modèle de coût en MariaDB 11.0
 
-## Introduction
+Avant la version 11.0, l'optimiseur reposait sur un « coût de base » de 1 pour un accès disque, la lecture d'une clé, la lecture d'une ligne à partir d'un rowid, et quelques autres petits coûts. Ces valeurs étaient raisonnables pour choisir le bon index, mais bien moins adaptées pour estimer le coût d'un balayage de table, d'un parcours d'index ou d'une recherche par intervalle. Ces coûts, quelque peu arbitraires, supposaient en outre des caractéristiques héritées de l'ère des disques durs, et la communauté avait rapporté de nombreux cas de plans inadaptés.
 
-Le **Cost-Based Optimizer (CBO)** est le cerveau de MariaDB qui décide **comment exécuter** chaque requête. Jusqu'à MariaDB 11.7, le CBO était calibré pour des disques HDD traditionnels, ce qui donnait des plans **sous-optimaux** sur SSD/NVMe.
+MariaDB 11.0 a opéré le passage d'un modèle fondé sur des règles à un modèle **purement basé sur les coûts**, en recalibrant ces derniers pour qu'ils reflètent un **temps réel**. La référence retenue est qu'une opération du moteur de stockage correspond à l'ordre de grandeur d'une milliseconde, de sorte que le coût total estimé d'une requête approche le temps effectivement passé dans le moteur de stockage, le cache de jointure et les tris. Pour rester lisibles, les coûts élémentaires sont exprimés en **microsecondes**. L'ensemble des coûts du moteur a par ailleurs été décomposé en composantes fines — recherche de clé, recherche de ligne, copie de clé ou de ligne, comparaisons, copie de bloc d'index, initialisation de balayage — afin d'en améliorer la précision. C'est ce modèle qui est resté en place de la 11.0 jusqu'à la 12.3.
 
-### Le problème historique
+## La prise en compte du SSD
 
-```
-┌────────────────────────────────────────────────────┐
-│  COST MODEL TRADITIONNEL (≤ 11.7)                  │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  Hypothèses du modèle de coûts :                   │
-│  ───────────────────────────────                   │
-│  • Sequential read : Peu coûteux                   │
-│  • Random read : TRÈS coûteux (100x seq)           │
-│  • Disk I/O : Goulot d'étranglement principal      │
-│                                                    │
-│  Ces hypothèses sont VRAIES pour HDD :             │
-│  ──────────────────────────────────────            │
-│  Sequential read : 150 MB/s                        │
-│  Random read 4K : 0.8 MB/s (100 IOPS × 8 KB)       │
-│  Latence seek : 8-12 ms                            │
-│  → Random = 187x plus lent que sequential          │
-│                                                    │
-│  Mais FAUSSES pour SSD :                           │
-│  ────────────────────────                          │
-│  Sequential read : 3500 MB/s (NVMe Gen3)           │
-│  Random read 4K : 2800 MB/s (700k IOPS × 4 KB)     │
-│  Latence : 0.1 ms                                  │
-│  → Random = Seulement 1.25x plus lent!             │
-│                                                    │
-│  CONSÉQUENCE :                                     │
-│  ─────────────                                     │
-│  L'optimizer évite à tort les random reads sur SSD │
-│  → Choisit full table scans inutiles               │
-│  → Plans sous-optimaux                             │
-│  → Performance dégradée                            │
-│                                                    │
-└────────────────────────────────────────────────────┘
+Le point qui donne son titre à cette section est le suivant : par défaut, les coûts d'accès disque supposent désormais un **SSD moderne** — un SSD de milieu de gamme délivrant de l'ordre de 400 Mo/s — et non plus un disque dur à plateaux. Le coût par défaut de lecture d'un bloc, `optimizer_disk_read_cost`, vaut ainsi environ **10,24 microsecondes**.
+
+La conséquence pratique est importante : l'optimiseur valorise correctement les accès aléatoires comme étant peu coûteux, puisqu'un SSD ne souffre pas de la pénalité de positionnement (seek) d'un disque mécanique. Cela modifie certains choix de plan — l'optimiseur est par exemple plus enclin à recourir à des recherches par index et à des accès aléatoires là où un modèle hérité du disque dur aurait privilégié un balayage séquentiel. Pour le cas, devenu plus rare, d'un stockage sur disque dur, l'utilisateur peut au contraire relever ce coût (le moteur Archive sur disque dur, par exemple, où un positionnement prend 8 à 10 ms).
+
+## Les variables de coût ajustables
+
+L'ensemble des coûts est exposé sous forme de variables préfixées `optimizer_`, exprimées en microsecondes. Les deux plus structurantes sont les suivantes.
+
+`optimizer_disk_read_cost` (environ 10,24 par défaut) est le coût de lecture d'un bloc depuis le disque, calibré pour un SSD.
+
+`optimizer_disk_read_ratio` (environ 0,02 par défaut) modélise la part des lectures qui atteignent réellement le disque par opposition à celles servies par le cache : une valeur de 0,02 traduit un taux de succès du cache d'environ 98 %. C'est ainsi que le modèle relie le coût à la **réalité du cache** — un ratio faible reflète un cache chaud, un ratio plus élevé un accès davantage tributaire du disque. Pour un buffer pool InnoDB dont le taux de succès n'est que de 80 %, on porterait par exemple ce ratio à 0,20. Cette variable fait ainsi directement écho au taux de succès du buffer pool évoqué au §15.13.
+
+À ces deux variables s'ajoutent les composantes fines déjà mentionnées (coûts de recherche et de copie de clé et de ligne, comparaisons, initialisation de balayage, coût d'évaluation de la clause `WHERE`, etc.). Toutes peuvent être définies via le fichier de configuration, un paramètre de ligne de commande, ou en SQL au moyen de `SET GLOBAL` ou `SET SESSION`.
+
+## Des coûts définis par moteur de stockage
+
+Une particularité notable du modèle est que les coûts peuvent être définis **par moteur de stockage**, car les moteurs présentent des caractéristiques différentes : InnoDB possède un index clusterisé, MyISAM et Aria n'en ont pas, Archive peut résider sur disque dur, et ainsi de suite. Les coûts par défaut de l'« engine » nommé `default` conviennent aux moteurs sans index clusterisé, tandis qu'InnoDB dispose de ses propres coûts — ses coûts de recherche de clé et de ligne sont plus élevés, reflet de la traversée vers la clé primaire qu'impose son index clusterisé.
+
+Les coûts spécifiques à un moteur sont de portée **globale** (et non de session, contrairement aux autres coûts qui peuvent l'être). Pour des raisons de performance, ils sont stockés dans le cache de définition des tables (`TABLE_SHARE`) ; en conséquence, modifier le coût d'un moteur ne s'applique qu'aux tables nouvellement mises en cache, et il faut recourir à `FLUSH TABLES` pour forcer la prise en compte immédiate. La configuration suivante illustre une cohabitation SSD/disque dur :
+
+```ini
+[mariadbd]
+# Archive sur disque dur (temps de positionnement ~8 à 10 ms)
+archive.optimizer_disk_read_cost = 8000
+# Les autres moteurs sur SSD : valeur par défaut
+optimizer_disk_read_cost = 10.24
 ```
 
-### Exemple concret du problème
+L'intégralité des coûts par moteur est consultable dans la table `information_schema.optimizer_costs`.
+
+## Inspecter et ajuster, avec prudence
+
+L'inspection des coûts en vigueur se fait directement par requête :
 
 ```sql
--- Table : orders (100M lignes, 50 GB)
--- Index : idx_customer_id
-
--- Requête : 
-SELECT * FROM orders WHERE customer_id = 12345;
-
--- ═══════════════════════════════════════════════════
--- MariaDB ≤ 11.7 (HDD cost model)
--- ═══════════════════════════════════════════════════
-
-EXPLAIN SELECT * FROM orders WHERE customer_id = 12345\G
-
-/*
-+------+-------+---------+---------+------+--------------+
-| type | rows  | key     | Extra   | Cost |              |
-+------+-------+---------+---------+------+--------------+
-| ALL  | 100M  | NULL    | Using   | 850  | ← FULL SCAN! |
-|      |       |         | where   |      |              |
-+------+-------+---------+---------+------+--------------+
-
-Raisonnement de l'optimizer :
-• Index lookup : 1000 random reads (customer a ~1000 orders)
-  Cost = 1000 × 10 = 10,000 (random I/O très cher sur HDD)
-  
-• Full scan : 50 GB / 16 KB = 3.2M sequential reads
-  Cost = 3.2M × 0.25 = 800 (sequential pas cher sur HDD)
-  
-→ Full scan choisi (800 < 10,000)
-→ Mais sur SSD, random reads sont rapides!
-*/
-
--- ═══════════════════════════════════════════════════
--- MariaDB 11.8 (SSD cost model)
--- ═══════════════════════════════════════════════════
-
-EXPLAIN SELECT * FROM orders WHERE customer_id = 12345\G
-
-/*
-+------+-------+-----------------+---------+------+
-| type | rows  | key             | Extra   | Cost |
-+------+-------+-----------------+---------+------+
-| ref  | 1000  | idx_customer_id | NULL    | 12   | ← INDEX!
-+------+-------+-----------------+---------+------+
-
-Raisonnement de l'optimizer :
-• Index lookup : 1000 random reads
-  Cost = 1000 × 0.01 = 10 (random rapide sur SSD)
-  
-• Full scan : 3.2M sequential reads
-  Cost = 3.2M × 0.003 = 9,600 (toujours du I/O)
-  
-→ Index choisi (10 < 9,600) ✅
-→ CORRECT pour SSD!
-
-Performance réelle :
-• Full scan : 15 secondes
-• Index : 50 ms
-→ 300x plus rapide!
-*/
+SELECT * FROM information_schema.optimizer_costs  
+WHERE engine = 'default'\G  
 ```
 
----
-
-## Architecture du Cost-Based Optimizer
-
-### Modèle de coûts
-
-Le CBO calcule un **coût estimé** pour chaque plan d'exécution possible et choisit le moins cher.
+dont la sortie liste **toutes** les composantes de coût propres au moteur, avec leurs valeurs par défaut :
 
 ```
-┌────────────────────────────────────────────────────┐
-│  COMPOSANTS DU COÛT TOTAL                          │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  Coût Total = Σ (CPU Cost + I/O Cost)              │
-│                                                    │
-│  1. CPU COST                                       │
-│     ────────                                       │
-│     • Row evaluation cost                          │
-│       Vérifier conditions WHERE                    │
-│       Cost = nb_rows × row_evaluate_cost           │
-│                                                    │
-│     • Key comparison cost                          │
-│       Comparer clés dans index                     │
-│       Cost = nb_comparisons × key_compare_cost     │
-│                                                    │
-│     • Memory operation cost                        │
-│       Tri, agrégation, jointure en mémoire         │
-│       Cost = operations × memory_op_cost           │
-│                                                    │
-│  2. I/O COST                                       │
-│     ────────                                       │
-│     • Disk sequential read                         │
-│       Scan séquentiel de pages                     │
-│       Cost = nb_pages × io_block_read_cost         │
-│                                                    │
-│     • Disk random read ⭐ (DIFFÉRENT HDD vs SSD)   │
-│       Accès index, lookup                          │
-│       Cost = nb_reads × disk_read_cost             │
-│                                                    │
-│     • Disk write (flushes)                         │
-│       Écriture pages dirty                         │
-│       Cost = nb_writes × disk_write_cost           │
-│                                                    │
-│  3. NETWORK COST                                   │
-│     ────────────                                   │
-│     • Data transfer                                │
-│       Envoyer résultats au client                  │
-│       Cost = bytes × network_transfer_cost         │
-│                                                    │
-└────────────────────────────────────────────────────┘
+*************************** 1. row ***************************
+                         ENGINE: default
+       OPTIMIZER_DISK_READ_COST: 10.240000
+OPTIMIZER_INDEX_BLOCK_COPY_COST: 0.035600
+     OPTIMIZER_KEY_COMPARE_COST: 0.011361
+        OPTIMIZER_KEY_COPY_COST: 0.015685
+      OPTIMIZER_KEY_LOOKUP_COST: 0.435777
+   OPTIMIZER_KEY_NEXT_FIND_COST: 0.082347
+      OPTIMIZER_DISK_READ_RATIO: 0.020000
+        OPTIMIZER_ROW_COPY_COST: 0.060866
+      OPTIMIZER_ROW_LOOKUP_COST: 0.130839
+   OPTIMIZER_ROW_NEXT_FIND_COST: 0.045916
+   OPTIMIZER_ROWID_COMPARE_COST: 0.002653
+      OPTIMIZER_ROWID_COPY_COST: 0.002653
 ```
 
-### Variables de coût (≤ 11.7 vs 11.8)
+Quelques coûts du modèle demeurent **globaux** plutôt que définis par moteur — en particulier l'initialisation de balayage (`optimizer_scan_setup_cost`, 10 par défaut) et l'évaluation de la clause `WHERE` (`optimizer_where_cost`) : ils n'apparaissent donc pas dans cette table par moteur, et se consultent via `SHOW VARIABLES LIKE 'optimizer_%cost%'`.
+
+L'ajustement, lui, appelle la plus grande prudence. La visibilité de ces coûts **n'est pas destinée à un réglage courant** par les utilisateurs : il s'agit avant tout d'un outil permettant aux équipes de support et d'ingénierie de corriger un problème de plan sans avoir à reconstruire un binaire. Les valeurs par défaut sont conçues pour être adaptées dans la grande majorité des cas. On ne modifiera ces coûts qu'avec une raison claire et mesurée — un stockage sur disque dur, un coût manifestement mal estimé — et l'on validera toute modification par un benchmark (§15.12) et par l'Optimizer Trace.
+
+Un dernier avertissement : modifier ces variables globalement affecte **toutes** les requêtes, ce qui est risqué. Pour une expérimentation, on préférera la portée `SESSION` ; et pour corriger une seule requête, on recourra plutôt aux Optimizer Hints (§15.15) qu'à un réglage global du modèle de coût.
 
 ```sql
--- Voir toutes les variables de coût
-SELECT * FROM mysql.server_cost;
-SELECT * FROM mysql.engine_cost;
-
--- ══════════════════════════════════════════════════
--- VALEURS TYPIQUES MariaDB ≤ 11.7 (HDD model)
--- ══════════════════════════════════════════════════
-
-/*
-+---------------------------------+-------------+
-| cost_name                       | cost_value  |
-+---------------------------------+-------------+
-| disk_temptable_create_cost      | 20.0        |
-| disk_temptable_row_cost         | 0.5         |
-| key_compare_cost                | 0.05        |
-| memory_temptable_create_cost    | 1.0         |
-| memory_temptable_row_cost       | 0.1         |
-| row_evaluate_cost               | 0.1         |
-+---------------------------------+-------------+
-
-Engine costs (InnoDB) :
-+---------------------------------+-------------+
-| io_block_read_cost              | 1.0         | Sequential
-| memory_block_read_cost          | 0.25        | Buffer pool
-+---------------------------------+-------------+
-
-PROBLÈME : disk_read_cost assume HDD
-→ Random reads pénalisés excessivement
-*/
-
--- ══════════════════════════════════════════════════
--- NOUVELLES VALEURS MariaDB 11.8 (SSD-aware)
--- ══════════════════════════════════════════════════
-
-/*
-DÉTECTION AUTOMATIQUE du type de stockage :
-• Si SSD/NVMe détecté :
-  io_block_read_cost = 0.25 (au lieu de 1.0)
-  
-• Random read ratio ajusté :
-  random_read_ratio = 1.5 (au lieu de 10)
-  
-→ Plans optimaux pour SSD automatiquement!
-*/
+-- Informer l'optimiseur d'un taux de succès de 80 % du buffer pool InnoDB
+SET GLOBAL innodb.optimizer_disk_read_ratio = 0.20;
 ```
 
----
+## Autres améliorations de l'optimiseur en 11.x
 
-## Nouveautés MariaDB 11.8
+La refonte du modèle de coût s'est accompagnée d'améliorations connexes : la prise en compte du coût de tous les appels de lecture de bas niveau des moteurs, un meilleur choix de l'index de parcours dans le cadre des optimisations `GROUP BY`/`ORDER BY`, la création d'une clé distincte sur les tables dérivées et les unions (apportant une élimination automatique des doublons), et un Optimizer Trace nettement plus détaillé. Dans le même esprit de modernisation pour le matériel actuel, le **change buffering d'InnoDB a été retiré** en 11.0 : déjà désactivé par défaut auparavant, il représentait sur les disques modernes davantage une surcharge qu'un gain.
 
-### 1. Détection automatique du stockage
+## Impact sur la migration
 
-```sql
--- MariaDB 11.8 détecte automatiquement le type de stockage
+Comme ce modèle a changé en 11.0, une mise à niveau depuis une version antérieure (par exemple une 10.6 ou une 10.11) vers la série 11.x ou 12.x fait basculer l'optimiseur vers le nouveau modèle. Les plans d'exécution peuvent alors changer, et quelques requêtes pourraient même régresser — c'est d'ailleurs pour signaler ce risque que MariaDB avait incrémenté le numéro de version majeure. Après une telle mise à niveau, il convient de tester les requêtes critiques et de surveiller les changements de plan ; le nouveau modèle constitue généralement une amélioration, mais cela se vérifie (§19.4). En revanche, une migration entre la 11.8 et la 12.3 n'introduit pas ce changement, puisque les deux versions emploient déjà le nouveau modèle : cette précaution concerne donc les montées depuis les lignes LTS plus anciennes.
 
-SHOW VARIABLES LIKE 'innodb_storage_class';
--- Valeurs possibles :
--- 'hdd'    : Disques rotatifs traditionnels
--- 'ssd'    : SSD SATA
--- 'nvme'   : NVMe PCIe
+## En conclusion
 
--- Détection automatique basée sur :
--- • Latence I/O observée
--- • IOPS mesurés
--- • Caractéristiques système (/sys/block/...)
+Le nouveau modèle de coût, purement basé sur les coûts et calibré pour le SSD depuis la 11.0, conduit l'optimiseur à de meilleurs choix de plan sur le matériel moderne, sans intervention. Ses coûts fins, définissables par moteur et inspectables, sont puissants mais relèvent de l'expertise. Pour piloter le plan d'une requête au quotidien, on préférera les Optimizer Hints — fonctionnalité majeure de la série 12.x que présente la section suivante (§15.15).
 
--- Forcer manuellement si détection incorrecte
-SET GLOBAL innodb_storage_class = 'nvme';
-
--- Configuration permanente
-[mariadb]
-innodb_storage_class = nvme
-```
-
-### 2. Coûts adaptatifs par type de stockage
-
-```
-┌────────────────────────────────────────────────────┐
-│  COÛTS PAR TYPE DE STOCKAGE (MariaDB 11.8)         │
-├────────────────────────────────────────────────────┤
-│                                                    │
-│  HDD (Rotational) :                                │
-│  ──────────────────                                │
-│  • io_block_read_cost       = 1.0                  │
-│  • random_read_multiplier   = 10.0                 │
-│  • sequential_read_cost     = 0.25                 │
-│  → Favorise scans séquentiels                      │
-│                                                    │
-│  SSD SATA :                                        │
-│  ──────────                                        │
-│  • io_block_read_cost       = 0.35                 │
-│  • random_read_multiplier   = 2.0                  │
-│  • sequential_read_cost     = 0.1                  │
-│  → Équilibre entre index et scans                  │
-│                                                    │
-│  NVMe PCIe :                                       │
-│  ───────────                                       │
-│  • io_block_read_cost       = 0.15 ⭐              │
-│  • random_read_multiplier   = 1.2 ⭐               │
-│  • sequential_read_cost     = 0.08                 │
-│  → Favorise index lookups                          │
-│                                                    │
-└────────────────────────────────────────────────────┘
-```
-
-### 3. Statistiques I/O enrichies
-
-```sql
--- MariaDB 11.8 collecte des statistiques I/O détaillées
-
-SELECT * FROM INFORMATION_SCHEMA.INNODB_TABLESTATS_SYS
-WHERE NAME = 'mydb/orders';
-
-/*
-Nouvelles colonnes :
-• IO_READ_LATENCY_AVG_MS    : Latence moyenne lecture
-• IO_WRITE_LATENCY_AVG_MS   : Latence moyenne écriture
-• RANDOM_READ_RATIO         : % random vs sequential
-• SSD_OPTIMIZED             : Optimizer ajusté pour SSD
-
-L'optimizer utilise ces stats pour affiner les coûts
-*/
-
--- Forcer recollecte des stats I/O
-ANALYZE TABLE orders UPDATE HISTOGRAM ON customer_id;
-```
-
-### 4. Histogrammes améliorés
-
-```sql
--- MariaDB 11.8 : Histogrammes plus précis pour optimizer
-
--- Créer histogramme (256 buckets)
-ANALYZE TABLE orders 
-UPDATE HISTOGRAM ON customer_id WITH 256 BUCKETS;
-
--- Voir histogramme
-SELECT * FROM mysql.column_stats 
-WHERE table_name = 'orders' AND column_name = 'customer_id';
-
--- L'optimizer utilise l'histogramme pour :
--- • Estimer cardinalité précise
--- • Détecter skew dans les données
--- • Choisir meilleur plan
-
--- Exemple impact :
--- Sans histogramme : Estimate 100k rows (mauvais)
--- Avec histogramme : Estimate 1k rows (précis)
--- → Plan optimal choisi
-```
-
----
-
-## Configuration optimale par type de stockage
-
-### Configuration HDD
-
-```sql
--- my.cnf pour serveur HDD
-
-[mariadb]
-# Forcer HDD model
-innodb_storage_class = hdd
-
-# Favoriser séquentiel
-innodb_read_ahead_threshold = 32  # Agressif
-innodb_random_read_ahead = OFF
-
-# Buffer pool crucial
-innodb_buffer_pool_size = <Maximum possible>
-innodb_buffer_pool_instances = 8
-
-# I/O capacity conservateur
-innodb_io_capacity = 200
-innodb_io_capacity_max = 400
-
-# AHI très utile (compense lenteur I/O)
-innodb_adaptive_hash_index = ON
-innodb_adaptive_hash_index_parts = 8
-```
-
-### Configuration SSD SATA
-
-```sql
--- my.cnf pour serveur SSD SATA
-
-[mariadb]
-# Forcer SSD model
-innodb_storage_class = ssd
-
-# Read-ahead modéré
-innodb_read_ahead_threshold = 56  # Défaut
-innodb_random_read_ahead = OFF
-
-# Buffer pool important mais pas critique
-innodb_buffer_pool_size = <50-75% RAM>
-innodb_buffer_pool_instances = 8
-
-# I/O capacity adapté
-innodb_io_capacity = 2000
-innodb_io_capacity_max = 4000
-
-# AHI utile mais moins critique
-innodb_adaptive_hash_index = ON
-innodb_adaptive_hash_index_parts = 8
-
-# Flush plus agressif (SSD supporte)
-innodb_max_dirty_pages_pct = 90
-innodb_adaptive_flushing = ON
-```
-
-### Configuration NVMe PCIe ⭐
-
-```sql
--- my.cnf pour serveur NVMe (optimal MariaDB 11.8)
-
-[mariadb]
-# Forcer NVMe model
-innodb_storage_class = nvme
-
-# Read-ahead minimal (random très rapide)
-innodb_read_ahead_threshold = 64  # Conservateur
-innodb_random_read_ahead = OFF
-
-# Buffer pool moins critique (I/O très rapide)
-innodb_buffer_pool_size = <30-50% RAM>
-innodb_buffer_pool_instances = 16
-
-# I/O capacity élevé
-innodb_io_capacity = 5000
-innodb_io_capacity_max = 10000
-
-# AHI peut être désactivé si write-heavy
-innodb_adaptive_hash_index = ON  # Tester ON vs OFF
-innodb_adaptive_hash_index_parts = 16
-
-# Flush très agressif
-innodb_max_dirty_pages_pct = 95
-innodb_adaptive_flushing = ON
-innodb_flush_neighbors = 0  # Pas de flush voisins sur NVMe
-
-# Checkpoints plus fréquents (I/O rapide)
-innodb_log_write_ahead_size = 16384
-
-# Nouveautés 11.8 : Optimizer hints
-optimizer_switch = 'prefer_ordering_index=on,index_merge_sort_union=on'
-```
-
----
-
-## Analyse des plans d'exécution
-
-### EXPLAIN FORMAT=JSON avec coûts
-
-```sql
--- Activer affichage des coûts
-SET optimizer_trace = 'enabled=on';
-
--- Requête exemple
-EXPLAIN FORMAT=JSON
-SELECT o.*, c.name
-FROM orders o
-JOIN customers c ON c.id = o.customer_id
-WHERE o.order_date >= '2024-01-01'
-AND o.amount > 1000;
-
--- Résultat JSON avec détails de coûts
-/*
-{
-  "query_block": {
-    "select_id": 1,
-    "cost": 12450.35,  ← Coût total estimé
-    "rows": 15420,
-    "filtered": 100,
-    "table": {
-      "table_name": "o",
-      "access_type": "range",
-      "possible_keys": ["idx_order_date", "idx_amount"],
-      "key": "idx_order_date",
-      "used_key_parts": ["order_date"],
-      "rows": 50000,
-      "filtered": 30.84,
-      "index_condition": "o.order_date >= '2024-01-01'",
-      "cost": {
-        "read_cost": 8234.50,     ← I/O cost
-        "eval_cost": 1500.25,     ← CPU evaluation cost
-        "prefix_cost": 9734.75,   ← Cumulative cost
-        "data_read_per_join": "1.5M"
-      }
-    },
-    "table": {
-      "table_name": "c",
-      "access_type": "eq_ref",
-      "possible_keys": ["PRIMARY"],
-      "key": "PRIMARY",
-      "rows": 1,
-      "cost": {
-        "read_cost": 2315.60,
-        "eval_cost": 400.00,
-        "prefix_cost": 12450.35
-      }
-    }
-  }
-}
-*/
-
--- Analyser optimizer trace
-SELECT * FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE\G
-```
-
-### Comparer plans HDD vs SSD
-
-```sql
--- Simuler coûts HDD vs SSD pour même requête
-
--- Mode HDD
-SET SESSION optimizer_switch='cost_model=hdd';
-EXPLAIN FORMAT=JSON SELECT ...;
--- Note le coût : 25,430
-
--- Mode SSD (11.8+)
-SET SESSION optimizer_switch='cost_model=ssd';
-EXPLAIN FORMAT=JSON SELECT ...;
--- Note le coût : 12,450
-
--- Différence : Plan SSD 2x moins cher!
--- Optimizer choisit index au lieu de full scan
-```
-
----
-
-## Cas d'usage : Migration HDD → SSD
-
-### Scénario réel
-
-```
-Contexte :
-• Application e-commerce
-• Base 500 GB
-• 10M requêtes/jour
-• MariaDB 11.7 sur HDD
-
-Migration :
-• Passage SSD NVMe
-• Upgrade MariaDB 11.8
-• Reconfiguration optimizer
-
-Problème attendu :
-• Plans d'exécution sous-optimaux hérités
-```
-
-### Étape 1 : Baseline avant migration
-
-```sql
--- Capturer plans actuels
-CREATE TABLE query_plans_before AS
-SELECT 
-    DIGEST_TEXT,
-    COUNT_STAR as exec_count,
-    AVG_TIMER_WAIT/1000000000000 as avg_sec,
-    SUM_ROWS_EXAMINED as total_rows_examined
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME = 'ecommerce'
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT 100;
-
--- Exporter pour comparaison
-SELECT * INTO OUTFILE '/tmp/plans_before.csv'
-FROM query_plans_before;
-```
-
-### Étape 2 : Migration et upgrade
-
-```bash
-# 1. Backup
-mysqldump --all-databases > backup.sql
-
-# 2. Migration HDD → SSD
-# (Physique : déplacer fichiers)
-rsync -av /var/lib/mysql/ /mnt/nvme/mysql/
-
-# 3. Upgrade MariaDB 11.7 → 11.8
-apt-get install mariadb-server-11.8
-
-# 4. Redémarrer avec nouvelle config
-systemctl restart mariadb
-```
-
-### Étape 3 : Configuration post-migration
-
-```sql
--- Forcer détection SSD
-SET GLOBAL innodb_storage_class = 'nvme';
-
--- Recalculer statistiques tables
-ANALYZE TABLE orders, customers, products;
-
--- Mettre à jour histogrammes
-ANALYZE TABLE orders 
-UPDATE HISTOGRAM ON customer_id, product_id, order_date 
-WITH 256 BUCKETS;
-
--- Vider query cache plans (si existe)
-RESET QUERY CACHE;
-
--- Flush optimizer stats
-FLUSH STATUS;
-```
-
-### Étape 4 : Validation et comparaison
-
-```sql
--- Capturer nouveaux plans
-CREATE TABLE query_plans_after AS
-SELECT 
-    DIGEST_TEXT,
-    COUNT_STAR as exec_count,
-    AVG_TIMER_WAIT/1000000000000 as avg_sec,
-    SUM_ROWS_EXAMINED as total_rows_examined
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME = 'ecommerce'
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT 100;
-
--- Comparer avant/après
-SELECT 
-    b.DIGEST_TEXT,
-    b.avg_sec as before_sec,
-    a.avg_sec as after_sec,
-    ROUND((b.avg_sec - a.avg_sec) / b.avg_sec * 100, 2) as improvement_pct,
-    b.total_rows_examined as before_rows,
-    a.total_rows_examined as after_rows
-FROM query_plans_before b
-JOIN query_plans_after a USING (DIGEST_TEXT)
-WHERE b.avg_sec > a.avg_sec
-ORDER BY improvement_pct DESC
-LIMIT 20;
-
-/*
-Résultats typiques :
-+----------------+-----------+----------+----------------+
-| improvement_pct| before_sec| after_sec| before_rows    |
-+----------------+-----------+----------+----------------+
-| 89.5%          | 12.5      | 1.3      | 50M → 1M       |
-| 76.2%          | 8.3       | 2.0      | 30M → 500k     |
-| 65.8%          | 5.1       | 1.7      | 20M → 100k     |
-+----------------+-----------+----------+----------------+
-
-Top queries : 65-90% plus rapides!
-*/
-```
-
----
-
-## Diagnostic de mauvais plans
-
-### Identifier les requêtes problématiques
-
-```sql
--- Vue : Requêtes avec beaucoup de rows examined
-CREATE OR REPLACE VIEW v_inefficient_queries AS
-SELECT 
-    DIGEST_TEXT,
-    COUNT_STAR as executions,
-    ROUND(AVG_TIMER_WAIT/1000000000000, 3) as avg_sec,
-    ROUND(SUM_ROWS_EXAMINED / NULLIF(SUM_ROWS_SENT, 0), 2) as examine_to_sent_ratio,
-    SUM_ROWS_EXAMINED as total_examined,
-    SUM_ROWS_SENT as total_sent,
-    SUM_NO_INDEX_USED + SUM_NO_GOOD_INDEX_USED as no_index_count
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME NOT IN ('mysql', 'information_schema', 'performance_schema')
-AND SUM_ROWS_EXAMINED > 100000  -- Examine beaucoup de lignes
-HAVING examine_to_sent_ratio > 100  -- Ratio inefficace
-ORDER BY total_examined DESC
-LIMIT 50;
-
--- Utiliser
-SELECT * FROM v_inefficient_queries;
-
--- Analyser plan pour requête problématique
-EXPLAIN FORMAT=JSON 
-SELECT ... /* Copier DIGEST_TEXT ici */;
-```
-
-### Forcer un meilleur plan (Hints)
-
-```sql
--- Problème : Optimizer choisit mauvais index
-EXPLAIN SELECT * FROM orders 
-WHERE customer_id = 12345 
-AND order_date >= '2024-01-01';
-
-/*
-Plan choisi : idx_order_date (mauvais)
-• Scan 500k lignes 2024
-• Filter par customer_id
-
-Plan optimal : idx_customer_id
-• Lookup 1k lignes du client
-• Filter par date
-*/
-
--- Solution 1 : FORCE INDEX
-SELECT * FROM orders FORCE INDEX (idx_customer_id)
-WHERE customer_id = 12345 
-AND order_date >= '2024-01-01';
-
--- Solution 2 : Optimizer hint (MariaDB 10.5+)
-SELECT /*+ INDEX(orders idx_customer_id) */ *
-FROM orders
-WHERE customer_id = 12345 
-AND order_date >= '2024-01-01';
-
--- Solution 3 : Améliorer statistiques
-ANALYZE TABLE orders UPDATE HISTOGRAM ON customer_id, order_date;
-
--- Solution 4 : Index composite optimal
-CREATE INDEX idx_customer_date ON orders(customer_id, order_date);
-```
-
----
-
-## Monitoring de l'optimizer
-
-### Métriques clés
-
-```sql
--- Dashboard optimizer performance
-CREATE OR REPLACE VIEW v_optimizer_stats AS
-SELECT 
-    'Query Execution' as category,
-    'Avg Query Time' as metric,
-    CONCAT(ROUND(AVG(AVG_TIMER_WAIT)/1000000000, 2), ' ms') as value
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME NOT IN ('mysql', 'information_schema', 'performance_schema')
-UNION ALL
-SELECT 
-    'Index Usage',
-    'Full Scans vs Index',
-    CONCAT(
-        ROUND(SUM(SUM_NO_INDEX_USED) * 100.0 / 
-              NULLIF(SUM(COUNT_STAR), 0), 2), 
-        '% full scans'
-    )
-FROM performance_schema.events_statements_summary_by_digest
-UNION ALL
-SELECT 
-    'I/O Efficiency',
-    'Examine/Sent Ratio',
-    CONCAT(
-        ROUND(SUM(SUM_ROWS_EXAMINED) / 
-              NULLIF(SUM(SUM_ROWS_SENT), 0), 2),
-        ':1'
-    )
-FROM performance_schema.events_statements_summary_by_digest
-UNION ALL
-SELECT 
-    'Storage Type',
-    'Detected Class',
-    @@innodb_storage_class
-;
-
--- Utiliser
-SELECT * FROM v_optimizer_stats;
-```
-
----
-
-## Best Practices
-
-### Checklist migration vers optimizer SSD
-
-```
-□ AVANT MIGRATION
-  □ Benchmarker performance actuelle
-  □ Capturer plans d'exécution top queries
-  □ Documenter configuration actuelle
-  □ Exporter statistiques tables
-
-□ MIGRATION
-  □ Upgrade MariaDB 11.8
-  □ Migration stockage HDD → SSD/NVMe
-  □ Configurer innodb_storage_class
-  □ Ajuster paramètres I/O (io_capacity)
-
-□ POST-MIGRATION
-  □ ANALYZE toutes les tables
-  □ Créer histogrammes (UPDATE HISTOGRAM)
-  □ Vérifier détection automatique storage
-  □ Tester requêtes critiques
-
-□ VALIDATION
-  □ Comparer plans avant/après
-  □ Mesurer amélioration performance
-  □ Vérifier ratio examine/sent
-  □ Monitorer full scans
-
-□ OPTIMISATION
-  □ Identifier mauvais plans restants
-  □ Ajouter hints si nécessaire
-  □ Créer index manquants
-  □ Documenter changements
-```
-
-### Configuration par workload
-
-```sql
--- OLTP read-heavy sur NVMe
-[mariadb]
-innodb_storage_class = nvme
-innodb_adaptive_hash_index = ON
-innodb_buffer_pool_size = 50GB  # Pas besoin 75%
-innodb_io_capacity = 5000
-optimizer_switch = 'prefer_ordering_index=on'
-
--- OLAP analytics sur SSD
-[mariadb]
-innodb_storage_class = ssd
-innodb_adaptive_hash_index = OFF  # Scans fréquents
-innodb_buffer_pool_size = 100GB  # Maximum possible
-innodb_read_ahead_threshold = 32  # Agressif
-innodb_io_capacity = 3000
-
--- Hybride OLTP/OLAP sur SSD
-[mariadb]
-innodb_storage_class = ssd
-innodb_adaptive_hash_index = ON
-innodb_buffer_pool_size = 75GB
-innodb_io_capacity = 2500
-# Ajuster selon monitoring
-```
-
----
-
-## ✅ Points clés à retenir
-
-- 🧠 **Cost-based optimizer** : Cerveau qui choisit plans d'exécution
-- 💾 **Problème historique** : Modèle calibré pour HDD (random = 100x seq)
-- ⚡ **Sur SSD** : Random = seulement 1.2-2x plus lent que sequential
-- 🆕 **MariaDB 11.8** : Détection auto stockage + coûts adaptés
-- 📊 **Impact** : 65-90% amélioration sur queries avec index
-- 🔧 **Configuration** : `innodb_storage_class = nvme/ssd/hdd`
-- 📈 **Statistiques** : ANALYZE + histogrammes critiques
-- 🎯 **Plans optimaux** : Index favorisés sur SSD vs scans sur HDD
-- 🔍 **Monitoring** : Ratio examine/sent, % full scans
-- 💡 **Hints** : FORCE INDEX si optimizer se trompe
-
----
-
-## 🔗 Ressources et références
-
-### Documentation MariaDB
-
-- [📖 Cost-Based Optimizer](https://mariadb.com/kb/en/optimizer/)
-- [📖 Storage Class Detection](https://mariadb.com/kb/en/innodb-system-variables/#innodb_storage_class)
-- [📖 Optimizer Hints](https://mariadb.com/kb/en/optimizer-hints/)
-
-### Performance
-
-- [MariaDB 11.8 Release Notes](https://mariadb.com/kb/en/mariadb-11-8-0-release-notes/)
-- [Cost Model Improvements](https://mariadb.com/kb/en/server-system-variables/)
-
----
-
-*Le cost-based optimizer de MariaDB 11.8 représente un bond en avant majeur pour les environnements SSD/NVMe. La détection automatique du stockage et l'ajustement des coûts permettent des gains de 65-90% sur certaines requêtes sans aucun changement de code applicatif.*
-
-⏭️ 16. [DevOps et Automatisation](/16-devops-automatisation/README.md)
+⏭️ [Optimizer Hints : contrôle fin du plan d'exécution](/15-performance-tuning/15-optimizer-hints.md)

@@ -23,7 +23,7 @@ Les DBA et architectes qui maîtrisent l'optimisation de performance sont rares 
 ## 📚 Module unique : Performance et Tuning
 
 ### Module 15 : Performance et Tuning
-**14 sections | Durée : 2-3 jours intensifs**
+**16 sections | Durée : 2-3 jours intensifs**
 
 Ce module unique mais particulièrement dense couvre l'intégralité du spectre de l'optimisation MariaDB :
 
@@ -35,8 +35,8 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
 
 #### 🧠 Configuration mémoire
 - **InnoDB Buffer Pool** : Le paramètre le plus critique 🔄
-  - Dimensionnement optimal : 70-80% RAM disponible
-  - Buffer Pool instances pour réduire contention
+  - Dimensionnement optimal : 50-75% RAM disponible (serveur dédié)
+  - Redimensionnement à chaud par incréments fins jusqu'à `innodb_buffer_pool_size_max` (depuis 11.8.2) — l'ancien découpage en *instances* (`innodb_buffer_pool_instances`) a été retiré en 10.6 (instance unique)
   - Métriques de hit ratio et pages dirty
 - **Key buffer (MyISAM)** : Pour tables legacy
 - **Thread buffers** : sort_buffer_size, join_buffer_size, read_buffer_size
@@ -49,14 +49,14 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
   - NVMe : 50,000+ IOPS
 - **innodb_flush_method** : O_DIRECT vs fsync trade-offs
 - **Optimisations SSD modernes** : TRIM, over-provisioning
-- 🆕 **Cost-based optimizer amélioré (11.8)** : Prise en compte SSD dans estimation de coûts
+- **Cost-based optimizer amélioré (11.0)** : Prise en compte SSD dans l'estimation des coûts (modèle réécrit en 11.0, toujours en vigueur en 12.3)
 
 #### ⚡ Optimisation du moteur InnoDB
 - **Redo log sizing** : innodb_log_file_size impact sur checkpoints
 - **Undo log management** : Purge threads et tablespaces
 - **Doublewrite buffer** : Sécurité vs performance
-- **Adaptive Hash Index** : Quand activer/désactiver
-- 🆕 **innodb_alter_copy_bulk (11.8)** : Construction d'index ultra-rapide
+- **Adaptive Hash Index** : Quand activer/désactiver (désactivé par défaut depuis 10.5)
+- **innodb_alter_copy_bulk** : Construction d'index ultra-rapide par chargement en masse (introduit dans les séries 10.11.9 / 11.4.3 / 11.5.2 / 11.6.1…, activé par défaut en 12.3)
 
 #### 🐌 Analyse des requêtes lentes
 - **Slow query log** : Configuration et activation
@@ -70,7 +70,7 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
 
 #### 📊 Performance Schema et sys schema
 - **Performance Schema** : Instrumentation complète 🔄
-  - Activation et overhead (5-10% CPU)
+  - Désactivé par défaut en MariaDB ; surcoût **minime** (perceptible surtout à très fort débit), maîtrisé via les tables `setup_*`
   - Tables critiques : events_statements, table_io_waits
   - Memory instrumentation
 - **sys schema** : Vues simplifiées pour diagnostic
@@ -83,7 +83,7 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
 - **Stratégies** : RANGE, LIST, HASH, KEY
 - **Partition pruning** : Élimination automatique de partitions
 - **Maintenance** : REORGANIZE, EXCHANGE, TRUNCATE PARTITION
-- 🆕 **Gestion avancée (11.8)** : Conversion partition↔table sans downtime
+- **Gestion avancée** : conversion atomique partition↔table — `CONVERT PARTITION TO TABLE` (depuis 10.7) et `CONVERT TABLE TO PARTITION` (depuis 11.4)
 - **Anti-patterns** : Quand le partitionnement dégrade les performances
 
 #### 🌐 Sharding et distribution horizontale
@@ -101,15 +101,19 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
 
 #### 🔧 Optimisations avancées InnoDB
 - **Adaptive Hash Index** : Conditions d'activation
-- **Buffer Pool optimizations** : Warmup, dump/load
-- **Change buffering** : Insert/update/delete buffering
+- **Buffer Pool optimizations** : Warmup, dump/load, redimensionnement à chaud
 - **Compression** : ROW_FORMAT=COMPRESSED trade-offs
+- ⚠️ **Change buffer** : mécanisme **retiré en 11.0** (MDEV-29694) — ne plus chercher à le régler
 
 #### 🎯 Optimiseur de requêtes
 - **Statistics maintenance** : ANALYZE TABLE
-- **Optimizer hints** : FORCE INDEX, USE INDEX, STRAIGHT_JOIN
+- 🆕 **Optimizer Hints nouvelle génération (12.x)** : commentaires `/*+ ... */` par requête — `QB_NAME`, hints de table/index, ordre de jointure (`JOIN_ORDER`/`JOIN_PREFIX`…), sous-requêtes (`SEMIJOIN`/`SUBQUERY`…), `MAX_EXECUTION_TIME` (§15.15)
+- **Index hints hérités** : `FORCE INDEX`, `USE INDEX`, `STRAIGHT_JOIN`
 - **Optimizer switches** : Contrôle fin du comportement
-- 🆕 **Cost model amélioré (11.8)** : Estimations précises pour SSD
+- **Cost model amélioré (11.0)** : estimations précises pour SSD (modèle réécrit en 11.0)
+
+#### 🔢 Vector : optimisations 12.3
+- 🆕 **Distance par extrapolation + calcul dans le moteur de stockage (§15.16)** : recherche HNSW accélérée (≈ +10-30 % de QPS à rappel égal), transparente pour l'application
 
 #### 🔍 Diagnostic avancé
 - **SHOW ENGINE INNODB STATUS** : État interne complet
@@ -127,21 +131,22 @@ Ce module unique mais particulièrement dense couvre l'intégralité du spectre 
 
 ---
 
-## 🆕 Innovations MariaDB 11.8 pour la performance
+## 🆕 Innovations récentes pour la performance (séries 11.x et 12.x)
 
-### innodb_alter_copy_bulk : Révolution de la construction d'index 🆕
+> Ces améliorations s'échelonnent sur plusieurs versions et sont **toutes présentes en 12.3 LTS**. Les deux nouveautés propres à la 12.3 — les **Optimizer Hints** consolidés (§15.15) et les **optimisations vectorielles** (§15.16) — sont détaillées dans le chapitre.
+
+### innodb_alter_copy_bulk : construction d'index par chargement en masse
 
 #### Le problème historique
 
 ```sql
--- Scénario : Table 500M lignes, ajout d'index
-ALTER TABLE large_table ADD INDEX idx_email (email);
+-- Scénario : reconstruction de table (ALGORITHM=COPY), 500M lignes
+ALTER TABLE large_table MODIFY COLUMN ... ;   -- modification imposant une copie
 
--- MariaDB <= 11.7 :
--- Temps : 4-6 heures
--- Méthode : Row-by-row insertion dans B-tree
--- I/O : Random writes intensifs
--- Performance : 20-50 MB/s
+-- Ancien comportement (sans innodb_alter_copy_bulk) :
+-- Méthode : insertion ligne à ligne dans le B-tree
+-- I/O : random writes intensifs
+-- Index : moins compacts, plus fragmentés
 ```
 
 **Goulots d'étranglement** :
@@ -150,19 +155,18 @@ ALTER TABLE large_table ADD INDEX idx_email (email);
 - Buffer pool thrashing avec grandes tables
 - Checkpointing intensif ralentit progressivement
 
-#### La solution MariaDB 11.8 : innodb_alter_copy_bulk 🆕
+#### La solution : innodb_alter_copy_bulk
+
+Introduit dans les séries **10.11.9 / 11.1.6 / 11.2.5 / 11.4.3 / 11.5.2 / 11.6.1** (et **activé par défaut** en 12.3), `innodb_alter_copy_bulk` applique aux reconstructions par `ALGORITHM=COPY` le chargement en masse qu'InnoDB utilisait déjà pour remplir une table vide :
 
 ```sql
--- Activer bulk index building
-SET GLOBAL innodb_alter_copy_bulk = ON;
+-- Activé par défaut en 12.3 ; on peut le désactiver pour diagnostic
+SHOW VARIABLES LIKE 'innodb_alter_copy_bulk';   -- ON par défaut
 
-ALTER TABLE large_table ADD INDEX idx_email (email);
-
--- MariaDB 11.8 :
--- Temps : 30-60 minutes (5-10x plus rapide)
--- Méthode : Bulk loading avec tri externe
--- I/O : Sequential writes optimisés
--- Performance : 200-500 MB/s
+-- Avec le chemin bulk :
+-- Méthode : chargement en masse + tri externe, index construits pré-triés page par page
+-- I/O : écritures séquentielles, journalisation undo/redo fortement réduite
+-- Index : plus compacts et moins fragmentés
 ```
 
 **Algorithme optimisé** :
@@ -180,29 +184,28 @@ ALTER TABLE large_table ADD INDEX idx_email (email);
 **Configuration optimale** :
 ```ini
 [mysqld]
-innodb_alter_copy_bulk = ON
-innodb_sort_buffer_size = 64M  # Augmenter pour grandes tables
-tmpdir = /fast-ssd/tmp         # SSD pour fichiers temporaires
+innodb_alter_copy_bulk = ON  
+innodb_sort_buffer_size = 64M  # Augmenter pour grandes tables  
+tmpdir = /fast-ssd/tmp         # SSD pour fichiers temporaires  
 ```
 
 ---
 
-### Cost-based optimizer : Reconnaissance des SSD 🆕
+### Cost-based optimizer : reconnaissance des SSD (depuis 11.0)
 
 #### Évolution du modèle de coûts
 
-```sql
--- Ancien modèle (pré-11.8) :
--- Hypothèse : Disques mécaniques (HDD)
--- Random read cost : 1.0 (référence)
--- Sequential read cost : 0.2 (5x plus rapide)
--- Index cost : Favorise toujours sequential
+Le modèle de coût a été **profondément réécrit en MariaDB 11.0** (modèle purement basé sur les coûts, calibré pour le SSD), et c'est ce modèle qui est en vigueur en 12.3 :
 
--- Nouveau modèle (11.8+) :
--- Détection automatique : SSD vs HDD
--- Random read cost (SSD) : 0.5 (2x plus rapide qu'HDD)
--- Sequential read cost (SSD) : 0.3
--- Index cost : Équilibre amélioré random/sequential
+```sql
+-- Ancien modèle (pré-11.0) :
+-- Coûts « de base » hérités, peu réalistes, supposant un disque mécanique (HDD)
+-- → tendance à surévaluer le coût des accès aléatoires (par index)
+
+-- Nouveau modèle (11.0+) :
+-- Coûts élémentaires calibrés en microsecondes, par défaut pour un SSD moderne
+-- optimizer_disk_read_cost ≈ 10,24 µs ; optimizer_disk_read_ratio ≈ 0,02 (98 % de cache)
+-- → accès aléatoires correctement valorisés comme peu coûteux (cf. §15.14 pour les valeurs exactes)
 ```
 
 **Impact sur les plans d'exécution** :
@@ -211,12 +214,12 @@ tmpdir = /fast-ssd/tmp         # SSD pour fichiers temporaires
 -- Requête : Trouver 10 utilisateurs par ville
 SELECT * FROM users WHERE city = 'Paris' LIMIT 10;
 
--- MariaDB <= 11.7 (modèle HDD) :
--- Plan : Full table scan (sequential préféré)
+-- Modèle hérité (pré-11.0, orienté HDD) :
+-- Plan : Full table scan (séquentiel privilégié)
 -- Rows scanned : 10,000,000
 -- Time : 2.5 seconds
 
--- MariaDB 11.8 (modèle SSD) :
+-- Modèle SSD (11.0+) :
 -- Plan : Index scan sur idx_city
 -- Rows scanned : 45,000 (users à Paris)
 -- Time : 0.08 seconds (30x plus rapide)
@@ -231,71 +234,60 @@ SELECT * FROM users WHERE city = 'Paris' LIMIT 10;
 **Validation** :
 ```sql
 -- Comparer les plans d'exécution
-EXPLAIN FORMAT=JSON 
-SELECT * FROM orders WHERE customer_id = 12345;
+EXPLAIN FORMAT=JSON  
+SELECT * FROM orders WHERE customer_id = 12345;  
 
--- Vérifier le coût estimé
--- MariaDB 11.8 devrait montrer coûts ajustés pour SSD
+-- Vérifier le coût estimé : en 11.0+ (donc 12.3), les coûts sont calibrés pour SSD.
+-- Les coûts par moteur s'inspectent dans information_schema.optimizer_costs (§15.14)
 ```
 
 ---
 
-### Gestion avancée des partitions : Conversion en ligne 🆕
+### Gestion avancée des partitions : conversion atomique partition↔table
 
-#### Opérations sans downtime
+#### Le vrai apport : l'atomicité
+
+Auparavant, convertir une partition en table autonome (ou l'inverse) imposait une recette en plusieurs étapes autour d'`EXCHANGE PARTITION` — **non atomique** : un crash en cours de route pouvait laisser la table dans un état incohérent. MariaDB fournit désormais deux commandes dédiées, chacune **atomique** (l'opération aboutit entièrement ou est intégralement annulée, même si le serveur s'arrête en plein milieu) :
 
 ```sql
--- Scénario : Table partitionnée à convertir en table normale
--- ou vice-versa, sans interruption de service
+-- Extraire une partition en table autonome — depuis MariaDB 10.7
+ALTER TABLE ventes CONVERT PARTITION p2023 TO TABLE archives_2023;
 
--- MariaDB <= 11.7 :
--- ALTER TABLE orders REMOVE PARTITIONING;
--- → Bloque toutes les opérations pendant conversion
--- → Downtime : 2-4 heures pour table volumineuse
-
--- MariaDB 11.8 : Conversion progressive 🆕
-ALTER TABLE orders REMOVE PARTITIONING ALGORITHM=INPLACE;
--- → Conversion en arrière-plan
--- → Table reste accessible (READ + WRITE)
--- → Durée : 2-4 heures mais sans downtime
+-- Rattacher une table autonome comme nouvelle partition — depuis MariaDB 11.4
+ALTER TABLE ventes
+  CONVERT TABLE import_2026 TO PARTITION p2026 VALUES LESS THAN ('2027-01-01');
 ```
 
 **Cas d'usage** :
 
-1. **Partition → Table** : Consolidation après croissance
+1. **Partition → Table** : archivage ou consolidation
 ```sql
--- Après migration données anciennes, plus besoin de partitionnement
-ALTER TABLE logs_archive 
-  REMOVE PARTITIONING 
-  ALGORITHM=INPLACE;
+-- Détacher une période ancienne en table autonome (opération de métadonnées, rapide)
+ALTER TABLE ventes CONVERT PARTITION p2023 TO TABLE archives_2023;
 ```
 
-2. **Table → Partition** : Introduction de partitionnement sans interruption
+2. **Table → Partition** : intégration d'un lot préparé à part
 ```sql
--- Partitionner table existante par date
-ALTER TABLE orders 
-  PARTITION BY RANGE (YEAR(order_date)) (
-    PARTITION p2023 VALUES LESS THAN (2024),
-    PARTITION p2024 VALUES LESS THAN (2025),
-    PARTITION p2025 VALUES LESS THAN (2026)
-  ) 
-  ALGORITHM=INPLACE;
+-- La table import_2026 a été remplie et indexée hors production, puis rattachée
+ALTER TABLE ventes
+  CONVERT TABLE import_2026 TO PARTITION p2026 VALUES LESS THAN ('2027-01-01');
+-- WITH VALIDATION par défaut (chaque ligne contrôlée) ; WITHOUT VALIDATION pour aller plus vite
 ```
 
-3. **Réorganisation de partitions** : Maintenance en ligne
+3. **Réorganisation de partitions** : fusion/scission (recopie physique)
 ```sql
--- Fusionner partitions anciennes
-ALTER TABLE sales 
-  REORGANIZE PARTITION p2020,p2021,p2022 
-  INTO (PARTITION p_old VALUES LESS THAN (2023))
-  ALGORITHM=INPLACE;
+-- Fusionner d'anciennes partitions (REORGANIZE recopie les lignes concernées)
+ALTER TABLE sales
+  REORGANIZE PARTITION p2020,p2021,p2022
+  INTO (PARTITION p_old VALUES LESS THAN (2023));
 ```
+
+> ⚠️ **À savoir** : en MariaDB 12.3, les opérations **spécifiques aux partitions** (`ADD`/`DROP`/`REBUILD`/`REORGANIZE`/`CONVERT`… `PARTITION`) **ne prennent pas en charge la clause `ALGORITHM`/`LOCK`** — `ALTER ONLINE TABLE … REBUILD PARTITION` (ou `ALGORITHM=INPLACE`) échoue avec l'erreur **`1846`**. Ces opérations s'exécutent en `LOCK=DEFAULT` ; celles qui relèvent des métadonnées (`DROP`/`TRUNCATE`, `EXCHANGE`, `CONVERT`) bloquent peu, tandis que `REORGANIZE`/`REBUILD` recopient des données. Le mode en ligne reste réservé aux modifications **non spécifiques aux partitions** (ajout de colonne/index). Voir §15.10.
 
 **Bénéfices** :
-- ✅ Maintenance sans fenêtre de downtime
-- ✅ Flexibilité architecturale améliorée
-- ✅ Migration progressive possible
-- ✅ Validation avant commit final
+- ✅ Conversions **atomiques** et sûres face aux pannes (vs l'ancienne recette `EXCHANGE` non atomique)
+- ✅ Archivage et chargement en masse simplifiés (préparer/valider une table à part, puis la rattacher)
+- ✅ Intention exprimée directement, en une seule instruction
 
 ---
 
@@ -321,7 +313,7 @@ ALTER TABLE sales
 
 ### Tuning avancé InnoDB
 - ✅ **Configurer** les logs (redo, undo) pour charge de travail
-- ✅ **Optimiser** la gestion du Buffer Pool (warmup, instances)
+- ✅ **Optimiser** la gestion du Buffer Pool (warmup dump/load, redimensionnement à chaud)
 - ✅ **Ajuster** les threads I/O et purge
 - ✅ **Utiliser** innodb_alter_copy_bulk pour maintenance efficace
 - ✅ **Comprendre** les trade-offs durabilité vs performance
@@ -391,10 +383,10 @@ SELECT
     AVG_TIMER_WAIT/1000000000 AS avg_ms,
     SUM_TIMER_WAIT/1000000000 AS total_ms,
     SUM_ROWS_EXAMINED AS rows_examined
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME = 'production_db'
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT 10;
+FROM performance_schema.events_statements_summary_by_digest  
+WHERE SCHEMA_NAME = 'production_db'  
+ORDER BY SUM_TIMER_WAIT DESC  
+LIMIT 10;  
 
 -- Top 10 requêtes par temps cumulé
 -- → Priorisation basée sur impact réel
@@ -450,8 +442,8 @@ cat baseline_results.txt | grep -E "(transactions:|queries:|latency:)"
 - CPU Utilization : 65%
 - Disk IOPS : 8,500 (85% capacity)
 
-**Goulot identifié** : I/O disque saturé
-**Hypothèse** : Buffer Pool sous-dimensionné
+**Goulot identifié** : I/O disque saturé  
+**Hypothèse** : Buffer Pool sous-dimensionné  
 ```
 
 ---
@@ -461,17 +453,18 @@ cat baseline_results.txt | grep -E "(transactions:|queries:|latency:)"
 **Principe** : Changement unique et isolé. Tester une modification à la fois.
 
 ```ini
-# Avant optimisation (documented baseline)
+# Avant optimisation (baseline documentée)
 [mysqld]
-innodb_buffer_pool_size = 4G        # 87.5% hit ratio
-innodb_buffer_pool_instances = 4
-innodb_io_capacity = 200            # HDD default
+innodb_buffer_pool_size = 4G        # 87.5% hit ratio  
+innodb_io_capacity = 200            # HDD default  
 
-# Après optimisation (changement unique)
+# Après optimisation (un seul levier à la fois — ici le Buffer Pool)
 [mysqld]
-innodb_buffer_pool_size = 12G       # Augmentation à 75% RAM
-innodb_buffer_pool_instances = 12   # 1 instance par GB
-innodb_io_capacity = 10000          # SSD IOPS réels
+innodb_buffer_pool_size = 12G       # Augmentation à ~75% RAM  
+innodb_io_capacity = 10000          # (réglé séparément, à sa propre itération)  
+
+# Note : depuis 10.6, le Buffer Pool est en instance unique
+# (innodb_buffer_pool_instances a été retiré) ; rien à régler de ce côté.
 
 # Restart MariaDB
 systemctl restart mariadb
@@ -513,8 +506,8 @@ sysbench oltp_read_write \
   run > optimized_results.txt
 
 # Comparaison baseline vs optimized
-echo "=== BEFORE ===" && cat baseline_results.txt | grep "transactions:"
-echo "=== AFTER  ===" && cat optimized_results.txt | grep "transactions:"
+echo "=== BEFORE ===" && cat baseline_results.txt | grep "transactions:"  
+echo "=== AFTER  ===" && cat optimized_results.txt | grep "transactions:"  
 
 # Output :
 # === BEFORE ===
@@ -528,9 +521,9 @@ echo "=== AFTER  ===" && cat optimized_results.txt | grep "transactions:"
 **Validation multi-dimensionnelle** :
 ```sql
 -- 1. Performance : Latence améliorée ?
-SELECT AVG_TIMER_WAIT/1000000000 AS avg_ms_after
-FROM performance_schema.events_statements_summary_by_digest
-WHERE DIGEST_TEXT LIKE '%critical_query%';
+SELECT AVG_TIMER_WAIT/1000000000 AS avg_ms_after  
+FROM performance_schema.events_statements_summary_by_digest  
+WHERE DIGEST_TEXT LIKE '%critical_query%';  
 -- avg_ms_after : 15.2ms (vs 42.6ms avant = 65% réduction)
 
 -- 2. Ressources : Utilisation optimale ?
@@ -699,7 +692,7 @@ innodb_buffer_pool_size = 16G  # Seulement 12.5% RAM !
 ```ini
 [mysqld]
 innodb_buffer_pool_size = 96G  # 75% des 128GB RAM
-innodb_buffer_pool_instances = 16  # 1 instance / 6GB
+# (instance unique depuis 10.6 ; innodb_buffer_pool_instances retiré)
 ```
 
 **Résultat après 24h** :
@@ -733,8 +726,8 @@ SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read%';
 **Problème identifié** :
 ```python
 # Code ORM (Django/SQLAlchemy pattern)
-orders = Order.objects.all()[:100]  # 1 requête
-for order in orders:
+orders = Order.objects.all()[:100]  # 1 requête  
+for order in orders:  
     print(order.customer.name)      # 100 requêtes supplémentaires !
 
 # Total : 101 requêtes SQL pour afficher 100 commandes
@@ -745,9 +738,9 @@ for order in orders:
 ```
 # Time: 2025-12-15T10:23:45.123456Z
 # Query_time: 0.505  Lock_time: 0.001  Rows_sent: 100
-SELECT * FROM orders LIMIT 100;
-SELECT * FROM customers WHERE id = 1;
-SELECT * FROM customers WHERE id = 2;
+SELECT * FROM orders LIMIT 100;  
+SELECT * FROM customers WHERE id = 1;  
+SELECT * FROM customers WHERE id = 2;  
 ... (98 requêtes similaires)
 SELECT * FROM customers WHERE id = 100;
 ```
@@ -796,10 +789,10 @@ orders = Order.objects.prefetch_related('customer').all()[:100]
 **Problème identifié** :
 ```sql
 -- Requête courante : Logs des 7 derniers jours
-SELECT * FROM application_logs 
-WHERE log_date >= CURDATE() - INTERVAL 7 DAY
-ORDER BY log_date DESC 
-LIMIT 1000;
+SELECT * FROM application_logs  
+WHERE log_date >= CURDATE() - INTERVAL 7 DAY  
+ORDER BY log_date DESC  
+LIMIT 1000;  
 
 -- Sans partitionnement :
 -- Temps : 15 secondes
@@ -826,17 +819,17 @@ PARTITION BY RANGE (TO_DAYS(log_date)) (
 );
 
 -- Migrer données (peut prendre plusieurs heures)
-INSERT INTO application_logs_partitioned 
-SELECT * FROM application_logs;
+INSERT INTO application_logs_partitioned  
+SELECT * FROM application_logs;  
 ```
 
 **Résultat** :
 ```sql
 -- Même requête sur table partitionnée
-SELECT * FROM application_logs_partitioned 
-WHERE log_date >= CURDATE() - INTERVAL 7 DAY
-ORDER BY log_date DESC 
-LIMIT 1000;
+SELECT * FROM application_logs_partitioned  
+WHERE log_date >= CURDATE() - INTERVAL 7 DAY  
+ORDER BY log_date DESC  
+LIMIT 1000;  
 
 -- EXPLAIN montre partition pruning
 partitions: p202512  ← Une seule partition accédée
@@ -874,9 +867,9 @@ ALTER TABLE logs_archive_202401 ENGINE=S3;
 ```sql
 -- Activer Performance Schema (my.cnf)
 [mysqld]
-performance_schema = ON
-performance-schema-instrument = 'statement/%=ON'
-performance-schema-consumer-statements-digest = ON
+performance_schema = ON  
+performance-schema-instrument = 'statement/%=ON'  
+performance-schema-consumer-statements-digest = ON  
 
 -- Top 10 requêtes par temps d'exécution
 SELECT 
@@ -885,10 +878,10 @@ SELECT
     AVG_TIMER_WAIT/1000000000000 AS avg_sec,
     MAX_TIMER_WAIT/1000000000000 AS max_sec,
     SUM_TIMER_WAIT/1000000000000 AS total_sec
-FROM performance_schema.events_statements_summary_by_digest
-WHERE SCHEMA_NAME = 'mydb'
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT 10;
+FROM performance_schema.events_statements_summary_by_digest  
+WHERE SCHEMA_NAME = 'mydb'  
+ORDER BY SUM_TIMER_WAIT DESC  
+LIMIT 10;  
 ```
 
 **Use cases** :
@@ -903,8 +896,8 @@ LIMIT 10;
 
 ```sql
 -- Tables avec le plus d'I/O
-SELECT * FROM sys.io_global_by_file_by_bytes 
-LIMIT 10;
+SELECT * FROM sys.io_global_by_file_by_bytes  
+LIMIT 10;  
 
 -- Index inutilisés
 SELECT * FROM sys.schema_unused_indexes;
@@ -913,8 +906,8 @@ SELECT * FROM sys.schema_unused_indexes;
 SELECT * FROM sys.schema_tables_with_no_pk;
 
 -- Requêtes avec full table scan
-SELECT * FROM sys.statements_with_full_table_scans
-LIMIT 20;
+SELECT * FROM sys.statements_with_full_table_scans  
+LIMIT 20;  
 ```
 
 ---
@@ -1034,6 +1027,6 @@ Bienvenue dans le monde de l'optimisation data-driven ! 📊
 
 ---
 
-**MariaDB** : Version 11.8 LTS
+**MariaDB** : Version 12.3 LTS
 
 ⏭️ [Performance et Tuning](/15-performance-tuning/README.md)
