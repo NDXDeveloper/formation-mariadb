@@ -1,523 +1,151 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 13. Réplication MariaDB
+# Chapitre 13 — Réplication
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 8-10 heures  
-> **Prérequis** : 
-> - Maîtrise des concepts de transactions et ACID (Chapitre 6)
-> - Compréhension des binary logs (Section 11.5)
-> - Connaissance des architectures distribuées
-> - Expérience en administration système Linux
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de ce chapitre, vous serez capable de :
-
-- Comprendre les différents modes de réplication (asynchrone, semi-synchrone) et leurs implications
-- Configurer une topologie de réplication Master-Slave (Source-Replica) en production
-- Mettre en œuvre la réplication basée sur les positions binlog et GTID
-- Déployer des architectures avancées (multi-source, cascade)
-- Monitorer efficacement la réplication et diagnostiquer les problèmes de lag
-- Utiliser les optimisations MariaDB 11.8 pour minimiser le retard de réplication
-- Gérer les opérations de failover et switchover en toute sécurité
+> **Partie 6 : Réplication et Haute Disponibilité (DBA/DevOps)**  
+> Version de référence : **MariaDB 12.3 LTS** (GA fin mai 2026, support jusqu'en juin 2029)
 
 ---
 
 ## Introduction
 
-La **réplication** est l'un des mécanismes fondamentaux permettant d'assurer la **haute disponibilité**, la **scalabilité en lecture** et la **redondance des données** dans MariaDB. Elle consiste à copier automatiquement les modifications de données depuis un serveur source (Primary/Master) vers un ou plusieurs serveurs de destination (Replica/Slave).
+La **réplication** est le mécanisme par lequel les modifications appliquées sur un serveur MariaDB — le **serveur source** (historiquement appelé *master*) — sont propagées automatiquement vers un ou plusieurs autres serveurs : les **réplicas** (historiquement *slaves*). Chaque réplica rejoue le flux des changements reçus afin de maintenir une copie cohérente des données.
 
-### Pourquoi la réplication ?
+C'est l'une des briques les plus structurantes de tout déploiement MariaDB en production. Elle ne sert pas seulement à dupliquer des données : elle conditionne la **haute disponibilité**, la **répartition de la charge de lecture**, les **sauvegardes sans impact**, la **géo-distribution** et de nombreuses **stratégies de migration sans interruption de service**.
 
-Dans un environnement de production moderne, la réplication répond à plusieurs besoins critiques :
-
-**📈 Scalabilité horizontale**
-- Distribution de la charge de lecture sur plusieurs réplicas
-- Capacité à servir des milliers de requêtes SELECT simultanées
-- Séparation des charges OLTP et analytiques
-
-**🛡️ Haute disponibilité**
-- Continuité de service en cas de panne du serveur primary
-- Basculement automatique ou manuel vers un replica
-- Temps de récupération réduit (RTO/RPO optimisés)
-
-**🔄 Redondance des données**
-- Protection contre la perte de données
-- Copies multiples pour la sécurité
-- Possibilité de restauration à partir d'un replica
-
-**🌍 Géo-distribution**
-- Réplication entre datacenters pour la latence
-- Conformité réglementaire (données localisées)
-- Disaster Recovery cross-région
-
-**⚙️ Maintenance sans interruption**
-- Upgrades progressifs (upgrade replica puis basculement)
-- Tests de nouvelles versions en parallèle
-- Backups depuis un replica sans impact sur le primary
-
-### Architecture de base
-
-```
-┌─────────────────┐
-│   PRIMARY       │
-│  (Master)       │
-│                 │
-│  Writes + Reads │
-└────────┬────────┘
-         │ Binary Log
-         │ Replication
-         ▼
-┌─────────────────┐
-│   REPLICA       │
-│  (Slave)        │
-│                 │
-│  Reads Only     │
-└─────────────────┘
-```
-
-Le serveur **Primary** :
-- Accepte les écritures (INSERT, UPDATE, DELETE)
-- Enregistre toutes les modifications dans le **binary log**
-- Répond aux requêtes de lecture
-
-Le serveur **Replica** :
-- Se connecte au Primary via un thread I/O
-- Récupère les événements du binary log
-- Les applique via un thread SQL
-- Répond aux requêtes de lecture (read-only par défaut)
+Ce chapitre pose les fondations de la réplication MariaDB, des concepts asynchrone/semi-synchrone jusqu'aux topologies avancées (multi-source, cascade), en passant par les GTID, le monitoring, le *failover* et les optimisations récentes de la série 12.x. Il prépare directement le **chapitre 14 (Haute Disponibilité)**, qui s'appuie sur ces mécanismes pour bâtir des architectures résilientes (Galera, MaxScale, *failover* automatique).
 
 ---
 
-## Vue d'ensemble du chapitre
+## Objectifs pédagogiques
 
-Ce chapitre explore la réplication MariaDB dans tous ses aspects, de la configuration de base aux architectures avancées.
+À l'issue de ce chapitre, vous serez capable de :
 
-### 13.1 Concepts de réplication : Asynchrone vs Semi-synchrone
-
-Nous commençons par comprendre les **modes de réplication** :
-
-**Réplication asynchrone** (par défaut)
-- Le Primary n'attend pas la confirmation du Replica
-- Performance maximale mais risque de perte de données
-- Appropriée pour la scalabilité en lecture
-
-**Réplication semi-synchrone**
-- Le Primary attend qu'au moins un Replica ait reçu les événements
-- Garantie de durabilité renforcée
-- Léger impact sur les performances d'écriture
-
-💡 **Cas d'usage** : La réplication asynchrone convient aux applications tolérantes à une perte de données minimale, tandis que la semi-synchrone est recommandée pour les données critiques.
-
-### 13.2 Réplication Master-Slave (Source-Replica)
-
-Configuration étape par étape d'une topologie classique :
-
-- **Configuration du Primary** : activation du binary log, création d'un utilisateur de réplication
-- **Configuration du Replica** : paramétrage du serveur, options de sécurité
-- **Commande CHANGE MASTER TO** : établissement de la connexion
-
-```sql
--- Sur le Primary
-CREATE USER 'repl_user'@'%' IDENTIFIED BY 'StrongPassword123!';
-GRANT REPLICATION SLAVE ON *.* TO 'repl_user'@'%';
-
--- Sur le Replica
-CHANGE MASTER TO
-  MASTER_HOST='primary.example.com',
-  MASTER_USER='repl_user',
-  MASTER_PASSWORD='StrongPassword123!',
-  MASTER_LOG_FILE='mariadb-bin.000042',
-  MASTER_LOG_POS=1234;
-
-START SLAVE;
-```
-
-### 13.3 Réplication basée sur les positions binlog
-
-La méthode traditionnelle utilise les **coordonnées binlog** :
-- Nom du fichier binlog (`mariadb-bin.000042`)
-- Position dans le fichier (`1234`)
-
-⚠️ **Limitation** : Complexité lors des failovers (nécessite de calculer la position exacte sur le nouveau Primary)
-
-### 13.4 GTID (Global Transaction Identifier)
-
-Le **GTID** est une révolution dans la réplication MariaDB :
-
-```
-0-1-1000
-│ │  └─── Sequence number
-│ └────── Server ID
-└──────── Domain ID
-```
-
-**Avantages décisifs** :
-- Identification unique de chaque transaction
-- Failover automatisé simplifié
-- Réplication multi-source facilitée
-- Résolution automatique des conflits
-
-```sql
--- Activation GTID
-SET GLOBAL gtid_strict_mode=ON;
-SET GLOBAL gtid_domain_id=0;
-
--- Réplication avec GTID
-CHANGE MASTER TO
-  MASTER_HOST='primary.example.com',
-  MASTER_USER='repl_user',
-  MASTER_PASSWORD='StrongPassword123!',
-  MASTER_USE_GTID=slave_pos;
-```
-
-🆕 **MariaDB 11.8** : Améliorations de la gestion GTID pour les topologies complexes et meilleure compatibilité avec MySQL GTID.
-
-### 13.5 Réplication multi-source
-
-Permet à un Replica de répliquer depuis **plusieurs Primary** simultanément :
-
-```
-┌──────────┐     ┌──────────┐
-│ Primary1 │     │ Primary2 │
-│ (Sales)  │     │ (HR)     │
-└─────┬────┘     └────┬─────┘
-      │               │
-      └───────┬───────┘
-              ▼
-        ┌───────────┐
-        │ Replica   │
-        │(Reporting)│
-        └───────────┘
-```
-
-**Cas d'usage** :
-- Consolidation de données pour le reporting
-- Agrégation de bases séparées
-- Migration progressive
-
-### 13.6 Réplication en cascade
-
-Permet de **chaîner les serveurs** pour réduire la charge sur le Primary :
-
-```
-Primary → Replica1 → Replica2 → Replica3
-          (Relay)
-```
-
-**Configuration** :
-```sql
--- Sur Replica1 (intermédiaire)
-SET GLOBAL log_slave_updates=ON;
-```
-
-⚠️ **Attention** : Augmente la latence de réplication proportionnellement au nombre de niveaux.
-
-### 13.7 Monitoring et troubleshooting
-
-**Commandes essentielles** :
-
-```sql
--- État détaillé de la réplication
-SHOW REPLICA STATUS\G
-
--- ou (ancien nom)
-SHOW SLAVE STATUS\G
-```
-
-**Métriques critiques** :
-- `Slave_IO_Running` : Thread I/O actif ?
-- `Slave_SQL_Running` : Thread SQL actif ?
-- `Seconds_Behind_Master` : Retard en secondes
-- `Last_Error` : Dernière erreur rencontrée
-
-**Diagnostic du lag** :
-
-```sql
--- Vérifier le lag actuel
-SELECT 
-  TIMESTAMPDIFF(SECOND, 
-    ts, 
-    NOW()
-  ) AS replication_lag_seconds
-FROM mysql.heartbeat
-WHERE server_id = @@server_id;
-```
-
-**Erreurs courantes** :
-- **1062 (Duplicate entry)** : Insertion d'une clé déjà existante
-- **1032 (Can't find record)** : Ligne à modifier/supprimer introuvable
-- **2003 (Can't connect)** : Problème réseau avec le Primary
-
-**Résolution** :
-```sql
--- Ignorer une erreur ponctuelle (avec précaution !)
-SET GLOBAL sql_slave_skip_counter = 1;
-START SLAVE;
-
--- Ou définir des erreurs à ignorer
-SET GLOBAL slave_skip_errors = 1062,1032;
-```
-
-### 13.8 Failover et switchover
-
-**Failover** (panne du Primary) :
-1. Identifier le Replica le plus à jour
-2. Promouvoir ce Replica en Primary
-3. Reconfigurer les autres Replicas
-
-**Switchover** (maintenance planifiée) :
-1. Arrêter les écritures sur le Primary
-2. Attendre que tous les Replicas soient synchronisés
-3. Promouvoir le Replica cible
-4. Basculer le trafic applicatif
-
-💡 **Outils** : Orchestrator, MHA (Master High Availability), MaxScale Auto-Failover
-
-### 13.9 Réplication semi-synchrone
-
-Garantit qu'au moins un Replica a reçu la transaction avant que le Primary ne confirme le COMMIT :
-
-```sql
--- Sur le Primary
-INSTALL SONAME 'semisync_master';
-SET GLOBAL rpl_semi_sync_master_enabled=ON;
-SET GLOBAL rpl_semi_sync_master_timeout=1000; -- 1 seconde
-
--- Sur le Replica
-INSTALL SONAME 'semisync_slave';
-SET GLOBAL rpl_semi_sync_slave_enabled=ON;
-```
-
-**Trade-off** :
-- ✅ Durabilité accrue (pas de perte de données en cas de crash)
-- ⚠️ Latence d'écriture légèrement augmentée
-
-### 🆕 13.10 Optimistic ALTER TABLE pour réduction du lag
-
-**Nouveauté MariaDB 11.8** : Une innovation majeure pour minimiser l'impact des DDL sur la réplication.
-
-**Problème traditionnel** :
-```
-Primary executes ALTER TABLE → Blocks writes for 30 minutes
-                              ↓
-Replica receives binlog event → Blocks replication for 30 minutes
-                              ↓
-Replication lag: 30+ minutes ❌
-```
-
-**Solution Optimistic ALTER** :
-```sql
--- Sur le Primary
-SET SESSION alter_algorithm='INSTANT', lock='NONE';
-ALTER TABLE large_table ADD COLUMN new_col INT;
-```
-
-Le Replica peut appliquer l'ALTER de manière **non-bloquante** :
-- Utilise un algorithme optimiste
-- Permet aux autres transactions de continuer
-- Réduit drastiquement le lag
-
-**Configuration** :
-```sql
--- Sur le Replica
-SET GLOBAL slave_parallel_threads=4;
-SET GLOBAL slave_parallel_mode='optimistic';
-SET GLOBAL slave_run_triggers_for_rbr='YES';
-```
-
-**Résultats** :
-- Lag réduit de **80-95%** pour les grosses tables
-- Continuité de service améliorée
-- Maintenance moins disruptive
-
-⚠️ **Prérequis** : Compatible avec `ALTER ALGORITHM=INSTANT` ou `COPY` selon le cas.
+- distinguer la réplication **asynchrone** de la réplication **semi-synchrone**, et choisir le mode adapté à vos contraintes de cohérence et de performance ;
+- configurer une **topologie source-réplica** de bout en bout (activation du binlog côté source, paramétrage du réplica, établissement du lien de réplication) ;
+- comprendre le positionnement par **coordonnées binlog** ainsi que les **GTID** (Global Transaction Identifier), et savoir lequel privilégier ;
+- mettre en œuvre des topologies avancées : **multi-source** et **en cascade** ;
+- **surveiller** l'état de la réplication, **mesurer et diagnostiquer le lag** (retard du réplica), et résoudre les erreurs les plus fréquentes ;
+- réaliser un **failover** (basculement non planifié) ou un **switchover** (basculement contrôlé) en limitant l'indisponibilité ;
+- tirer parti des **optimisations récentes** : réplication parallèle, *Optimistic ALTER TABLE* et gestion prévisible des tables temporaires.
 
 ---
 
-## Architecture de réplication avancée
+## Prérequis
 
-### Topologie complète
+Avant d'aborder ce chapitre, il est recommandé d'être à l'aise avec :
 
-```
-                  ┌──────────────┐
-                  │   PRIMARY    │
-                  │  (Master)    │
-                  └───────┬──────┘
-                          │
-            ┌─────────────┼─────────────┐
-            │             │             │
-            ▼             ▼             ▼
-    ┌───────────┐  ┌───────────┐  ┌───────────┐
-    │ Replica 1 │  │ Replica 2 │  │ Replica 3 │
-    │ (Reads)   │  │ (Reporting)│ │ (Backup)  │
-    └───────────┘  └─────┬─────┘  └───────────┘
-                         │
-                         ▼
-                  ┌───────────┐
-                  │ Replica 4 │
-                  │ (Cascade) │
-                  └───────────┘
-```
-
-### Bonnes pratiques de production
-
-**1. Sécurité**
-```ini
-[mysqld]
-# Replica en read-only
-read_only=1
-super_read_only=1
-
-# Utiliser SSL pour la réplication
-ssl-ca=/etc/mysql/ssl/ca-cert.pem
-ssl-cert=/etc/mysql/ssl/server-cert.pem
-ssl-key=/etc/mysql/ssl/server-key.pem
-```
-
-**2. Performance**
-```ini
-# Parallélisation de la réplication
-slave_parallel_threads=4
-slave_parallel_mode=optimistic
-
-# Optimisation checksum binlog
-binlog_checksum=CRC32
-master_verify_checksum=ON
-slave_sql_verify_checksum=ON
-```
-
-**3. Fiabilité**
-```ini
-# Durabilité des relay logs
-sync_relay_log=1
-relay_log_recovery=ON
-
-# Position de réplication persistée
-relay_log_info_repository=TABLE
-master_info_repository=TABLE
-```
-
-**4. Monitoring**
-```sql
--- Script de monitoring quotidien
-SELECT 
-  @@hostname AS replica_host,
-  CASE 
-    WHEN Slave_IO_Running='Yes' AND Slave_SQL_Running='Yes' THEN 'OK'
-    ELSE 'ERROR'
-  END AS replication_status,
-  Seconds_Behind_Master AS lag_seconds,
-  Master_Host AS primary_host,
-  Master_Log_File AS current_binlog,
-  Read_Master_Log_Pos AS binlog_position
-FROM information_schema.REPLICA_STATUS;
-```
+- les **transactions et la concurrence** (chapitre 6) — la réplication s'appuie sur la notion de transaction et sur les propriétés ACID d'InnoDB ;
+- les **binary logs** (chapitre 11.5) — le binlog est le journal qui alimente l'ensemble du flux de réplication ; sa configuration et ses formats (`STATEMENT`, `ROW`, `MIXED`) sont déterminants ;
+- les bases de l'**administration et de la configuration** (chapitre 11) : fichiers `my.cnf`, variables système, gestion des logs.
 
 ---
 
-## Cas d'usage réels
+## Pourquoi répliquer ?
 
-### Exemple 1 : E-commerce avec réplication géographique
+La réplication répond à plusieurs besoins, souvent combinés :
 
-```
-Europe DC              ←→              US DC
-┌──────────┐                      ┌──────────┐
-│ Primary  │                      │ Replica  │
-│ (Writes) │  ─ Réplication  ─→   │ (Reads)  │
-└──────────┘      asynchrone      └──────────┘
-```
+| Objectif | Comment la réplication y répond |
+|----------|----------------------------------|
+| **Haute disponibilité** | Un réplica à jour peut être promu en cas de panne de la source (*failover*), réduisant fortement l'indisponibilité. |
+| **Montée en charge en lecture** | Les requêtes de lecture sont réparties sur plusieurs réplicas, soulageant la source qui conserve les écritures. |
+| **Sauvegardes sans impact** | Les sauvegardes (logiques ou physiques) peuvent être déléguées à un réplica dédié, sans pénaliser la production. |
+| **Reporting et analytique** | Une charge OLAP/reporting peut être isolée sur un réplica, sans concurrencer la charge OLTP de la source. |
+| **Géo-distribution** | Des réplicas situés dans différentes régions rapprochent les données des utilisateurs et servent de base à un plan de reprise. |
+| **Migrations sans interruption** | La réplication permet de basculer progressivement vers une nouvelle version ou une nouvelle infrastructure (*zero-downtime*, cf. chapitre 19). |
 
-**Configuration** :
-- Primary en Europe pour les écritures
-- Replica aux US pour les lectures locales
-- Latence de réplication : 100-200ms acceptable
-- Réduction de la latence utilisateur : 80%
-
-### Exemple 2 : Reporting sans impact sur la production
-
-```
-Production DB          Reporting DB
-┌──────────┐          ┌──────────┐
-│ Primary  │          │ Replica  │
-│ OLTP     │  ─────→  │ OLAP     │
-└──────────┘          └──────────┘
-                      ColumnStore
-```
-
-**Avantages** :
-- Requêtes analytiques lourdes sur le Replica
-- Zero impact sur le Primary
-- Possibilité d'utiliser ColumnStore sur le Replica
+> ⚠️ **À garder en tête :** la réplication n'est **pas** une sauvegarde. Une erreur logique (un `DELETE` ou un `DROP TABLE` accidentel) est répliquée fidèlement vers tous les réplicas. La réplication protège contre la **perte d'un serveur**, pas contre une **erreur humaine ou applicative** : elle se combine donc toujours avec une vraie stratégie de sauvegarde (chapitre 12).
 
 ---
 
-## ✅ Points clés à retenir
+## Concepts clés en un coup d'œil
 
-1. **Modes de réplication** : Asynchrone (par défaut, performant) vs Semi-synchrone (durable, légère latence)
+Avant d'entrer dans le détail, quelques notions transversales à l'ensemble du chapitre.
 
-2. **GTID** : Remplace avantageusement les positions binlog pour une gestion simplifiée et un failover automatisé
+### Le flux de base
 
-3. **Monitoring essentiel** : Surveiller `Slave_IO_Running`, `Slave_SQL_Running` et `Seconds_Behind_Master` en permanence
+Dans sa forme la plus simple, la réplication MariaDB suit le schéma suivant :
 
-4. **Réplication multi-source** : Permet de consolider plusieurs bases pour le reporting et l'analytique
+```mermaid
+flowchart LR
+    A[Application] -->|écritures| S[(Serveur SOURCE)]
+    S -->|écrit dans le| BL[Binary Log]
+    BL -->|flux d'événements| R1[(Réplica 1)]
+    BL -->|flux d'événements| R2[(Réplica 2)]
+    LR1[Lectures] --> R1
+    LR2[Lectures] --> R2
+```
 
-5. **Semi-synchrone** : Obligatoire pour les données critiques nécessitant une garantie de durabilité
+La source consigne chaque modification dans son **binary log**. Chaque réplica récupère ce flux d'événements, le stocke localement dans son **relay log**, puis l'applique sur ses propres données.
 
-6. **Optimistic ALTER TABLE (11.8)** : Réduit drastiquement le lag lors des opérations DDL sur de grosses tables
+### Asynchrone vs semi-synchrone
 
-7. **Parallélisation** : Utiliser `slave_parallel_threads` pour accélérer l'application des événements
+- En réplication **asynchrone** (le défaut), la source valide une transaction sans attendre le moindre accusé de réception des réplicas. C'est le plus performant, mais un réplica peut accuser un retard (*lag*) et un *failover* peut entraîner une perte de transactions non encore propagées.
+- En réplication **semi-synchrone**, la source attend qu'au moins un réplica ait **reçu** (et journalisé) la transaction avant de la confirmer au client. La fenêtre de perte se réduit, au prix d'une latence accrue. *(Détaillé en 13.1 et 13.9.)*
 
-8. **Sécurité** : Toujours configurer `read_only=1` sur les Replicas et utiliser SSL
+### Positionnement : coordonnées binlog vs GTID
 
-9. **Failover** : GTID simplifie grandement les opérations de basculement et de reconfiguration
+Un réplica doit savoir « où il en est » dans le flux de la source. Deux approches coexistent :
 
-10. **Testing** : Tester régulièrement les procédures de failover et de switchover
+- le **positionnement par coordonnées** (nom de fichier binlog + offset) : simple, mais fragile lors d'un changement de source ;
+- le **GTID** (Global Transaction Identifier) : chaque transaction reçoit un identifiant global unique, ce qui rend les *failover* et les reconfigurations de topologie beaucoup plus robustes. Sous MariaDB, le GTID prend la forme `domaine-serveur-séquence` (par ex. `0-1-1000`), un format propre à MariaDB. *(Détaillé en 13.3 et 13.4.)*
 
----
+### Note de terminologie : *Master/Slave* → *Source/Replica*
 
-## 🔗 Ressources et références
+L'industrie a fait évoluer son vocabulaire de *master/slave* vers **source/replica** (ou *primary/replica*). MariaDB accompagne **partiellement** ce changement en proposant, pour plusieurs **commandes**, des alias dans le vocabulaire moderne :
 
-### Documentation officielle MariaDB
+| Ancien (toujours valide) | Alias *replica* (MariaDB) |
+|--------------------------|---------------------------|
+| `SHOW SLAVE STATUS` | `SHOW REPLICA STATUS` |
+| `START SLAVE` / `STOP SLAVE` | `START REPLICA` / `STOP REPLICA` |
+| `RESET SLAVE` | `RESET REPLICA` |
 
-- [📖 Replication Overview](https://mariadb.com/kb/en/replication-overview/)
-- [📖 Setting Up Replication](https://mariadb.com/kb/en/setting-up-replication/)
-- [📖 Global Transaction ID (GTID)](https://mariadb.com/kb/en/gtid/)
-- [📖 Semi-synchronous Replication](https://mariadb.com/kb/en/semisynchronous-replication/)
-- [📖 Multi-Source Replication](https://mariadb.com/kb/en/multi-source-replication/)
-- [📖 Parallel Replication](https://mariadb.com/kb/en/parallel-replication/)
-
-### Articles et guides
-
-- [🔗 MariaDB Replication Best Practices (2025)](https://mariadb.com/resources/blog/mariadb-replication-best-practices/)
-- [🔗 GTID Migration Guide](https://mariadb.com/kb/en/migrating-to-gtid-based-replication/)
-- [🔗 Troubleshooting Replication](https://mariadb.com/kb/en/troubleshooting-replication/)
-
-### Outils
-
-- **Orchestrator** : Gestion automatisée de topologies de réplication
-- **MHA (Master High Availability)** : Failover automatique
-- **MaxScale** : Proxy avec gestion de réplication intégrée
-- **pt-heartbeat** (Percona Toolkit) : Mesure précise du lag
+> ⚠️ **Exception importante.** La **configuration du lien reste `CHANGE MASTER TO`** (options `MASTER_*`). Contrairement à MySQL, MariaDB **ne dispose pas** de la commande `CHANGE REPLICATION SOURCE TO` (options `SOURCE_*`) : tentée sur MariaDB 12.3, elle renvoie une **erreur de syntaxe** (vérifié sur 12.3.2). De même, les **colonnes** renvoyées par `SHOW REPLICA STATUS` conservent leurs noms historiques (`Slave_IO_Running`, `Seconds_Behind_Master`…). Ce support emploie de préférence « source/réplica » dans le texte, tout en utilisant les **commandes réelles** de MariaDB.
 
 ---
 
-## 🎓 Prochaines étapes
+## Plan du chapitre
 
-Après avoir maîtrisé la réplication, vous êtes prêt à aborder :
-
-### ➡️ Chapitre 14 : Haute Disponibilité
-
-Découvrez comment construire des architectures **hautement disponibles** avec :
-- **Galera Cluster** : Réplication synchrone multi-master
-- **MaxScale** : Load balancing et query routing
-- **Failover automatique** : Solutions de basculement intelligent
-- Architectures de **disaster recovery**
-
-La réplication est la fondation ; la haute disponibilité est l'édifice que vous allez construire dessus !
+- **13.1** — [Concepts de réplication : Asynchrone vs Semi-synchrone](01-concepts-replication.md)
+- **13.2** — [Réplication Master-Slave (Source-Replica)](02-replication-master-slave.md)
+  - 13.2.1 — [Configuration du Primary (binlog)](02.1-configuration-primary.md)
+  - 13.2.2 — [Configuration du Replica](02.2-configuration-replica.md)
+  - 13.2.3 — [CHANGE MASTER TO / CHANGE REPLICATION SOURCE](02.3-change-master-to.md)
+- **13.3** — [Réplication basée sur les positions (binlog coordinates)](03-replication-positions.md)
+- **13.4** — [GTID (Global Transaction Identifier)](04-gtid.md)
+  - 13.4.1 — [Configuration GTID](04.1-configuration-gtid.md)
+  - 13.4.2 — [Avantages pour failover](04.2-avantages-failover.md)
+- **13.5** — [Réplication multi-source](05-replication-multi-source.md)
+- **13.6** — [Réplication en cascade](06-replication-cascade.md)
+- **13.7** — [Monitoring et troubleshooting](07-monitoring-troubleshooting.md)
+  - 13.7.1 — [SHOW SLAVE STATUS / SHOW REPLICA STATUS](07.1-show-slave-status.md)
+  - 13.7.2 — [Seconds_Behind_Master et lag](07.2-seconds-behind-master.md)
+  - 13.7.3 — [Erreurs courantes et résolution](07.3-erreurs-courantes.md)
+- **13.8** — [Failover et switchover](08-failover-switchover.md)
+- **13.9** — [Réplication semi-synchrone](09-replication-semi-synchrone.md)
+- **13.10** — [Optimistic ALTER TABLE pour réduction du lag](10-optimistic-alter-table.md)
+- **13.11** — [Réplication parallèle entre clusters Galera](11-replication-parallele-galera.md) 🆕
+- **13.12** — [Tables temporaires en réplication : prévisibilité](12-tables-temporaires-replication.md) 🆕
 
 ---
 
+## Nouveautés 12.x à connaître pour ce chapitre 🆕
+
+La série 12.x apporte plusieurs évolutions qui touchent directement la réplication :
+
+- **Binlog réécrit et intégré à InnoDB** (cf. 11.5.4) : la suppression de la synchronisation entre le binlog et le moteur transactionnel améliore très nettement le débit en écriture. Comme tout le flux de réplication part du binlog, c'est une amélioration de fond pour les charges fortement transactionnelles.
+- **Réplication parallèle entre clusters Galera** (13.11) : possibilité d'appliquer en parallèle les transactions entre clusters Galera reliés par réplication (`slave_parallel_threads`), pour réduire le lag inter-clusters.
+- **Tables temporaires en réplication plus prévisibles** (13.12) : la variable `create_tmp_table_binlog_formats` rend le comportement de journalisation des tables temporaires plus déterministe.
+- **Valeurs par défaut `MASTER_SSL_*` configurables** (13.2.3) : simplifie la mise en place d'une réplication chiffrée par défaut.
+
+> 🔁 **Migration 11.8 → 12.3 :** la 11.8 LTS reste largement déployée et sert de point de comparaison tout au long de cette formation. Les changements de comportement de la 12.3 (binlog, variables retirées, etc.) sont récapitulés au chapitre 19.10 et dans l'annexe F.
+
+---
+
+## Pour aller plus loin
+
+- **Chapitre 14 — [Haute Disponibilité](../14-haute-disponibilite/README.md)** : Galera Cluster, MaxScale et *failover* automatique, construits sur les fondations de ce chapitre.
+- **Chapitre 12 — [Sauvegarde et Restauration](../12-sauvegarde-restauration/README.md)** : complément indispensable de la réplication.
+- **Chapitre 19 — [Migration et Compatibilité](../19-migration-compatibilite/README.md)** : la réplication au service des migrations sans interruption de service.
 
 ⏭️ [Concepts de réplication : Asynchrone vs Semi-synchrone](/13-replication/01-concepts-replication.md)

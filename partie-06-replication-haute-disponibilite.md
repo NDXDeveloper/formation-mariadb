@@ -69,7 +69,7 @@ Ce module couvre l'ensemble du spectre de la réplication MariaDB, des fondament
 - **Switchover planifié** : Migration contrôlée vers nouveau primary
 - **Failover d'urgence** : Promotion automatique en cas de panne
 - **Réconciliation** : Resynchronisation après failover
-- **Tools** : MaxScale, Orchestrator, MHA
+- **Tools** : MaxScale (`mariadbmon`), Orchestrator, replication-manager
 
 #### ⚡ Réplication semi-synchrone
 - **Garanties de durabilité** : Confirmation avant commit
@@ -77,11 +77,11 @@ Ce module couvre l'ensemble du spectre de la réplication MariaDB, des fondament
 - **Configuration** : Plugins et timeouts
 - **Use cases** : Systèmes financiers, données critiques
 
-#### 🆕 Optimistic ALTER TABLE (11.8)
-- **Problème** : `ALTER TABLE` bloque la réplication (lag majeur)
-- **Solution** : Réplication continue pendant DDL
-- **Impact** : Réduction lag de 90%+ sur grandes tables
-- **Configuration** : Activation et précautions
+#### Optimistic ALTER TABLE (réduction du lag)
+- **Problème** : un `ALTER TABLE` long bloque l'application des événements suivants sur le réplica (lag majeur)
+- **Solution** : le DDL est scindé en `START ALTER` / `COMMIT ALTER` et déroulé **en parallèle** sur le réplica
+- **Impact** : réduction drastique du lag induit par les DDL sur grandes tables
+- **Configuration** : `binlog_alter_two_phase` (sur la source) + réplication parallèle (depuis MariaDB 10.7/10.8 ; cf. 13.10)
 
 💡 **Impact opérationnel** : La réplication correctement configurée permet de maintenir le service pendant maintenance, pannes matérielles, et croissance de charge. Elle est la base de toute stratégie HA.
 
@@ -145,11 +145,11 @@ Ce module vous enseigne les architectures et outils pour éliminer les single po
 - **Configuration** : keepalived setup et priority
 - **Integration** : Avec réplication ou Galera
 
-#### 🔄 Transaction Replay et Connection Migration (11.8) 🆕
-- **Transaction Replay** : Re-exécution automatique après échec temporaire
-- **Connection Migration** : Transfert transparent de sessions entre nœuds
-- **Use cases** : Rolling upgrades sans downtime, maintenance transparente
-- **Configuration** : Activation et limites
+#### 🔄 Transaction Replay et Connection Migration (MaxScale)
+- **Transaction Replay** : re-exécution automatique d'une transaction interrompue sur un autre nœud (MaxScale `readwritesplit`, `transaction_replay`)
+- **Connection Migration** : reconnexion transparente d'une session sur un autre serveur (`master_reconnection`)
+- **Use cases** : rolling upgrades sans downtime, maintenance transparente
+- **Configuration** : paramètres MaxScale (activation et limites)
 
 #### 🛡️ Stratégies de récupération après incident
 - **Incident classification** : Mineur (1 node) vs Majeur (DC entier)
@@ -166,7 +166,9 @@ Ce module vous enseigne les architectures et outils pour éliminer les single po
 
 ---
 
-## 🆕 Innovations MariaDB 11.8 et MaxScale 25.01 pour la HA
+## 🆕 Innovations récentes pour la haute disponibilité
+
+> Trois leviers complémentaires : un mécanisme **serveur** (Optimistic ALTER, réplication), et des fonctionnalités **MaxScale** (Transaction Replay / Connection Migration, et la nouvelle génération d'outils de MaxScale 25.01).
 
 ### Réduction drastique du lag de réplication : Optimistic ALTER TABLE
 
@@ -185,27 +187,33 @@ ALTER TABLE large_table ADD INDEX idx_email (email);
 
 **Impact** : Sur une application avec 10,000 requêtes/sec, un lag de 2h signifie 72 millions de requêtes en retard.
 
-#### La solution MariaDB 11.8 : Optimistic ALTER TABLE 🆕
+#### La solution : Optimistic ALTER TABLE (`binlog_alter_two_phase`)
 
 ```sql
--- MariaDB 11.8 : Réplication continue pendant ALTER
-SET GLOBAL replicate_alter_as_create_select = ON;
+-- Optimistic ALTER pour la réplication (depuis MariaDB 10.7/10.8 ; cf. 13.10)
+-- À activer sur la SOURCE :
+SET GLOBAL binlog_alter_two_phase = ON;
 
 ALTER TABLE large_table ADD INDEX idx_email (email);
--- Primary : 2 heures
--- Replicas : Réplication continue, lag < 10 secondes
+-- L'ALTER est scindé dans le binlog en START ALTER puis COMMIT ALTER :
+-- le réplica démarre SON propre ALTER « en arrière-plan » dès le START ALTER,
+-- en parallèle du trafic courant (réplication parallèle requise sur le réplica).
 
 -- Résultat :
--- ✅ Réplication parallèle au DDL
--- ✅ Lag réduit de 99.9% (2h → 10s)
--- ✅ Replicas restent utilisables
+-- ✅ L'ALTER chevauche le trafic normal sur le réplica (au lieu de le bloquer)
+-- ✅ Lag drastiquement réduit (on n'accumule plus la durée du DDL)
+-- ✅ Replicas restent utilisables pendant l'opération
 ```
+
+> ⚠️ `replicate_alter_as_create_select` n'existe pas en MariaDB : le mécanisme réel est **`binlog_alter_two_phase`** (combiné à la **réplication parallèle** côté réplica et, idéalement, à l'**Online ALTER/OSC** côté source). Détails et exemples vérifiés en **13.10**.
 
 **Impact opérationnel** : Maintenance sans interruption de service, scaling sans downtime.
 
 ---
 
-### Continuité de service : Transaction Replay et Connection Migration 🆕
+### Continuité de service : Transaction Replay et Connection Migration (MaxScale)
+
+> Ces deux mécanismes sont des fonctionnalités de **MaxScale** (routeur `readwritesplit`), et non du serveur MariaDB : ils rendent une bascule **transparente** pour le client. Détails et paramètres en **14.10**.
 
 #### Transaction Replay : Résilience automatique
 
@@ -217,8 +225,8 @@ try:
     connection.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 2")
     connection.commit()
 except TransientError:
-    # MariaDB 11.8 : Transaction Replay automatique
-    # La transaction est re-exécutée sur un autre nœud
+    # MaxScale (transaction_replay) : rejeu automatique de la transaction
+    # La transaction interrompue est re-exécutée sur un autre nœud
     # Transparent pour l'application
     pass
 ```
@@ -232,7 +240,7 @@ except TransientError:
 
 ```sql
 -- Scénario : Maintenance d'un nœud Galera
--- Avant 11.8 : 1000+ connexions perdues, erreurs applicatives
+-- Sans Connection Migration : 1000+ connexions perdues, erreurs applicatives
 
 -- Avec Connection Migration :
 -- 1. MaxScale détecte node en maintenance
@@ -252,20 +260,18 @@ except TransientError:
 #### Workload Capture : Production comme jeu de données de test 🆕
 
 ```bash
-# Capturer trafic production pendant 1 heure
-maxctrl call command workload capture start \
-  --duration=3600 \
-  --output=/data/capture/prod-2025-12-15.wcap
+# Capture du trafic production via le filtre WCAR (module 'wcar'), à chaud
+maxctrl create filter CAPTURE_FLTR wcar
+maxctrl link service RWS-Router CAPTURE_FLTR
+maxctrl call command wcar start CAPTURE_FLTR duration=1h
 
-# Analyse du workload capturé
-maxctrl call command workload analyze /data/capture/prod-2025-12-15.wcap
-# Output :
-# - Queries per second: 15,432
-# - Read/Write ratio: 75/25
-# - Peak connections: 842
-# - Top 10 queries
-# - Transaction patterns
+# (Les fichiers de capture sont écrits dans /var/lib/maxscale/wcar/CAPTURE_FLTR)
+# Le résumé d'une capture s'obtient ensuite avec :
+maxplayer summary /var/lib/maxscale/wcar/CAPTURE_FLTR/capture.cx
+# → débit (QPS), ratio lecture/écriture, requêtes les plus fréquentes, etc.
 ```
+
+> La syntaxe exacte (options, prérequis `log-bin`, transfert) est détaillée et vérifiée en **14.5.1**.
 
 **Use cases** :
 - 📊 Capacity planning basé sur trafic réel
@@ -275,20 +281,14 @@ maxctrl call command workload analyze /data/capture/prod-2025-12-15.wcap
 #### Workload Replay : Validation à l'échelle production 🆕
 
 ```bash
-# Rejouer workload capturé sur nouvel environnement
-maxctrl call command workload replay start \
-  --input=/data/capture/prod-2025-12-15.wcap \
-  --target=mariadb-new-11.8 \
-  --speed=1.0  # Temps réel
-
-# Monitoring pendant replay
-maxctrl call command workload replay status
-# Output :
-# - Progress: 35%
-# - Queries executed: 5,432,890
-# - Errors: 12
-# - Average latency: 4.2ms (vs 4.5ms prod)
-# - 95th percentile: 15ms (vs 18ms prod)
+# Rejeu de la capture sur l'environnement cible, via l'outil 'maxplayer'
+maxplayer replay --user maxreplay --password '***' \
+  --host mariadb-new-12.3:3306 --speed 1.0 \
+  --output comparison-result.csv \
+  /var/lib/maxscale/wcar/CAPTURE_FLTR/capture.cx
+# → produit un fichier de résultats (.csv) à post-traiter puis visualiser
+#   (maxpostprocess + maxvisualize) pour comparer baseline vs cible :
+#   latence moyenne, 95e percentile, erreurs, etc.
 ```
 
 **Avantages révolutionnaires** :
@@ -299,12 +299,13 @@ maxctrl call command workload replay status
 
 #### Diff Router : Comparaison de versions en temps réel 🆕
 
-```yaml
-# Configuration MaxScale Diff Router
+```ini
+# Configuration MaxScale Diff Router (module 'diff')
+# En pratique, on crée plutôt le service Diff via maxctrl (voir workflow ci-dessous)
 [Diff-Service]
 type=service
-router=diffsvc
-servers=mariadb-11.4-prod, mariadb-11.8-test
+router=diff
+servers=mariadb-11.8-prod, mariadb-12.3-test
 user=maxscale
 password=***
 
@@ -312,19 +313,17 @@ password=***
 # Comparaison automatique des résultats
 ```
 
-**Workflow de validation** :
+**Workflow de validation** (le routeur Diff se pilote par ses propres commandes) :
 ```bash
-# 1. Routage vers anciennes et nouvelles versions
-# 2. MaxScale compare résultats en temps réel
-# 3. Logging des différences détectées
-maxctrl call command diff-router analyze
-
-# Output :
-# - Total queries: 1,250,000
-# - Identical results: 1,249,987 (99.999%)
-# - Differences detected: 13
-#   → Query ID 4521: Row order difference (acceptable)
-#   → Query ID 8934: Aggregation precision difference (investigate)
+# 1. Créer le service Diff (compare 'other' à 'main' dans un service existant)
+maxctrl call command diff create DiffMyService MyService MyServer1 mariadb-12.3-test
+# 2. Démarrer la comparaison (réaiguillage en douceur des sessions)
+maxctrl call command diff start DiffMyService
+# 3. Produire un résumé (checksums + histogrammes de latence)
+maxctrl call command diff summary DiffMyService
+# → comparaison « main » vs « other » :
+#   - résultats identiques vs divergences (checksum différent ou latence hors bornes)
+#   - EXPLAIN automatique sur les requêtes divergentes
 ```
 
 **Impact** : Migrations et upgrades MariaDB avec validation exhaustive et zéro surprise.
@@ -441,7 +440,7 @@ mariadb -e "CHANGE MASTER TO MASTER_LOG_FILE='binlog.xxx', MASTER_LOG_POS=yyy; S
 ```
 
 **RTO** : 10-30 minutes  
-**RPO** : 0 (pas de perte de données)
+**RPO** : 0 (pas de perte de données)  
 
 ---
 
@@ -534,7 +533,7 @@ mariadb -e "SHOW STATUS LIKE 'wsrep_cluster_status';"
 ```
 
 **RTO** : 10-30 minutes (selon durée partition réseau)  
-**RPO** : 0 (pas de perte si résolution correcte)
+**RPO** : 0 (pas de perte si résolution correcte)  
 
 ---
 
@@ -601,7 +600,7 @@ cat /backup/xtrabackup_binlog_info
 mariabackup --copy-back --target-dir=/backup/full-02h00
 
 # 3. Rejouer binlogs jusqu'à 14:34 (avant corruption)
-mysqlbinlog --start-position=12847392 \
+mariadb-binlog --start-position=12847392 \
             --stop-datetime="2025-12-15 14:34:00" \
             /var/lib/mysql/binlog.0000* \
   | mariadb
@@ -983,7 +982,7 @@ Bienvenue dans le monde de l'infrastructure qui ne dort jamais ! 🌐
 
 ---
 
-**MariaDB** : Version 11.8 LTS  
-**MaxScale** : Version 25.01
+**MariaDB** : Version 12.3 LTS  
+**MaxScale** : Version 25.01  
 
 ⏭️ [Réplication](/13-replication/README.md)

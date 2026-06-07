@@ -1,993 +1,203 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 13.1 Concepts de Réplication : Asynchrone vs Semi-synchrone
+# 13.1 — Concepts de réplication : Asynchrone vs Semi-synchrone
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 1.5-2 heures  
-> **Prérequis** : 
-> - Compréhension des transactions ACID (Chapitre 6)
-> - Connaissance des binary logs (Section 11.5)
-> - Bases en systèmes distribués (consensus, latence réseau)
-> - Théorème CAP (Consistency, Availability, Partition tolerance)
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- Expliquer le fonctionnement détaillé de la réplication asynchrone et semi-synchrone
-- Comprendre les implications du théorème CAP sur chaque mode
-- Analyser les trade-offs performance vs durabilité
-- Choisir le mode approprié selon les contraintes métier
-- Configurer et optimiser chaque mode de réplication
-- Mesurer et interpréter les métriques de performance
+> **Chapitre 13 — Réplication** · Version de référence : **MariaDB 12.3 LTS**
 
 ---
 
 ## Introduction
 
-La **réplication** dans MariaDB repose sur la propagation des modifications de données depuis un serveur source (Primary/Master) vers un ou plusieurs serveurs de destination (Replica/Slave). Le **mode de réplication** détermine le niveau de synchronisation entre ces serveurs et a un impact direct sur :
+Toute réplication MariaDB repose sur un même mécanisme de fond : la source consigne ses modifications dans son **binary log**, et chaque réplica récupère puis rejoue ce flux d'événements. Ce qui distingue les différents **modes de réplication**, c'est le **degré de synchronisation** entre la source et ses réplicas : la source attend-elle, ou non, une confirmation des réplicas avant de considérer une transaction comme terminée ?
 
-- La **durabilité** des données (garantie anti-perte)
-- La **performance** des écritures
-- La **cohérence** lecture/écriture
-- Le **comportement en cas de panne**
+Cette question gouverne le compromis fondamental de toute architecture distribuée : **performance** d'un côté, **durabilité / cohérence** de l'autre. MariaDB propose deux modes natifs de réplication par flux binlog — **asynchrone** (le défaut) et **semi-synchrone** — auxquels s'ajoute la réplication **synchrone** offerte par Galera Cluster (chapitre 14).
 
-MariaDB propose principalement deux modes :
-1. **Réplication asynchrone** (par défaut)
-2. **Réplication semi-synchrone** (plugin additionnel)
-
-💡 **Analogie** : Pensez à l'envoi d'un colis. La réplication asynchrone est comme déposer le colis dans une boîte postale sans attendre de confirmation. La semi-synchrone, c'est attendre que le facteur confirme qu'il a bien le colis avant de partir.
+Cette section pose les concepts et les compromis. La mise en place pratique d'une topologie source-réplica est traitée en **13.2**, et la configuration détaillée du mode semi-synchrone en **13.9**.
 
 ---
 
-## Réplication Asynchrone
+## Rappel : le mécanisme de réplication sous-jacent
 
-### Principe de fonctionnement
+Avant de comparer les modes, il faut comprendre le chemin parcouru par une transaction, identique dans les grandes lignes pour tous les modes.
 
-La réplication asynchrone est le mode **par défaut** de MariaDB. Elle fonctionne selon ce mécanisme :
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    SERVEUR PRIMARY                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. Client COMMIT                                           │
-│  2. Transaction écrite dans InnoDB                          │
-│  3. Transaction écrite dans binlog                          │
-│  4. COMMIT confirmé au client ✓                             │
-│                                                             │
-│  Le Primary n'attend PAS le Replica                         │
-│                                                             │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Binary Log Events
-                     │ (Transfert réseau asynchrone)
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    SERVEUR REPLICA                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  5. IO Thread : Récupère les événements binlog              │
-│  6. Écriture dans relay log                                 │
-│  7. SQL Thread : Applique les événements                    │
-│                                                             │
-│  Aucune confirmation envoyée au Primary                     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph SOURCE
+        C[Client] --> TX["Transaction + COMMIT"]
+        TX --> BL[(Binary Log)]
+        BL --> DT["Thread Binlog Dump
+(un par réplica)"]
+        AT["Thread ACK Receiver
+(semi-sync uniquement)"]
+    end
+    subgraph REPLICA[RÉPLICA]
+        IO["Thread IO"] --> RL[(Relay Log)]
+        RL --> SQL["Thread SQL
+(coordinateur + workers)"]
+        SQL --> DATA[(Données du réplica)]
+    end
+    DT -->|événements binlog| IO
+    IO -.->|ACK semi-sync| AT
 ```
 
-**Séquence détaillée** :
+Les étapes :
 
-1. **Client envoie COMMIT** au Primary
-2. **Primary écrit dans InnoDB** (redo log, buffer pool)
-3. **Primary écrit dans binary log**
-4. **Primary confirme COMMIT au client** ✅ **(sans attendre le Replica)**
-5. **IO Thread du Replica** se connecte au Primary et lit le binlog
-6. **Relay log** : Les événements sont stockés localement sur le Replica
-7. **SQL Thread du Replica** applique les événements du relay log
+1. **Côté source** — une transaction est exécutée puis validée (`COMMIT`). La source écrit les événements correspondants dans son **binary log**.
+2. Un **thread Binlog Dump** (il en existe un par réplica connecté) lit le binary log et envoie les événements sur le réseau.
+3. **Côté réplica** — le **thread IO** reçoit ces événements et les écrit, à l'identique, dans son **relay log** local.
+4. Le **thread SQL** (ou un coordinateur accompagné de plusieurs *workers* en réplication parallèle) lit le relay log et **applique** les événements aux données du réplica.
 
-### Caractéristiques techniques
+Les flèches en pointillé du schéma représentent le canal d'**acquittement** propre au mode semi-synchrone, sur lequel nous revenons plus bas.
 
-**Threads impliqués** :
+> 💡 **Point clé :** le binary log est la **source de vérité** de toute la réplication. Sa configuration (format `ROW`/`STATEMENT`/`MIXED`, rétention, synchronisation sur disque) impacte directement le comportement et la fiabilité de la réplication. Voir le chapitre 11.5 pour le détail du binlog, et 13.3/13.4 pour le positionnement (coordonnées vs GTID).
 
-```sql
--- Sur le Primary
-SHOW PROCESSLIST;
--- On voit : Binlog Dump thread(s) pour chaque Replica connecté
+---
 
--- Sur le Replica
-SHOW PROCESSLIST;
--- On voit :
--- 1. Slave_IO thread (connexion au Primary)
--- 2. Slave_SQL thread (application des événements)
-```
+## La réplication asynchrone (mode par défaut)
 
-**Flux de données** :
+C'est le mode historique et le comportement par défaut de MariaDB.
 
-```
-Primary Thread        Network         Replica Threads
-──────────────        ───────         ───────────────
-                                      
-Binlog Dump  ─────→  TCP/IP  ─────→  IO Thread
-                                         │
-                                         ▼
-                                     Relay Log
-                                         │
-                                         ▼
-                                     SQL Thread
-                                         │
-                                         ▼
-                                      InnoDB
-```
+### Principe
+
+La source **ne s'occupe pas** de l'état de ses réplicas. Dès qu'une transaction est validée localement et écrite dans le binary log, la source **rend la main au client immédiatement**. La propagation vers les réplicas se fait « au fil de l'eau », sans aucune attente : les réplicas tirent les événements quand ils sont prêts.
+
+Concrètement, du point de vue du client, le `COMMIT` se termine sans qu'aucun réplica n'ait nécessairement reçu — et encore moins appliqué — la transaction.
 
 ### Avantages
 
-✅ **Performance maximale**
-- Latence d'écriture minimale
-- Le Primary ne bloque jamais en attendant le Replica
-- Throughput optimal pour les charges OLTP
-
-✅ **Simplicité**
-- Configuration par défaut, aucun plugin
-- Gestion transparente des pannes Replica
-- Le Primary continue même si tous les Replicas sont down
-
-✅ **Scalabilité**
-- Le Primary peut avoir de nombreux Replicas sans impact
-- Ajout/suppression de Replicas à chaud
+- **Performance maximale en écriture** : la latence perçue par le client ne dépend que de la source. Le nombre de réplicas et leur état n'ont aucun impact sur le temps de réponse.
+- **Découplage total** : un réplica lent, surchargé ou momentanément déconnecté ne ralentit jamais la source.
+- **Simplicité** : c'est le mode par défaut, sans paramétrage particulier au-delà de la mise en place de la réplication.
+- **Tolérance aux liens lents** : adapté à la réplication sur de longues distances (géo-distribution), où la latence réseau rendrait toute attente synchrone prohibitive.
 
 ### Inconvénients et risques
 
-❌ **Perte de données possible**
+- **Retard du réplica (*replication lag*)** : un réplica peut accuser un retard de quelques millisecondes à plusieurs minutes (voire davantage) selon la charge. Une lecture sur un réplica peut donc renvoyer des données **périmées** (cohérence à terme, *eventual consistency*).
+- **Risque de perte de données au *failover*** : si la source tombe en panne alors que certaines transactions validées n'ont pas encore été transmises aux réplicas, ces transactions sont **perdues** lors de la promotion d'un réplica. La fenêtre de perte correspond, au pire, au lag du réplica le plus à jour.
 
-**Scénario de perte** :
-```
-Timeline:
-─────────────────────────────────────────────────────────►
-
-T0: Client COMMIT transaction T1 sur Primary ✓
-T1: Primary confirme au client
-T2: Primary écrit dans binlog
-T3: Primary CRASH 💥 (avant que le Replica ne récupère T1)
-T4: Replica promu en nouveau Primary
-    → Transaction T1 est PERDUE ❌
-```
-
-**Window de vulnérabilité** :
-- Durée entre le COMMIT côté client et la réception par le Replica
-- Typiquement 100ms-1s selon la latence réseau et la charge
-- Peut atteindre plusieurs secondes sous forte charge
-
-❌ **Cohérence lecture/écriture non garantie**
-
-```sql
--- Application web
--- Serveur 1 (Write to Primary)
-INSERT INTO orders (customer_id, total) VALUES (123, 99.99);
-COMMIT; -- Confirmé ✓
-
--- Serveur 2 (Read from Replica) - Quelques ms plus tard
-SELECT COUNT(*) FROM orders WHERE customer_id = 123;
--- Peut ne PAS voir la nouvelle commande ! (lag de réplication)
-```
-
-❌ **Lag de réplication variable**
-
-- Le Replica peut être en retard de quelques secondes à plusieurs heures
-- Facteurs : charge, bande passante réseau, DDL sur grosses tables
-- Impact sur les lectures sur Replica (données "stale")
-
-### Configuration
-
-```ini
-# /etc/mysql/mariadb.conf.d/50-server.cnf
-
-[mysqld]
-# Primary configuration
-server-id = 1                    # Unique par serveur
-log-bin = /var/log/mysql/mariadb-bin
-binlog_format = ROW              # Recommandé
-max_binlog_size = 100M
-expire_logs_days = 7
-
-# Replica configuration
-server-id = 2                    # Différent du Primary !
-relay-log = /var/log/mysql/relay-bin
-log-slave-updates = ON           # Si cascade ou multi-master
-read-only = ON                   # Protection écriture accidentelle
-```
-
-**Établissement de la réplication** :
-
-```sql
--- Sur le Primary : Créer utilisateur de réplication
-CREATE USER 'repl_user'@'%' 
-  IDENTIFIED BY 'SecureP@ssw0rd!';
-  
-GRANT REPLICATION SLAVE ON *.* 
-  TO 'repl_user'@'%';
-
-FLUSH PRIVILEGES;
-
--- Obtenir la position courante
-SHOW MASTER STATUS;
--- +--------------------+----------+--------------+------------------+
--- | File               | Position | Binlog_Do_DB | Binlog_Ignore_DB |
--- +--------------------+----------+--------------+------------------+
--- | mariadb-bin.000042 |     4567 |              |                  |
--- +--------------------+----------+--------------+------------------+
-
--- Sur le Replica : Configurer la réplication
-CHANGE MASTER TO
-  MASTER_HOST = '192.168.1.100',
-  MASTER_PORT = 3306,
-  MASTER_USER = 'repl_user',
-  MASTER_PASSWORD = 'SecureP@ssw0rd!',
-  MASTER_LOG_FILE = 'mariadb-bin.000042',
-  MASTER_LOG_POS = 4567;
-
-START SLAVE;
-
--- Vérifier l'état
-SHOW SLAVE STATUS\G
-```
-
-### Cas d'usage appropriés
-
-**✓ Scénarios recommandés** :
-
-1. **Scalabilité en lecture**
-   - Application à forte charge de lecture
-   - Reporting/Analytique sans impact sur production
-   - Tolérance à des données légèrement "stale"
-
-2. **Développement/Testing**
-   - Environnements non-critiques
-   - Coût de perte de données acceptable
-
-3. **Géo-réplication longue distance**
-   - Latence réseau élevée (>50ms)
-   - Impact performance semi-sync serait prohibitif
-
-**✗ Scénarios déconseillés** :
-
-1. Données financières critiques
-2. Conformité réglementaire stricte (RGPD, HIPAA)
-3. Applications nécessitant cohérence lecture après écriture
+L'asynchrone privilégie donc résolument le **débit** au prix d'une **garantie de durabilité plus faible** en cas de bascule.
 
 ---
 
-## Réplication Semi-synchrone
-
-### Principe de fonctionnement
-
-La réplication semi-synchrone ajoute une **étape de confirmation** :
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    SERVEUR PRIMARY                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. Client COMMIT                                           │
-│  2. Transaction écrite dans InnoDB                          │
-│  3. Transaction écrite dans binlog                          │
-│  4. Envoi événements → Replica(s)                           │
-│  5. ⏳ ATTENTE ACK d'au moins 1 Replica                     │
-│  6. COMMIT confirmé au client ✓                             │
-│                                                             │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Binary Log Events
-                     │ + ACK obligatoire
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    SERVEUR REPLICA                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  5. IO Thread : Récupère les événements binlog              │
-│  6. Écriture dans relay log                                 │
-│  7. Envoi ACK au Primary ✓                                  │
-│  8. SQL Thread : Applique les événements                    │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Différence clé** : Le Primary **attend** qu'au moins un Replica ait confirmé la **réception** des événements binlog avant de confirmer le COMMIT au client.
-
-⚠️ **Important** : Le Replica confirme la **réception** (écriture relay log), PAS l'**application** (exécution SQL). Il peut donc y avoir un léger lag même en semi-sync.
-
-### Garanties de durabilité
-
-**Scénario de crash avec semi-sync** :
-
-```
-Timeline:
-─────────────────────────────────────────────────────────►
-
-T0: Client COMMIT transaction T1 sur Primary
-T1: Primary écrit dans binlog
-T2: Primary envoie à Replica
-T3: Replica reçoit et écrit relay log
-T4: Replica envoie ACK ✓
-T5: Primary confirme au client ✓
-T6: Primary CRASH 💥
-T7: Replica promu en nouveau Primary
-    → Transaction T1 est PRÉSENTE ✓ (dans relay log)
-    → Aucune perte de données
-```
-
-**Garantie** : Si le client reçoit un COMMIT confirmé, au moins un Replica possède la transaction dans son relay log. Promotion de ce Replica = zero data loss.
-
-### Architecture AFTER_SYNC vs AFTER_COMMIT
-
-MariaDB 10.3+ propose deux modes semi-synchrones :
-
-**1. AFTER_SYNC (par défaut, recommandé)** :
-
-```
-Séquence:
-1. Écriture binlog
-2. Synchronisation disque binlog (fsync)
-3. Envoi aux Replicas
-4. Attente ACK
-5. Commit InnoDB
-6. Confirmation client
-```
-
-**Avantage** : Aucune transaction visible sur le Primary qui ne serait pas sur au moins un Replica. Garantie de cohérence maximale.
-
-**2. AFTER_COMMIT (legacy)** :
-
-```
-Séquence:
-1. Écriture binlog
-2. Commit InnoDB
-3. Envoi aux Replicas
-4. Attente ACK
-5. Confirmation client
-```
-
-**Inconvénient** : Fenêtre où une transaction est visible sur Primary mais pas encore ACKée par Replica. En cas de crash, légère incohérence possible.
-
-**Configuration** :
-
-```sql
--- Mode recommandé (AFTER_SYNC)
-SET GLOBAL rpl_semi_sync_master_wait_point = 'AFTER_SYNC';
-```
-
-### Installation et configuration
-
-**1. Installation du plugin** :
+## La réplication semi-synchrone
 
-```sql
--- Sur le Primary
-INSTALL SONAME 'semisync_master';
+La réplication semi-synchrone est un compromis qui réduit la fenêtre de perte de données, sans payer le coût d'une synchronisation complète. Sous MariaDB, **la fonctionnalité est intégrée au serveur et toujours disponible** : depuis MariaDB 10.3.3, il n'est **plus nécessaire d'installer un plugin** (contrairement aux anciennes versions et à certains tutoriels qui montrent encore un `plugin_load_add`). Il suffit d'activer les variables système adéquates.
 
--- Vérifier l'installation
-SHOW PLUGINS;
--- +-----------------------+--------+--------------------+---------+---------+
--- | Name                  | Status | Type               | Library | License |
--- +-----------------------+--------+--------------------+---------+---------+
--- | rpl_semi_sync_master  | ACTIVE | REPLICATION        | ...     | GPL     |
--- +-----------------------+--------+--------------------+---------+---------+
-```
+### Principe
 
-```sql
--- Sur chaque Replica
-INSTALL SONAME 'semisync_slave';
+Lors du `COMMIT`, la source **attend qu'au moins un réplica accuse réception** de la transaction (réception **et** écriture dans son relay log) avant de confirmer la validation au client. On ne garantit donc pas que le réplica a *appliqué* la transaction, seulement qu'il l'a **reçue et journalisée** durablement — d'où le terme « semi ».
 
-SHOW PLUGINS;
--- +-----------------------+--------+--------------------+---------+---------+
--- | Name                  | Status | Type               | Library | License |
--- +-----------------------+--------+--------------------+---------+---------+
--- | rpl_semi_sync_slave   | ACTIVE | REPLICATION        | ...     | GPL     |
--- +-----------------------+--------+--------------------+---------+---------+
-```
+Côté source, un thread dédié, l'**ACK Receiver Thread**, collecte les accusés de réception (*ACK*) envoyés par les réplicas. **L'acquittement d'un seul réplica suffit à débloquer la source.** Contrairement à MySQL (qui propose `rpl_semi_sync_master_wait_for_slave_count` pour exiger *N* accusés), **MariaDB ne dispose pas de cette variable** — l'attente porte toujours sur **un** ACK (le portage demandé par MDEV-18983 n'est pas implémenté en 12.3 : `SELECT @@rpl_semi_sync_master_wait_for_slave_count` renvoie *Unknown system variable*).
 
-**2. Activation** :
+### Le point d'attente : AFTER_COMMIT vs AFTER_SYNC
 
-```sql
--- Primary
-SET GLOBAL rpl_semi_sync_master_enabled = ON;
-SET GLOBAL rpl_semi_sync_master_timeout = 1000;  -- 1 seconde
-SET GLOBAL rpl_semi_sync_master_wait_no_slave = ON;  -- Important !
-
--- Replica
-SET GLOBAL rpl_semi_sync_slave_enabled = ON;
-
--- Redémarrer IO thread pour activer
-STOP SLAVE IO_THREAD;
-START SLAVE IO_THREAD;
-```
-
-**3. Configuration permanente** :
-
-```ini
-# /etc/mysql/mariadb.conf.d/50-server.cnf
-
-# PRIMARY
-[mysqld]
-plugin-load-add = semisync_master.so
-rpl_semi_sync_master_enabled = ON
-rpl_semi_sync_master_timeout = 1000
-rpl_semi_sync_master_wait_point = AFTER_SYNC
-rpl_semi_sync_master_wait_no_slave = ON
-
-# REPLICA
-[mysqld]
-plugin-load-add = semisync_slave.so
-rpl_semi_sync_slave_enabled = ON
-```
-
-### Paramètres critiques
-
-**rpl_semi_sync_master_timeout**
-
-Temps maximal d'attente d'un ACK avant de basculer en mode asynchrone.
-
-```sql
--- Default: 10000ms (10 secondes)
-SET GLOBAL rpl_semi_sync_master_timeout = 1000;  -- 1 seconde
-
--- Trop court : Basculements fréquents async ↔ semi-sync
--- Trop long : Latence excessive en cas de problème Replica
-```
-
-💡 **Recommandation** : 
-- LAN : 500-1000ms
-- WAN : 2000-5000ms
-- Cross-datacenter : 5000-10000ms
-
-**rpl_semi_sync_master_wait_no_slave**
-
-Comportement si aucun Replica semi-sync n'est disponible.
-
-```sql
--- ON (recommandé) : Continue en mode asynchrone
-SET GLOBAL rpl_semi_sync_master_wait_no_slave = ON;
-
--- OFF : Bloque les écritures ! ⚠️ Dangereux
-SET GLOBAL rpl_semi_sync_master_wait_no_slave = OFF;
-```
-
-⚠️ **Attention** : Avec `OFF`, si tous les Replicas échouent, le Primary refuse les COMMIT ! À utiliser seulement si durabilité > disponibilité.
-
-**rpl_semi_sync_master_wait_point**
-
-```sql
--- AFTER_SYNC (recommandé, par défaut depuis 10.3)
-SET GLOBAL rpl_semi_sync_master_wait_point = 'AFTER_SYNC';
-
--- AFTER_COMMIT (legacy, pour compatibilité)
-SET GLOBAL rpl_semi_sync_master_wait_point = 'AFTER_COMMIT';
-```
-
-### Monitoring de la semi-sync
-
-**Variables de statut essentielles** :
-
-```sql
--- État global
-SHOW STATUS LIKE 'Rpl_semi_sync%';
-```
-
-**Métriques clés** :
-
-| Variable | Signification |
-|----------|---------------|
-| `Rpl_semi_sync_master_status` | ON = actif, OFF = fallback async |
-| `Rpl_semi_sync_master_clients` | Nombre de Replicas semi-sync connectés |
-| `Rpl_semi_sync_master_yes_tx` | Transactions confirmées en semi-sync |
-| `Rpl_semi_sync_master_no_tx` | Transactions en mode async (timeout) |
-| `Rpl_semi_sync_master_wait_sessions` | Sessions actuellement en attente ACK |
-| `Rpl_semi_sync_master_avg_wait_time` | Temps moyen d'attente ACK (µs) |
-
-**Exemple de monitoring** :
-
-```sql
--- Taux de succès semi-sync
-SELECT 
-  (Rpl_semi_sync_master_yes_tx / 
-   (Rpl_semi_sync_master_yes_tx + Rpl_semi_sync_master_no_tx)) * 100 
-  AS semi_sync_success_rate
-FROM (
-  SELECT 
-    VARIABLE_VALUE AS Rpl_semi_sync_master_yes_tx
-  FROM information_schema.GLOBAL_STATUS 
-  WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_yes_tx'
-) yes_tx,
-(
-  SELECT 
-    VARIABLE_VALUE AS Rpl_semi_sync_master_no_tx
-  FROM information_schema.GLOBAL_STATUS 
-  WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_no_tx'
-) no_tx;
-```
-
-**Alertes recommandées** :
-
-```sql
--- Semi-sync désactivé (fallback async)
-Rpl_semi_sync_master_status = OFF
-→ Alert: Perte de garantie de durabilité
-
--- Trop de timeouts (>5%)
-(Rpl_semi_sync_master_no_tx / total_tx) > 0.05
-→ Alert: Problème réseau ou Replica surchargé
-
--- Latence excessive (>100ms)
-Rpl_semi_sync_master_avg_wait_time > 100000  -- µs
-→ Alert: Optimiser réseau ou Replica
-```
-
-### Impact sur les performances
-
-**Latence d'écriture** :
-
-```
-Asynchrone:      5-10ms   ████████
-                          ↓
-Semi-sync (LAN): 7-15ms   ██████████
-                          ↓ +2-5ms
-Semi-sync (WAN): 50-150ms ████████████████████████████
-                          ↓ +45-140ms
-```
-
-**Throughput** :
-
-```sql
--- Benchmark sysbench (OLTP write-only)
--- Serveur : 16 vCPU, 64GB RAM, SSD NVMe
--- Réseau : LAN 10Gbps
-
-Mode           TPS     Latence P95    Latence P99
-──────────────────────────────────────────────────
-Asynchrone     15,420  8.2ms          12.5ms
-Semi-sync      13,850  10.1ms         15.8ms  (-10%)
-```
-
-**Facteurs d'impact** :
-
-1. **Latence réseau** : Principal facteur
-   - LAN (< 1ms) : Impact minimal (5-10%)
-   - WAN (10-50ms) : Impact significatif (20-40%)
-   - Intercontinental (100-200ms) : Impact majeur (50-80%)
-
-2. **Nombre de Replicas semi-sync** :
-   - Le Primary attend le **premier** ACK seulement
-   - 1 Replica ou 10 Replicas : même latence !
-
-3. **Configuration `sync_binlog`** :
-   ```sql
-   -- sync_binlog=1 (durabilité max, recommandé avec semi-sync)
-   SET GLOBAL sync_binlog = 1;  -- fsync à chaque commit
-   
-   -- sync_binlog=0 (performance max, risque si crash OS)
-   SET GLOBAL sync_binlog = 0;  -- fsync async par l'OS
-   ```
+Le moment exact où la source attend l'acquittement est déterminant. Il est contrôlé par la variable `rpl_semi_sync_master_wait_point`, qui admet deux valeurs aux propriétés très différentes.
+
+**`AFTER_COMMIT` — valeur par défaut sous MariaDB**
+
+1. Prépare la transaction dans le moteur de stockage.
+2. Synchronise la transaction dans le binary log.
+3. **Valide (commit)** la transaction dans le moteur de stockage.
+4. **Attend l'acquittement** d'un réplica.
+5. Retourne la confirmation au client.
+
+Comme le commit local précède l'attente, **d'autres clients peuvent voir la transaction validée sur la source avant qu'un réplica l'ait acquittée**. En cas de crash de la source suivi d'un *failover*, ces clients peuvent constater une « disparition » de données qu'ils avaient pourtant vues : c'est le risque dit des lectures *fantômes* à la bascule.
+
+**`AFTER_SYNC` — semi-sync « sans perte » (*lossless*)**
+
+1. Prépare la transaction dans le moteur de stockage.
+2. Synchronise la transaction dans le binary log.
+3. **Attend l'acquittement** d'un réplica.
+4. **Valide (commit)** la transaction dans le moteur de stockage.
+5. Retourne la confirmation au client.
+
+Ici, le commit local n'a lieu **qu'après** qu'un réplica a confirmé détenir la transaction. Aucun client ne peut donc voir sur la source une donnée qu'aucun réplica ne possède : si la source tombe avant le commit, la transaction n'a été vue par personne, et le réplica peut être promu sans incohérence. C'est la variante à privilégier pour la **durabilité**.
+
+> ⚠️ **Spécificité MariaDB 12.x — binlog intégré à InnoDB :** dans sa **première implémentation** (12.3), le **binary log intégré à InnoDB** (cf. 11.5.4) **ne prend pas en charge la réplication semi-synchrone** : activer `rpl_semi_sync_master_enabled` renvoie `ERROR 4248 (Semi-synchronous replication is not yet supported with --binlog-storage-engine)`. La suppression du commit en deux phases entre binlog et InnoDB — sur lequel reposait `AFTER_SYNC` — interdit d'emblée ce point d'attente, et cette première version ne gère aucun mode semi-synchrone. **Qui a besoin de la semi-synchrone doit conserver le binlog traditionnel** (basé sur fichiers) — un arbitrage à connaître face au gain d'environ 4× en écriture du binlog InnoDB.
+
+### Le repli automatique vers l'asynchrone (timeout)
+
+La semi-synchrone ne doit jamais bloquer indéfiniment la production. Si aucun réplica n'acquitte une transaction dans le délai imparti — fixé par `rpl_semi_sync_master_timeout`, **par défaut 10 000 ms (10 secondes)** — la source **bascule automatiquement en réplication asynchrone** et reprend son fonctionnement normal. La variable d'état `Rpl_semi_sync_master_status` passe alors à `OFF`.
+
+Dès qu'un réplica semi-synchrone se reconnecte et rattrape son retard, la source **rebascule en mode semi-synchrone** et `Rpl_semi_sync_master_status` repasse à `ON`. Ce mécanisme garantit la disponibilité au prix d'une dégradation temporaire et silencieuse de la garantie de durabilité — un comportement qu'il faut **surveiller** (voir 13.7).
+
+### Principales variables et indicateurs
+
+| Élément | Rôle |
+|---------|------|
+| `rpl_semi_sync_master_enabled` | Active la semi-synchrone côté source (`OFF` par défaut). |
+| `rpl_semi_sync_slave_enabled` | Active la semi-synchrone côté réplica. |
+| `rpl_semi_sync_master_wait_point` | Point d'attente : `AFTER_COMMIT` (défaut) ou `AFTER_SYNC`. |
+| `rpl_semi_sync_master_timeout` | Délai (ms) avant repli en asynchrone — défaut 10 000. |
+| `rpl_semi_sync_master_wait_no_slave` | Si `ON` (défaut), la source continue d'attendre un ACK même quand aucun réplica n'est connecté (jusqu'au timeout), plutôt que de basculer aussitôt en asynchrone. |
+| `Rpl_semi_sync_master_status` *(statut)* | `ON` si la semi-synchrone est effectivement active. |
+| `Rpl_semi_sync_master_clients` *(statut)* | Nombre de réplicas semi-synchrones connectés. |
+
+> 🧩 **À noter :** les variables conservent la terminologie historique `master`/`slave`, là où ce support privilégie « source/réplica » dans le texte. La configuration complète de ce mode est détaillée en 13.9.
 
 ### Avantages
 
-✅ **Durabilité garantie**
-- Zero data loss en cas de crash Primary
-- Au moins un Replica possède toutes les transactions confirmées
-
-✅ **Failover simplifié**
-- Le Replica semi-sync peut être promu immédiatement
-- Pas de calcul de position binlog complexe
-
-✅ **Conformité réglementaire**
-- Répond aux exigences de durabilité strictes
-- Auditabilité : traçabilité des transactions
+- **Fenêtre de perte de données fortement réduite** : au moins un réplica détient chaque transaction confirmée (et avec `AFTER_SYNC`, aucune donnée visible n'est exclusive à la source).
+- **Bascule plus sûre** : un *failover* vers un réplica acquitté n'entraîne pas (ou peu) de perte.
+- **Activation dynamique** : peut être activée/désactivée à chaud avec `SET GLOBAL`, sans redémarrage.
 
 ### Inconvénients
 
-❌ **Impact performance**
-- Latence d'écriture augmentée
-- Dépendance à la latence réseau
-
-❌ **Disponibilité réduite**
-- Si tous les Replicas semi-sync tombent : fallback async ou blocage (selon config)
-
-❌ **Complexité opérationnelle**
-- Configuration supplémentaire
-- Monitoring additionnel requis
-
-### Cas d'usage appropriés
-
-**✓ Scénarios recommandés** :
-
-1. **Données financières critiques**
-   - Transactions bancaires
-   - Paiements e-commerce
-   - Comptabilité
-
-2. **Conformité réglementaire**
-   - RGPD (données personnelles)
-   - HIPAA (santé)
-   - PCI-DSS (cartes bancaires)
-
-3. **SLA strict**
-   - RPO (Recovery Point Objective) = 0
-   - Zero data loss requirement
-
-**✗ Scénarios déconseillés** :
-
-1. Géo-réplication longue distance (latence > 100ms)
-2. Charges d'écriture extrêmement élevées (>10K TPS)
-3. Budget latence très serré (< 10ms P99)
+- **Latence d'écriture accrue** : chaque transaction subit au minimum un aller-retour réseau vers un réplica. L'impact croît avec la latence du lien — d'où l'inadéquation pour des réplicas géographiquement très éloignés.
+- **Débit potentiellement réduit** sous forte charge en écriture.
+- **Garantie non absolue** : en cas de timeout, la source repasse en asynchrone et la protection est temporairement perdue ; il ne s'agit donc pas d'une garantie « zéro perte » inconditionnelle.
 
 ---
 
-## Comparaison Approfondie
+## Et la réplication synchrone ?
 
-### Tableau récapitulatif
-
-| Critère | Asynchrone | Semi-synchrone |
-|---------|------------|----------------|
-| **Durabilité** | ⚠️ Possible perte de données | ✅ Zero data loss |
-| **Performance écriture** | ✅ Maximale | ⚠️ +5-50ms selon réseau |
-| **Throughput** | ✅ Maximum | ⚠️ -5-30% |
-| **Disponibilité** | ✅ Indépendant des Replicas | ⚠️ Dépend d'au moins 1 Replica |
-| **Cohérence** | ⚠️ Éventuelle | ✅ Forte |
-| **Complexité** | ✅ Simple | ⚠️ Moyenne |
-| **Failover** | ⚠️ Calcul position requis | ✅ Immédiat |
-| **Cas d'usage** | Scalabilité lecture | Durabilité critique |
-
-### Trade-offs selon le théorème CAP
-
-Le [théorème CAP](https://en.wikipedia.org/wiki/CAP_theorem) stipule qu'un système distribué ne peut garantir simultanément que 2 des 3 propriétés :
-- **C**onsistency (cohérence)
-- **A**vailability (disponibilité)
-- **P**artition tolerance (tolérance aux partitions)
-
-**Réplication asynchrone : AP (Availability + Partition tolerance)**
-
-```
-Primary     Replica
-   │           │
-   │  Network  │
-   │  Partition│
-   │     ╳     │
-   ▼           ▼
- Writes     Reads
-continue   continue
-(Stale data possible)
-```
-
-- **Availability** : Le Primary continue même si Replica inaccessible
-- **Partition tolerance** : Tolère la partition réseau
-- **Consistency** : ⚠️ Sacrifiée (données "stale" sur Replica)
-
-**Réplication semi-synchrone : CP (Consistency + Partition tolerance)**
-
-```
-Primary     Replica
-   │           │
-   │  Network  │
-   │  Partition│
-   │     ╳     │
-   ▼           
- Writes
-  BLOCK
-(Si wait_no_slave=OFF)
-```
-
-- **Consistency** : Garantie par l'ACK obligatoire
-- **Partition tolerance** : Tolère la partition (fallback async possible)
-- **Availability** : ⚠️ Sacrifiée si `wait_no_slave=OFF`
-
-### Choix du mode selon les contraintes
-
-**Matrice de décision** :
-
-```
-                        Latence réseau
-                    Low (<10ms)    High (>50ms)
-                  ┌─────────────┬──────────────┐
-  Durabilité      │             │              │
-  Critical        │ Semi-sync   │ Semi-sync    │
-  (RPO=0)         │ (optimal)   │ (coûteux)    │
-                  ├─────────────┼──────────────┤
-  Durabilité      │ Async       │ Async        │
-  Tolerant        │ (optimal)   │ (optimal)    │
-  (RPO>0)         │             │              │
-                  └─────────────┴──────────────┘
-```
-
-**Algorithme de décision** :
-
-```
-SI (RPO = 0 ET latence_réseau < 20ms) 
-  → Semi-synchrone AFTER_SYNC
-
-SINON SI (RPO = 0 ET latence_réseau > 20ms)
-  → Semi-synchrone AFTER_SYNC + timeout élevé
-  → OU Galera Cluster (chapitre 14)
-
-SINON SI (RPO > 0 ET throughput > 10K TPS)
-  → Asynchrone
-
-SINON SI (RPO > 0 ET latence_réseau > 100ms)
-  → Asynchrone
-
-SINON
-  → Semi-synchrone (meilleure garantie par défaut)
-FIN SI
-```
+Pour mémoire, il existe un troisième point sur le spectre : la réplication **synchrone**, où **tous** les nœuds doivent appliquer une transaction pour qu'elle soit validée. Sous MariaDB, ce modèle est fourni par **Galera Cluster** (réplication multi-maître à base de certification), traité en détail au **chapitre 14**. Il offre la cohérence la plus forte au prix d'un couplage maximal entre les nœuds, et relève d'une architecture distincte de la réplication par flux binlog décrite ici.
 
 ---
 
-## Configurations Avancées
+## Tableau comparatif
 
-### Réplication semi-sync avec multiple ACKs
-
-MariaDB 10.6+ permet d'exiger des ACK de **plusieurs** Replicas :
-
-```sql
--- Attendre ACK de 2 Replicas minimum (quorum)
-SET GLOBAL rpl_semi_sync_master_wait_for_slave_count = 2;
-```
-
-**Use case** : Garantie de durabilité encore plus forte, tolérance à la panne d'un Replica.
-
-⚠️ **Trade-off** : Latence augmentée (attente du 2ème Replica le plus lent).
-
-### Hybrid mode : Semi-sync sur un sous-ensemble
-
-```sql
--- Activer semi-sync uniquement sur les Replicas critiques
--- Replica 1 : Semi-sync (datacenter principal)
--- Replica 2 : Async (datacenter distant)
--- Replica 3 : Async (reporting)
-
--- Configuration Replica 1
-SET GLOBAL rpl_semi_sync_slave_enabled = ON;
-
--- Configuration Replicas 2-3
-SET GLOBAL rpl_semi_sync_slave_enabled = OFF;
-```
-
-### Monitoring complet
-
-**Script de monitoring production-ready** :
-
-```sql
--- Créer une vue de monitoring
-CREATE OR REPLACE VIEW replication_health AS
-SELECT 
-  'semi_sync_status' AS metric,
-  VARIABLE_VALUE AS value
-FROM information_schema.GLOBAL_STATUS 
-WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_status'
-
-UNION ALL
-
-SELECT 
-  'semi_sync_clients',
-  VARIABLE_VALUE
-FROM information_schema.GLOBAL_STATUS 
-WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_clients'
-
-UNION ALL
-
-SELECT 
-  'semi_sync_avg_wait_ms',
-  ROUND(VARIABLE_VALUE / 1000, 2)  -- µs → ms
-FROM information_schema.GLOBAL_STATUS 
-WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_avg_wait_time'
-
-UNION ALL
-
-SELECT 
-  'semi_sync_success_rate_pct',
-  ROUND(
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_yes_tx') /
-    NULLIF((
-      SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-      WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_yes_tx'
-    ) + (
-      SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-      WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_no_tx'
-    ), 0) * 100,
-    2
-  );
-
--- Utilisation
-SELECT * FROM replication_health;
--- +-----------------------------+----------+
--- | metric                      | value    |
--- +-----------------------------+----------+
--- | semi_sync_status            | ON       |
--- | semi_sync_clients           | 2        |
--- | semi_sync_avg_wait_ms       | 8.45     |
--- | semi_sync_success_rate_pct  | 98.76    |
--- +-----------------------------+----------+
-```
-
-**Intégration Prometheus** :
-
-```yaml
-# mysqld_exporter config
-scrape_configs:
-  - job_name: 'mariadb'
-    static_configs:
-      - targets: ['localhost:9104']
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        
-# Queries exportées
-queries:
-  - name: mariadb_semi_sync_status
-    help: "Semi-sync replication status (1=ON, 0=OFF)"
-    query: |
-      SELECT 
-        CASE WHEN VARIABLE_VALUE = 'ON' THEN 1 ELSE 0 END AS value
-      FROM information_schema.GLOBAL_STATUS 
-      WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_status';
-      
-  - name: mariadb_semi_sync_avg_wait_seconds
-    help: "Average semi-sync wait time in seconds"
-    query: |
-      SELECT VARIABLE_VALUE / 1000000 AS value
-      FROM information_schema.GLOBAL_STATUS 
-      WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_avg_wait_time';
-```
+| Critère | Asynchrone | Semi-synchrone | Synchrone (Galera) |
+|---------|-----------|----------------|--------------------|
+| **Attente de la source** | Aucune | ACK d'≥ 1 réplica (réception) | Tous les nœuds (application) |
+| **Latence d'écriture** | Minimale | Modérée (≥ 1 aller-retour) | Élevée |
+| **Risque de perte au failover** | Élevé (= lag) | Faible (nul avec `AFTER_SYNC`) | Nul |
+| **Cohérence des lectures** | À terme | À terme | Forte |
+| **Sensibilité à la latence réseau** | Faible | Forte | Très forte |
+| **Adapté à la longue distance** | Oui | Limité | Non |
+| **Mode MariaDB par défaut** | ✅ Oui | Non | Non (architecture dédiée) |
 
 ---
 
-## Bonnes Pratiques de Production
+## Comment choisir ?
 
-### 1. Toujours tester le fallback async
+Le choix dépend de la priorité métier — débit ou durabilité — et de la topologie réseau.
 
-```bash
-#!/bin/bash
-# Script de test : Que se passe-t-il si tous les Replicas tombent ?
+- **Réplication asynchrone** lorsque la **performance** prime, que des lectures légèrement périmées sont acceptables, ou que les réplicas sont **distants** (géo-distribution, *disaster recovery*, réplicas de reporting). C'est le choix par défaut, qui convient à la majorité des déploiements.
+- **Réplication semi-synchrone** lorsqu'on veut **minimiser la perte de données** lors d'un *failover* (données sensibles : finance, commandes, transactions critiques), avec des réplicas **proches** (même région, faible latence). Privilégier `AFTER_SYNC` quand l'implémentation le permet — en gardant à l'esprit la restriction liée au binlog InnoDB en 12.x.
+- **Réplication synchrone (Galera)** lorsque la **cohérence forte** et l'absence totale de perte sont impératives, sur un réseau **à faible latence** (chapitre 14).
 
-echo "1. État initial semi-sync"
-mariadb -e "SHOW STATUS LIKE 'Rpl_semi_sync_master_status';"
-
-echo "2. Arrêt de tous les Replicas"
-ssh replica1 "systemctl stop mariadb"
-ssh replica2 "systemctl stop mariadb"
-
-echo "3. Test écriture (doit continuer en mode async)"
-mariadb test -e "INSERT INTO test_table VALUES (NOW());"
-
-echo "4. Vérifier basculement automatique"
-mariadb -e "SHOW STATUS LIKE 'Rpl_semi_sync_master_status';"
-# Doit afficher OFF
-
-echo "5. Redémarrage Replicas"
-ssh replica1 "systemctl start mariadb"
-mariadb -e "SHOW STATUS LIKE 'Rpl_semi_sync_master_status';"
-# Doit afficher ON
-```
-
-### 2. Dimensionner le timeout correctement
-
-```sql
--- Mesurer la latence réseau réelle
--- Depuis le Primary
-DO BENCHMARK(1000000, 1);  -- Warm-up
-
--- Test ping-pong avec Replica
--- Script à exécuter en boucle
-CREATE TABLE ping_test (ts TIMESTAMP(6));
-INSERT INTO ping_test VALUES (NOW(6));
-
--- Sur Replica, mesurer le lag
-SELECT TIMESTAMPDIFF(MICROSECOND, ts, NOW(6)) / 1000 AS lag_ms
-FROM ping_test 
-ORDER BY ts DESC 
-LIMIT 1;
-
--- Définir timeout = P95 latence × 2
-SET GLOBAL rpl_semi_sync_master_timeout = 
-  (SELECT CEIL(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY lag_ms) * 2)
-   FROM lag_measurements);
-```
-
-### 3. Monitoring continu
-
-```sql
--- Créer une alerte si semi-sync se désactive
-CREATE EVENT check_semi_sync_status
-ON SCHEDULE EVERY 1 MINUTE
-DO
-  BEGIN
-    DECLARE semi_sync_on BOOLEAN;
-    
-    SELECT VARIABLE_VALUE = 'ON' INTO semi_sync_on
-    FROM information_schema.GLOBAL_STATUS
-    WHERE VARIABLE_NAME = 'Rpl_semi_sync_master_status';
-    
-    IF NOT semi_sync_on THEN
-      -- Logger dans une table
-      INSERT INTO alerts (severity, message, created_at)
-      VALUES ('CRITICAL', 'Semi-sync replication DISABLED', NOW());
-      
-      -- Ou envoyer alerte externe (webhook, etc.)
-    END IF;
-  END;
-```
-
-### 4. Documentation de la topologie
-
-```sql
--- Documenter la configuration dans une table
-CREATE TABLE replication_topology (
-  host VARCHAR(255) PRIMARY KEY,
-  role ENUM('primary', 'replica'),
-  replication_mode ENUM('async', 'semi-sync'),
-  datacenter VARCHAR(100),
-  purpose VARCHAR(255),
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
-INSERT INTO replication_topology VALUES
-('db-primary-01.prod', 'primary', 'semi-sync', 'DC1', 'Production writes'),
-('db-replica-01.prod', 'replica', 'semi-sync', 'DC1', 'Production reads + HA'),
-('db-replica-02.prod', 'replica', 'async', 'DC2', 'DR site'),
-('db-replica-03.prod', 'replica', 'async', 'DC1', 'Reporting/Analytics');
-```
+En pratique, ces modes se combinent : par exemple une paire source/réplica **semi-synchrone** proche pour la haute disponibilité, complétée de réplicas **asynchrones** distants pour la reprise après sinistre et le reporting.
 
 ---
 
-## ✅ Points clés à retenir
+## Idées clés à retenir
 
-1. **Réplication asynchrone** : Mode par défaut, performance maximale, mais perte de données possible en cas de crash
-
-2. **Réplication semi-synchrone** : Garantit zero data loss, ajoute une latence réseau mais essentielle pour données critiques
-
-3. **AFTER_SYNC vs AFTER_COMMIT** : Toujours utiliser AFTER_SYNC pour la cohérence maximale
-
-4. **Timeout crucial** : Dimensionner `rpl_semi_sync_master_timeout` selon latence réseau réelle (P95 × 2)
-
-5. **Théorème CAP** : Async privilégie disponibilité (AP), semi-sync privilégie cohérence (CP)
-
-6. **Monitoring essentiel** : Surveiller `Rpl_semi_sync_master_status`, taux de succès, et latence moyenne
-
-7. **Fallback automatique** : Semi-sync bascule en async si timeout, assure disponibilité
-
-8. **Impact performance** : -5 à -30% throughput selon latence réseau, tester en conditions réelles
-
-9. **Multiple ACKs** : `rpl_semi_sync_master_wait_for_slave_count > 1` pour tolérance à la panne d'un Replica
-
-10. **Use case driven** : Choisir selon contraintes métier (RPO, RTO, throughput, latence)
+- Tous les modes reposent sur le même socle : **binary log → relay log → application** par les threads IO et SQL.
+- L'**asynchrone** (défaut) maximise le débit mais expose à un **lag** et à une **perte au failover**.
+- La **semi-synchrone** attend l'**accusé de réception** d'au moins un réplica : perte fortement réduite, au prix d'un aller-retour réseau.
+- Le **point d'attente** distingue `AFTER_COMMIT` (défaut MariaDB) de `AFTER_SYNC` (« sans perte ») ; **le binlog InnoDB (12.3) ne prend en charge aucune semi-synchrone** dans sa première implémentation (ERROR 4248) — conserver le binlog fichiers pour la semi-sync.
+- Un **timeout** (10 s par défaut) fait **basculer la semi-synchrone en asynchrone** pour préserver la disponibilité : un comportement à surveiller.
+- La réplication **synchrone** (Galera) constitue le troisième point du spectre, avec la cohérence la plus forte.
 
 ---
 
-## 🔗 Ressources et références
+## Pour aller plus loin
 
-### Documentation officielle MariaDB
-
-- [📖 Replication Overview](https://mariadb.com/kb/en/replication-overview/)
-- [📖 Semisynchronous Replication](https://mariadb.com/kb/en/semisynchronous-replication/)
-- [📖 Replication and Binary Log System Variables](https://mariadb.com/kb/en/replication-and-binary-log-system-variables/)
-
-### Articles techniques
-
-- [🔗 Understanding Semi-Synchronous Replication](https://mariadb.com/resources/blog/understanding-mariadb-semisynchronous-replication/)
-- [🔗 CAP Theorem and Databases](https://www.ibm.com/topics/cap-theorem)
-- [🔗 AFTER_SYNC vs AFTER_COMMIT](https://jfg-mysql.blogspot.com/2016/09/semisync-after-sync-vs-after-commit.html)
-
-### Outils
-
-- **pt-heartbeat** (Percona Toolkit) : Mesure précise du lag
-- **Orchestrator** : Gestion automatisée de topologies
-- **PrometheusDB/Grafana** : Monitoring et alerting
-
----
-
-## ➡️ Section suivante
-
-**13.2 Réplication Master-Slave (Source-Replica)** : Configuration complète étape par étape d'une topologie de réplication, création de l'utilisateur de réplication, établissement de la connexion avec `CHANGE MASTER TO`, et sécurisation de l'environnement.
-
-Vous allez mettre en pratique les concepts de cette section !
-
----
-
+- **13.2** — [Réplication Master-Slave (Source-Replica)](02-replication-master-slave.md) : mise en place pratique d'une topologie source-réplica.
+- **13.7** — [Monitoring et troubleshooting](07-monitoring-troubleshooting.md) : surveiller le lag et l'état de la semi-synchrone.
+- **13.9** — [Réplication semi-synchrone](09-replication-semi-synchrone.md) : configuration détaillée du mode semi-synchrone.
+- **Chapitre 11.5** — [Binary logs et logs de transactions](../11-administration-configuration/05-binary-logs.md) : le journal qui alimente toute la réplication.
+- **Chapitre 14** — [Haute Disponibilité](../14-haute-disponibilite/README.md) : Galera et la réplication synchrone.
 
 ⏭️ [Réplication Master-Slave (Source-Replica)](/13-replication/02-replication-master-slave.md)

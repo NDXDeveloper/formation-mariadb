@@ -1,1234 +1,180 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 14.3 Split-Brain et Quorum
+# 14.3 — Split-brain et quorum
 
-> **Niveau** : Expert  
-> **Durée estimée** : 2-3 heures  
-> **Prérequis** : Section 14.2 (Galera Cluster), compréhension des systèmes distribués
+> **Chapitre 14 — Haute Disponibilité** · Section 14.3  
+> Version de référence : **MariaDB 12.3 LTS**
 
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- **Comprendre** le phénomène de split-brain et ses conséquences catastrophiques
-- **Configurer** le quorum Galera pour prévenir les split-brains
-- **Détecter** rapidement les situations de partition réseau
-- **Mettre en œuvre** des stratégies de fencing et de résolution
-- **Récupérer** d'un split-brain avec perte de données minimale
-- **Concevoir** des architectures résistantes aux partitions réseau
-- **Opérer** un cluster multi-datacenter avec gestion du quorum avancée
+Toute architecture distribuée affronte un même danger fondamental : le **split-brain** (« cerveau divisé »). La parade s'appelle le **quorum**. Ces deux notions, évoquées en 14.1 (quorum, *fencing*) et en 14.2.1 (composante primaire), méritent une section dédiée car elles conditionnent la **sûreté** d'un cluster. On les illustre ici principalement avec Galera, mais le principe s'applique à toutes les solutions de HA.
 
 ---
 
-## Introduction
+## 1. Qu'est-ce que le split-brain ?
 
-Le **split-brain** (cerveau divisé) est l'un des problèmes les plus redoutés dans les systèmes distribués. Dans le contexte Galera Cluster, il survient lorsque plusieurs segments du cluster se croient légitimes et continuent à accepter des écritures de manière indépendante, créant des **divergences de données irréconciliables**.
+Le **split-brain** survient lorsqu'une **partition réseau** coupe un cluster en plusieurs sous-groupes, et que **chaque sous-groupe se croit seul légitime** et continue d'accepter des écritures **indépendamment**. Les données des différentes parties **divergent** alors de façon **irréconciliable**.
 
-Le **quorum** est le mécanisme fondamental qui prévient ce scénario catastrophique. Comprendre son fonctionnement et savoir le configurer correctement est **absolument critique** pour toute architecture Galera en production.
+```
+Avant la partition :                Après une partition réseau :
 
-> ⚠️ **Warning Critical** : Un split-brain mal géré peut entraîner une perte de données définitive et nécessiter une reconstruction complète du cluster. Ce n'est pas une simple indisponibilité, c'est une corruption de données.
+   ┌────┐ ┌────┐ ┌────┐                ┌────┐ ┌────┐  ╳  ┌────┐
+   │ N1 │─│ N2 │─│ N3 │     ──►        │ N1 │─│ N2 │  ╳  │ N3 │
+   └────┘ └────┘ └────┘                └────┘ └────┘  ╳  └────┘
+     cluster cohérent                   2 nœuds (2/3)      1 nœud (1/3)
+                                        majorité            minorité
+```
+
+Le scénario classique se décline selon la topologie :
+
+- **Galera (multi-maître)** : deux groupes de nœuds qui continueraient tous deux à servir finiraient par contenir des données contradictoires.
+- **Actif/passif (réplication + VIP)** : deux nœuds se croient tous deux *primaires* (« dual primary »), détiennent l'IP virtuelle et écrivent chacun de leur côté.
 
 ---
 
-## 1. Le Phénomène de Split-Brain
+## 2. Pourquoi c'est catastrophique
 
-### 1.1 Définition et Anatomie
+Le split-brain est **pire qu'une indisponibilité**. Une panne franche arrête le service, mais ne corrompt pas les données ; un split-brain, lui, produit **deux jeux de données divergents** qu'on ne peut généralement **pas fusionner** :
 
-**Split-brain** : État où un cluster distribué se scinde en deux (ou plus) partitions indépendantes, chacune se considérant comme le cluster légitime et continuant à accepter des transactions.
+- quelle écriture l'emporte lorsque les deux côtés ont modifié la même ligne différemment ?
+- la « réconciliation » impose presque toujours de **sacrifier les écritures d'un côté**, donc de **perdre des données**.
 
-#### **Scénario Classique de Split-Brain**
+C'est une **corruption silencieuse** : le service paraît fonctionner des deux côtés, mais l'intégrité est déjà rompue. D'où la priorité absolue : **empêcher** le split-brain plutôt que d'avoir à le réparer.
 
-```
-État Initial : Cluster 3 nœuds sain
-┌─────────────────────────────────────────┐
-│         Application Servers             │
-└────────┬───────────┬───────────┬────────┘
-         │           │           │
-    ┌────▼────┐ ┌───▼─────┐ ┌──▼──────┐
-    │ Node 1  │─│ Node 2  │─│ Node 3  │
-    │ (DC1)   │ │ (DC1)   │ │ (DC2)   │
-    └─────────┘ └─────────┘ └─────────┘
-         All synchronized ✅
+---
 
+## 3. Le quorum : la parade
 
-T+0 : Partition réseau entre DC1 et DC2
-┌──────────────────────────────────┐     ┌──────────────┐
-│        PARTITION 1 (DC1)         │ ✖   │ PARTITION 2  │
-│   ┌────────┐ ┌────────┐          │     │  ┌────────┐  │
-│   │ Node 1 │─│ Node 2 │          │     │  │ Node 3 │  │
-│   └────────┘ └────────┘          │     │  └────────┘  │
-│   Size: 2 (Majority ✅)          │     │  Size: 1     │
-│   Status: PRIMARY                │     │  Status: NON-PRIMARY
-│   Accepts writes ✅              │     │  Read-only ✅│
-└──────────────────────────────────┘     └──────────────┘
+Le **quorum** est le **nombre minimal de voix** (de membres) qu'une partition doit réunir pour être **autorisée à continuer** de fonctionner.
 
-✅ GOOD : Quorum empêche le split-brain
-→ Partition 1 continue seule (a le quorum 2/3)
-→ Partition 2 se met automatiquement en read-only
+Le principe est simple et puissant :
 
+> Seule la partition détenant une **majorité** (strictement plus de 50 % des voix) peut continuer ; **toute partition minoritaire doit s'arrêter** (cesser de servir, au moins en écriture).
 
-T+0 : Scénario SANS quorum (2 nœuds initiaux)
-┌────────────────────┐                 ┌────────────────────┐
-│   PARTITION 1      │ ✖ ✖ ✖           │   PARTITION 2      │
-│   ┌────────┐       │                 │   ┌────────┐       │
-│   │ Node 1 │       │                 │   │ Node 2 │       │
-│   └────────┘       │                 │   └────────┘       │
-│   Size: 1          │                 │   Size: 1          │
-│   Thinks: I'm alone│                 │   Thinks: I'm alone│
-│   Accepts writes ❌│                 │   Accepts writes ❌│
-└────────────────────┘                 └────────────────────┘
+Comme **deux majorités ne peuvent pas coexister**, ce mécanisme garantit qu'**au plus une seule partition** reste active à un instant donné — le split-brain devient **impossible**. C'est exactement le choix **cohérence (C) plutôt que disponibilité (A)** du théorème CAP (voir 14.1) : la minorité **renonce à servir** pour préserver l'intégrité.
 
-❌ DISASTER : Les deux partitions acceptent des writes divergents !
+---
 
--- Partition 1
-UPDATE accounts SET balance = 1000 WHERE id = 123;
+## 4. Pourquoi un nombre impair de nœuds
 
--- Partition 2 (simultané)
-UPDATE accounts SET balance = 500 WHERE id = 123;
+Le quorum explique l'insistance, depuis le début de ce chapitre, sur un **nombre impair de nœuds** :
 
-→ Données irréconciliables sans intervention manuelle
-```
+- avec un nombre **impair** (3, 5, 7), toute partition désigne **toujours** un côté majoritaire ;
+- avec un nombre **pair**, une coupure 50/50 ne donne **aucune majorité** → **les deux côtés s'arrêtent** (pas de split-brain, mais plus de service).
 
-### 1.2 Causes Fréquentes de Split-Brain
+La tolérance aux pannes d'un cluster de *N* nœuds votants suit la règle : il survit à la perte de **⌊(N−1)/2⌋** nœuds.
 
-#### **1. Partition Réseau (Network Partition)**
+| Nœuds (votants) | Majorité requise | Pannes tolérées | Remarque |
+|-----------------|------------------|-----------------|----------|
+| 1 | 1 | 0 | Aucune redondance |
+| 2 | 2 | 0 | ⚠️ Le piège des 2 nœuds (voir ci-dessous) |
+| **3** | 2 | **1** | ✅ Minimum recommandé |
+| 4 | 3 | 1 | Pas mieux que 3, mais risque d'égalité accru |
+| **5** | 3 | **2** | ✅ Pour une tolérance supérieure |
+| 7 | 4 | 3 | Rarement nécessaire |
 
-**Causes techniques** :
-```
-- Défaillance switch/routeur
-- Câble réseau débranché/coupé
-- Configuration firewall erronée
-- Saturation bande passante
-- Problèmes routing (BGP flapping)
-- Maintenance réseau mal planifiée
-```
+> ⚠️ **Le piège des 2 nœuds.** Un cluster à 2 nœuds **ne tolère aucune panne brutale** : si un nœud disparaît sans préavis (crash, partition), le survivant ne détient plus que 50 % des voix — **pas une majorité** — et s'arrête donc lui aussi. Nuance importante : un **arrêt propre** (*graceful*) est géré différemment (le cluster réduit sa composition attendue, et le survivant reste primaire) ; c'est la **disparition non annoncée** qui fait perdre le quorum. D'où la nécessité d'un **3ᵉ vote** (un nœud supplémentaire ou un arbitre, §6).
 
-**Exemple réel** :
-```bash
-# Vérification logs système lors partition
-tail -f /var/log/mysql/error.log
+---
 
-2025-12-13 14:32:15 [Warning] WSREP: (node1) gcs_core(EVS): 
-  Unable to receive from tcp://10.0.2.10:4567
-2025-12-13 14:32:20 [Warning] WSREP: gcs_core(EVS): 
-  evs::proto(node1, OPERATIONAL, view_id(REG,node1,5)): 
-  suspecting node: node3
-2025-12-13 14:32:30 [Note] WSREP: declaring node3 at tcp://10.0.2.10:4567 stable
-2025-12-13 14:32:30 [Note] WSREP: forgetting node3 (tcp://10.0.2.10:4567)
-2025-12-13 14:32:31 [Note] WSREP: New cluster view: global state: 
-  a1b2c3d4:123, view#6: PRIMARY (2)
-```
+## 5. Galera : la composante primaire (*Primary Component*)
 
-#### **2. Asymmetric Network Failure**
+Chez Galera, le quorum se matérialise par la **composante primaire**, déjà introduite en 14.2.1. Lors d'une partition :
 
-**Partition asymétrique** : Cas particulièrement vicieux
-```
-Node1 peut communiquer avec Node2 : ✅
-Node2 peut communiquer avec Node1 : ✅
-Node1 peut communiquer avec Node3 : ❌
-Node2 peut communiquer avec Node3 : ✅
-Node3 peut communiquer avec Node1 : ❌
-Node3 peut communiquer avec Node2 : ✅
+1. Galera évalue le quorum sur la base de la **dernière composition connue** du cluster.
+2. Le groupe **majoritaire** (> 50 %) devient/reste la **composante primaire** : `wsrep_cluster_status = Primary`. Il **continue** de servir.
+3. Le groupe **minoritaire** passe **`non-Primary`** : il **refuse les requêtes** (il renvoie une erreur tant qu'il n'a pas rejoint une composante primaire) et **cesse de servir**.
 
-Résultat :
-- Node1 voit : {Node1, Node2} = 2 nœuds
-- Node2 voit : {Node1, Node2, Node3} = 3 nœuds (all OK)
-- Node3 voit : {Node2, Node3} = 2 nœuds
+C'est la traduction concrète du choix **cohérence avant disponibilité** : un nœud isolé préfère **refuser de répondre** plutôt que de risquer de diverger. On surveille cet état via `wsrep_cluster_status` (doit valoir `Primary`) et `wsrep_cluster_size` (voir 14.2.3).
 
-→ Situation instable, peut générer flapping
-```
+---
 
-#### **3. Tuning Agressif de Timeouts**
+## 6. L'arbitre Galera (`garbd`)
 
-```ini
-# Configuration DANGEREUSE
-[galera]
-wsrep_provider_options = "
-    evs.suspect_timeout = PT1S;    # Trop court !
-    evs.inactive_timeout = PT3S;   # Trop court !
-"
+Pour les configurations à **nombre pair** de nœuds de données — typiquement **2 nœuds** — Galera fournit un **arbitre** : le démon **`garbd`** (*Galera Arbitrator*). C'est un **membre votant** de la communication de groupe qui :
 
-# Conséquence : False positives
-# → Nœud temporairement lent marqué suspect
-# → Éviction prématurée
-# → Réintégration → Éviction → Cycle
-```
+- **participe au quorum** (il compte comme une voix) ;
+- ne **stocke aucune donnée** ;
+- ne **reçoit aucun trafic SQL**.
 
-💡 **Recommandation** : Timeouts conservateurs, surtout pour WAN.
+Il rétablit ainsi l'**imparité** nécessaire à un quorum toujours tranchable, à moindre coût (un petit processus, pas un serveur complet).
 
-#### **4. Défaillances en Cascade**
+> ⚠️ **Placement de l'arbitre.** `garbd` doit tourner sur un **hôte tiers, indépendant** des deux nœuds de données — idéalement dans un **domaine de défaillance distinct** (voir 14.1). L'installer sur la machine de l'un des deux nœuds ne servirait à rien : la panne de cette machine ferait perdre **deux voix** d'un coup.
 
-```
-Initial state: 5 nœuds sains
+---
 
-T+0  : Node1 crash (hardware)
-       → Cluster: 4 nœuds (quorum OK: 3/5)
+## 7. Poids de quorum et multi-datacenter
 
-T+30s: Node2 surchargé (prend la charge de Node1)
-       → Ralentissement
-       → Heartbeat tardifs
+### Poids (`pc.weight`)
 
-T+45s: Node2 suspecté par Node3, Node4, Node5
-       → Éviction Node2
-       → Cluster: 3 nœuds (quorum OK: 2/5)
+Par défaut, chaque nœud pèse **une voix**. Galera permet d'attribuer des **poids** différents via l'option `pc.weight` (dans `wsrep_provider_options` au démarrage, ou la variable dynamique `wsrep_provider_pc_weight` à chaud — voir la note du §8) ; le quorum se calcule alors sur la **somme des poids**. On peut ainsi donner **plus de poids au datacenter principal**, pour qu'il conserve le quorum si le lien vers un site secondaire tombe.
 
-T+60s: Node3 surchargé à son tour
-       → Même scénario
+### Le piège des deux datacenters
 
-→ Effet domino jusqu'à perte de quorum
-```
+C'est une erreur de conception fréquente : **avec seulement deux sites, on ne peut survivre à la perte d'aucun des deux** tout en gardant le quorum.
 
-### 1.3 Conséquences Catastrophiques
+- Mettre la majorité dans le DC1 → la perte du DC1 tue le quorum.
+- Répartir à égalité → une coupure du lien inter-DC laisse **deux moitiés sans majorité**, donc **tout s'arrête**.
 
-#### **Divergence de Données**
+La seule solution robuste est d'introduire un **3ᵉ emplacement** — ne serait-ce qu'un **arbitre `garbd`** sur un site tiers (ou un cloud) — pour **départager** en cas de coupure entre les deux DC principaux.
+
+> ℹ️ Sur un déploiement multi-DC, on regroupe par ailleurs les nœuds d'un même site dans un **segment** (`gmcast.segment`) pour limiter le trafic de réplication traversant le WAN : un seul nœud par segment relaie vers les autres segments.
+
+---
+
+## 8. Récupérer après une perte de quorum (`pc.bootstrap`)
+
+Si le cluster **perd entièrement le quorum** (mauvaise partition, trop de nœuds tombés), **tous** les nœuds survivants passent `non-Primary` et **cessent de servir** — le service est interrompu, mais les données restent saines.
+
+Pour rétablir le service, un administrateur peut **forcer manuellement** la (re)constitution d'une composante primaire sur un nœud choisi. En **MariaDB 12.3**, le plugin **`wsrep_provider`** (intégré depuis la 11.4, actif avec Galera) expose chaque option du provider Galera sous forme de **variable système individuelle** ; on déclenche donc l'amorçage par :
 
 ```sql
--- État avant split-brain
-SELECT * FROM orders WHERE id = 999;
--- +-----+--------+--------+
--- | id  | status | amount |
--- +-----+--------+--------+
--- | 999 | PAID   | 100.00 |
--- +-----+--------+--------+
-
--- SPLIT-BRAIN COMMENCE
-
--- Partition 1 (Node1, Node2)
-UPDATE orders SET status = 'SHIPPED', amount = 95.00 
-WHERE id = 999;
--- Client applique un discount
-
--- Partition 2 (Node3) - simultané
-UPDATE orders SET status = 'CANCELLED', amount = 0.00 
-WHERE id = 999;
--- Annulation commande
-
--- APRÈS RÉSOLUTION
--- Node1: status = SHIPPED, amount = 95.00
--- Node2: status = SHIPPED, amount = 95.00
--- Node3: status = CANCELLED, amount = 0.00
-
-→ Incohérence irréconciliable
-→ Nécessite arbitrage manuel (quelle est la vraie version ?)
+SET GLOBAL wsrep_provider_pc_bootstrap = 1;   -- MariaDB 12.3 (vérifié sur 12.3.2)
 ```
 
-#### **Violations d'Intégrité**
+> ⚠️ **Forme historique read-only en 12.3.** L'ancienne syntaxe `SET GLOBAL wsrep_provider_options = 'pc.bootstrap=YES'` (encore courante dans la documentation Galera/Codership) **échoue en MariaDB 12.3** avec `ERROR 1238 : Variable 'wsrep_provider_options' is a read only variable` : lorsque le plugin `wsrep_provider` est actif, `wsrep_provider_options` n'est modifiable **qu'au démarrage** (fichier d'options), et les changements **à chaud** passent par les variables `wsrep_provider_<option>` (ici `wsrep_provider_pc_bootstrap`).
 
-```sql
--- Partition 1
-INSERT INTO users (id, email) VALUES (123, 'user@example.com');
-
--- Partition 2 (simultané)
-INSERT INTO users (id, email) VALUES (123, 'different@example.com');
-
--- Après résolution
-→ ERREUR: Duplicate key violation
-→ Impossible de fusionner automatiquement
-```
-
-#### **Impact Business**
-
-```
-Exemples réels de coûts split-brain :
-
-E-commerce :
-- Commandes facturées 2 fois
-- Stock inventory incohérent
-- Pertes estimées : 50k-500k€ / incident
-
-Banking :
-- Transactions dupliquées
-- Soldes de comptes divergents
-- Implications réglementaires + amendes
-
-SaaS :
-- Données clients corrompues
-- Perte de confiance
-- Churn client massif
-```
+> ⚠️ **Manœuvre dangereuse.** Forcer `pc.bootstrap` revient à dire à un nœud « tu es désormais la composante primaire ». Le faire sur le **mauvais** nœud, ou sur **deux côtés** d'une partition, **recrée précisément un split-brain**. On ne l'utilise qu'**après s'être assuré** que l'autre partie est réellement hors service. Cette opération se rattache à l'amorçage vu en 14.2.3 et aux procédures de reprise du 14.8.
 
 ---
 
-## 2. Le Quorum : Mécanisme de Protection
+## 9. Split-brain hors Galera
 
-### 2.1 Principe du Quorum
+Le risque ne concerne pas que les clusters synchrones. Dans une architecture **réplication asynchrone + VIP** (actif/passif), le split-brain prend la forme de **deux primaires** simultanés. Les parades sont alors :
 
-**Définition** : Le quorum est le nombre minimal de nœuds qui doivent être connectés pour qu'une partition soit considérée comme **PRIMARY** (apte à accepter des écritures).
+- le **fencing / STONITH** (voir 14.1) : isoler de force le nœud suspect pour l'empêcher d'écrire ;
+- un **gestionnaire de cluster à quorum** (par exemple Pacemaker/Corosync) qui applique la même logique de majorité aux ressources et à la VIP ;
+- une **arbitration de l'IP virtuelle** (voir 14.7) pour qu'un seul nœud puisse la détenir.
 
-**Formule** :
-```
-Quorum = floor(n_nodes / 2) + 1
-
-Exemples :
-3 nœuds : Quorum = floor(3/2) + 1 = 2
-5 nœuds : Quorum = floor(5/2) + 1 = 3
-7 nœuds : Quorum = floor(7/2) + 1 = 4
-```
-
-**Garantie** : Au maximum **une seule** partition peut avoir le quorum à un instant donné.
-
-```
-Cluster 5 nœuds, partition en 3-2 :
-
-Partition A (3 nœuds) : 3 ≥ 3 (quorum) → PRIMARY ✅
-Partition B (2 nœuds) : 2 < 3 (quorum) → NON-PRIMARY ❌
-
-→ Impossible d'avoir 2 partitions PRIMARY simultanément
-```
-
-### 2.2 États de Partition
-
-#### **PRIMARY (Opérationnel)**
-
-```sql
-SHOW STATUS LIKE 'wsrep_cluster_status';
--- +----------------------+---------+
--- | Variable_name        | Value   |
--- +----------------------+---------+
--- | wsrep_cluster_status | Primary |
--- +----------------------+---------+
-
--- Caractéristiques :
--- ✅ Accepte les écritures (READ/WRITE)
--- ✅ Réplication active
--- ✅ Peut servir de donneur SST/IST
-```
-
-**Configuration visible** :
-```sql
-SHOW STATUS LIKE 'wsrep%';
-
-wsrep_cluster_size          : 3      -- Taille partition
-wsrep_cluster_status        : Primary
-wsrep_local_state_comment   : Synced
-wsrep_ready                 : ON
-wsrep_connected             : ON
-```
-
-#### **NON-PRIMARY (Read-Only Forcé)**
-
-```sql
-SHOW STATUS LIKE 'wsrep_cluster_status';
--- +----------------------+--------------+
--- | Variable_name        | Value        |
--- +----------------------+--------------+
--- | wsrep_cluster_status | Non-primary  |
--- +----------------------+--------------+
-
--- Caractéristiques :
--- ❌ Refuse les écritures
--- ❌ Pas de réplication
--- ✅ Lectures possibles (données potentiellement obsolètes)
-```
-
-**Comportement automatique** :
-```sql
--- Tentative INSERT dans partition NON-PRIMARY
-INSERT INTO users (name) VALUES ('Test');
--- ERROR 1047 (08S01): WSREP has not yet prepared node for application use
-
--- Mode effectif
-SHOW VARIABLES LIKE 'read_only';
--- +---------------+-------+
--- | Variable_name | Value |
--- +---------------+-------+
--- | read_only     | ON    |
--- +---------------+-------+
-```
-
-### 2.3 Configuration du Quorum
-
-#### **Configuration Standard (Automatique)**
-
-```ini
-# /etc/mysql/conf.d/galera.cnf
-[galera]
-wsrep_provider = /usr/lib/libgalera_smm.so
-
-# Quorum automatique basé sur cluster_size
-# PAS BESOIN de configurer explicitement
-
-# Liste des nœuds du cluster
-wsrep_cluster_address = "gcomm://node1,node2,node3"
-
-# Le quorum est calculé automatiquement :
-# - 3 nœuds → quorum = 2
-# - La partition avec 2+ nœuds sera PRIMARY
-```
-
-#### **Bootstrap du Cluster (Premier Démarrage)**
-
-```bash
-# Sur le PREMIER nœud uniquement
-# /etc/mysql/conf.d/galera.cnf
-
-[galera]
-wsrep_cluster_address = "gcomm://"  # Adresse vide = bootstrap
-
-# OU via ligne de commande
-galera_new_cluster
-
-# OU systemd
-systemctl start mariadb@bootstrap
-```
-
-⚠️ **CRITICAL** : Ne jamais bootstrapper plusieurs nœuds simultanément → split-brain garanti !
-
-**Procédure de bootstrap correcte** :
-```bash
-# 1. Bootstrap Node1
-node1$ systemctl start mariadb@bootstrap
-
-node1$ mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
-# wsrep_cluster_size = 1
-
-# 2. Démarrer Node2
-node2$ systemctl start mariadb
-# Rejoint automatiquement Node1
-
-node1$ mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
-# wsrep_cluster_size = 2  (quorum atteint ✅)
-
-# 3. Démarrer Node3
-node3$ systemctl start mariadb
-
-node1$ mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
-# wsrep_cluster_size = 3
-
-# 4. Remettre Node1 en mode normal (redémarrage)
-node1$ systemctl stop mariadb@bootstrap
-node1$ systemctl start mariadb  # Rejoint le cluster normalement
-```
-
-#### **Quorum Forcé (wsrep_provider_options)**
-
-```ini
-# Configuration avancée (rarement nécessaire)
-[galera]
-wsrep_provider_options = "
-    pc.ignore_sb = false;           # Default: Respect quorum strict
-    pc.ignore_quorum = false;       # Default: Quorum obligatoire
-    pc.bootstrap = false;           # Ne pas bootstrap automatiquement
-"
-```
-
-⚠️ **DANGER** : `pc.ignore_sb = true` désactive la protection split-brain → **JAMAIS en production !**
-
-### 2.4 Quorum dans Architectures Spéciales
-
-#### **Cluster 2 Nœuds (Anti-Pattern)**
-
-```
-Problème : 2 nœuds, quorum = 2
-
-Partition réseau :
-- Node1 (size=1) : 1 < 2 → NON-PRIMARY ❌
-- Node2 (size=1) : 1 < 2 → NON-PRIMARY ❌
-
-→ Cluster COMPLÈTEMENT down (les deux en read-only)
-```
-
-**Solutions de contournement** :
-
-**A. Utiliser Arbitrator (Garbd)** 
-```bash
-# Déployer garbd (pas de données, juste vote quorum)
-apt-get install galera-arbitrator-4
-
-# /etc/default/garbd
-GALERA_NODES="node1:4567,node2:4567"
-GALERA_GROUP="production_cluster"
-
-systemctl start garbd
-
-# Cluster effectif : 3 membres (2 DB + 1 arbitrator)
-# Quorum = 2
-# Perte Node1 → {Node2, Garbd} = 2 → quorum OK ✅
-```
-
-**B. PC Weight (Poids personnalisé)** ⚠️ Risqué
-```ini
-# Node1 (serveur principal)
-wsrep_provider_options = "pc.weight=2"  # Compte double
-
-# Node2 (standby)
-wsrep_provider_options = "pc.weight=1"
-
-# Quorum basé sur poids total, pas nombre de nœuds
-# Partition Node1 seul : weight=2 ≥ 2 → PRIMARY
-# Partition Node2 seul : weight=1 < 2 → NON-PRIMARY
-
-# ⚠️ DANGER : En cas de panne Node1, Node2 ne peut pas prendre le relais !
-```
-
-💡 **Recommandation forte** : **Toujours 3+ nœuds** ou utiliser garbd. Jamais 2 nœuds en production.
-
-#### **Multi-Datacenter avec Segments**
-
-```ini
-# Segmentation pour optimiser communication intra-DC
-[galera]
-wsrep_provider_options = "
-    gmcast.segment = 0;  # DC1 (Paris)
-"
-
-# Node3, Node4 (Londres)
-wsrep_provider_options = "
-    gmcast.segment = 1;  # DC2 (Londres)
-"
-
-# Garbd (Dublin)
-wsrep_provider_options = "
-    gmcast.segment = 2;  # DC3 (Dublin - arbitre)
-"
-
-# Avantage : Optimise traffic réseau intra-segment
-# Quorum global maintenu sur l'ensemble
-```
-
-**Scénario perte DC1** :
-```
-5 nœuds : DC1(2) + DC2(2) + Garbd(1)
-Quorum = 3
-
-Perte DC1 :
-Partition DC2+Garbd : 2+1 = 3 ≥ 3 → PRIMARY ✅
-```
+La leçon est générale : **tout mécanisme de bascule a besoin d'un moyen d'empêcher l'existence de deux primaires**.
 
 ---
 
-## 3. Détection de Split-Brain
+## 10. Principes de conception anti-split-brain
 
-### 3.1 Monitoring Proactif
-
-#### **Métriques Clés à Surveiller**
-
-```sql
--- Script de monitoring (à exécuter périodiquement)
-SELECT 
-    @@hostname AS node_name,
-    -- Statut cluster
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_cluster_status') AS cluster_status,
-    
-    -- Taille cluster
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_cluster_size') AS cluster_size,
-    
-    -- Taille configurée
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_cluster_conf_id') AS conf_id,
-    
-    -- État local
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_local_state_comment') AS local_state,
-    
-    -- Connecté ?
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_connected') AS connected,
-    
-    -- Ready ?
-    (SELECT VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS 
-     WHERE VARIABLE_NAME='wsrep_ready') AS ready;
-
--- Résultat SAIN :
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node_name | cluster_status | cluster_size | conf_id | local_state | connected | ready |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node1     | Primary        | 3            | 42      | Synced      | ON        | ON    |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
-
--- Résultat SPLIT-BRAIN :
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node_name | cluster_status | cluster_size | conf_id | local_state | connected | ready |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node1     | Primary        | 2            | 43      | Synced      | ON        | ON    |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
-
--- Simultanément sur node3 :
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node_name | cluster_status | cluster_size | conf_id | local_state | connected | ready |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
--- | node3     | Non-primary    | 1            | 43      | Synced      | ON        | OFF   |
--- +-----------+----------------+--------------+---------+-------------+-----------+-------+
-```
-
-**Alertes critiques** :
-```bash
-#!/bin/bash
-# galera_monitor.sh
-
-EXPECTED_SIZE=5  # Nombre total de nœuds
-
-current_size=$(mysql -N -e "SHOW STATUS LIKE 'wsrep_cluster_size'" | awk '{print $2}')
-cluster_status=$(mysql -N -e "SHOW STATUS LIKE 'wsrep_cluster_status'" | awk '{print $2}')
-
-if [ "$cluster_status" != "Primary" ]; then
-    echo "CRITICAL: Node is NON-PRIMARY !"
-    # Envoyer alerte PagerDuty/OpsGenie
-    exit 2
-fi
-
-if [ "$current_size" -lt "$((EXPECTED_SIZE / 2 + 1))" ]; then
-    echo "WARNING: Cluster size ($current_size) below quorum threshold"
-    exit 1
-fi
-
-if [ "$current_size" -lt "$EXPECTED_SIZE" ]; then
-    echo "WARNING: Cluster degraded ($current_size/$EXPECTED_SIZE nodes)"
-    exit 1
-fi
-
-echo "OK: Cluster healthy ($current_size nodes, Primary)"
-exit 0
-```
-
-#### **Prometheus Exporters**
-
-```yaml
-# mysqld_exporter configuration
-# /etc/mysqld_exporter/mysqld_exporter.cnf
-
-[client]
-user = exporter
-password = secure_password
-
-# Métriques Galera exposées
-[mysqld_exporter]
-collect.global_status = true
-collect.info_schema.innodb_metrics = true
-```
-
-**Requêtes PromQL pour alerting** :
-```promql
-# Alerte : Nœud NON-PRIMARY
-mysql_global_status_wsrep_cluster_status != 1
-
-# Alerte : Cluster size réduit
-mysql_global_status_wsrep_cluster_size < 5
-
-# Alerte : Nœud déconnecté
-mysql_global_status_wsrep_connected != 1
-
-# Alerte : Nœud not ready
-mysql_global_status_wsrep_ready != 1
-```
-
-### 3.2 Analyse des Logs
-
-#### **Patterns de Logs Suspects**
-
-```bash
-# /var/log/mysql/error.log
-
-# 1. Détection perte de connexion
-2025-12-13 15:42:10 [Warning] WSREP: gcs_core(EVS): Unable to receive from tcp://10.0.2.12:4567
-2025-12-13 15:42:15 [Warning] WSREP: gcs_core(EVS): suspecting node: node3 (tcp://10.0.2.12:4567)
-
-# 2. Éviction d'un nœud
-2025-12-13 15:42:30 [Note] WSREP: forgetting node3 (tcp://10.0.2.12:4567)
-2025-12-13 15:42:31 [Note] WSREP: New cluster view: global state: uuid:123, view#44: Primary (2)
-
-# 3. Perte de quorum (DANGER !)
-2025-12-13 15:45:00 [Note] WSREP: New cluster view: global state: uuid:123, view#45: Non-Primary (1)
-2025-12-13 15:45:00 [Note] WSREP: Current view of cluster as seen by this node:
-view (view_id(NON_PRIM,node1,45) memb {
-    node1,tcp://10.0.1.10:4567
-} joined {
-} left {
-} partitioned {
-    node2,tcp://10.0.1.11:4567
-    node3,tcp://10.0.2.12:4567
-})
-
-# 4. Basculement en read_only
-2025-12-13 15:45:01 [Note] WSREP: Server status change connected -> donor/desynced
-2025-12-13 15:45:01 [Note] WSREP: wsrep_ready changed from ON to OFF
-```
-
-**Parser automatique** :
-```bash
-#!/bin/bash
-# detect_split_brain.sh
-
-LOG_FILE="/var/log/mysql/error.log"
-
-# Recherche patterns critiques dans les 5 dernières minutes
-SINCE=$(date --date='5 minutes ago' '+%Y-%m-%d %H:%M')
-
-grep -A 5 "Non-Primary" $LOG_FILE | grep "$SINCE" && {
-    echo "CRITICAL: Split-brain detected!"
-    echo "Node is in NON-PRIMARY state"
-    
-    # Extraire taille partition
-    cluster_size=$(mysql -N -e "SHOW STATUS LIKE 'wsrep_cluster_size'" | awk '{print $2}')
-    echo "Current partition size: $cluster_size"
-    
-    # Alerter équipe
-    send_alert "Split-brain on $(hostname)"
-}
-```
+| Principe | Pourquoi |
+|----------|----------|
+| **Nombre impair de membres votants** | Garantit toujours une majorité tranchable. |
+| **Arbitre `garbd` pour 2 nœuds** | Rétablit l'imparité sans serveur complet. |
+| **Au moins 3 domaines de défaillance / 3ᵉ site** | Indispensable pour survivre à la perte d'un DC en multi-site. |
+| **Poids (`pc.weight`) pour le multi-DC asymétrique** | Conserve le quorum au site prioritaire. |
+| **Fencing pour les topologies non-Galera** | Empêche le double primaire en réplication + VIP. |
+| **`pc.bootstrap` avec prudence** | À n'utiliser qu'une fois l'autre côté certainement éteint. |
 
 ---
 
-## 4. Résolution de Split-Brain
+## À retenir
 
-### 4.1 Scénarios de Résolution
+- Le **split-brain** survient quand une **partition** laisse plusieurs sous-groupes se croire légitimes et écrire chacun de leur côté → **divergence irréconciliable** des données ; c'est **pire qu'une panne** (corruption silencieuse).
+- Le **quorum** est la parade : seule la **majorité** (> 50 %) continue, la **minorité s'arrête**. Comme deux majorités ne coexistent pas, le split-brain devient impossible (choix **C** plutôt que **A** du CAP).
+- Un **nombre impair** de nœuds garantit une majorité ; un cluster de *N* nœuds tolère **⌊(N−1)/2⌋** pannes. **2 nœuds ne tolèrent aucune panne brutale**.
+- Chez Galera, la **composante primaire** (majoritaire) reste `Primary` et sert ; la minorité passe `non-Primary` et **refuse les requêtes**.
+- L'**arbitre `garbd`** (votant, sans données) sécurise les configurations à 2 nœuds, à placer sur un **hôte tiers indépendant**.
+- En **multi-DC**, deux sites ne suffisent pas : il faut un **3ᵉ emplacement** (au moins un arbitre) ; les **poids** (`pc.weight`) gèrent l'asymétrie.
+- Après une perte totale de quorum, on rétablit le service avec **`SET GLOBAL wsrep_provider_pc_bootstrap = 1`** (en 12.3 ; l'ancienne forme `wsrep_provider_options='pc.bootstrap=YES'` est read-only → ERROR 1238) — **manœuvre à risque** réservée aux cas où l'autre côté est sûrement éteint.
 
-#### **Scénario 1 : Split-Brain avec Partition Gagnante Claire**
-
-```
-Situation :
-- Partition A (3 nœuds) : PRIMARY ✅
-- Partition B (2 nœuds) : NON-PRIMARY ❌
-
-Résolution automatique :
-→ Pas d'intervention nécessaire
-→ Partition B attend reconnexion
-→ Après reconnexion, IST depuis Partition A
-```
-
-**Reconnexion réseau** :
-```bash
-# Sur les nœuds de Partition B
-# Logs automatiques après rétablissement réseau
-
-2025-12-13 16:00:00 [Note] WSREP: Received NON-PRIMARY view
-2025-12-13 16:00:05 [Note] WSREP: Connection restored to node1 (tcp://10.0.1.10:4567)
-2025-12-13 16:00:06 [Note] WSREP: Requesting IST from node1
-2025-12-13 16:00:10 [Note] WSREP: IST received: 234 transactions
-2025-12-13 16:00:11 [Note] WSREP: New cluster view: Primary (5)
-2025-12-13 16:00:11 [Note] WSREP: Synchronized with group, ready for connections
-
-# Vérification
-mysql -e "SHOW STATUS LIKE 'wsrep%'"
-wsrep_cluster_size     : 5
-wsrep_cluster_status   : Primary
-wsrep_local_state      : 4 (Synced)
-```
-
-✅ **Résultat** : Synchronisation automatique, aucune perte de données.
-
-#### **Scénario 2 : Split-Brain 50-50 (Toutes Partitions NON-PRIMARY)**
-
-```
-Situation critique :
-Cluster 4 nœuds split 2-2
-
-- Partition A (2 nœuds) : 2 < 3 → NON-PRIMARY ❌
-- Partition B (2 nœuds) : 2 < 3 → NON-PRIMARY ❌
-
-→ Cluster COMPLÈTEMENT down (catastrophe !)
-```
-
-**Résolution manuelle requise** :
-
-**Méthode 1 : Bootstrap une partition (si réseau restauré)**
-```bash
-# 1. Arrêter tous les nœuds proprement
-node1$ systemctl stop mariadb
-node2$ systemctl stop mariadb
-node3$ systemctl stop mariadb
-node4$ systemctl stop mariadb
-
-# 2. Identifier le nœud avec seqno le plus récent
-node1$ galera_recovery
-# Recovered position: uuid:seqno = a1b2c3:1234
-
-node2$ galera_recovery
-# Recovered position: uuid:seqno = a1b2c3:1234
-
-node3$ galera_recovery
-# Recovered position: uuid:seqno = a1b2c3:1220  # Plus ancien
-
-node4$ galera_recovery
-# Recovered position: uuid:seqno = a1b2c3:1220
-
-# 3. Bootstrap depuis le nœud le plus récent (node1 ou node2)
-node1$ systemctl start mariadb@bootstrap
-
-# 4. Rejoindre les autres nœuds
-node2$ systemctl start mariadb
-node3$ systemctl start mariadb
-node4$ systemctl start mariadb
-
-# 5. Vérifier cluster
-mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
-# wsrep_cluster_size = 4 ✅
-```
-
-**Méthode 2 : Forcer quorum (DANGER - dernier recours)**
-```sql
--- SUR UN SEUL NŒUD de la partition à privilégier
-SET GLOBAL wsrep_provider_options = 'pc.bootstrap=true';
-
--- Vérification
-SHOW STATUS LIKE 'wsrep_cluster_status';
--- wsrep_cluster_status : Primary ✅
-
--- ⚠️ ATTENTION : Les autres nœuds doivent être arrêtés
--- avant d'utiliser cette commande !
-```
-
-#### **Scénario 3 : Split-Brain avec Écritures Divergentes (PIRE CAS)**
-
-```
-Situation catastrophique :
-- 2 partitions ont accepté des écritures
-- Données divergentes irréconciliables
-
-Exemple :
-Partition A :
-  UPDATE users SET email='a@example.com' WHERE id=1;
-  
-Partition B :
-  UPDATE users SET email='b@example.com' WHERE id=1;
-```
-
-**Résolution nécessite arbitrage humain** :
-
-```bash
-# 1. Identifier quelle partition contient les données "correctes"
-# Critères de décision :
-#   - Quelle partition a le plus de nœuds ?
-#   - Quelle partition a les données les plus récentes ?
-#   - Impact business : quelle version accepter ?
-
-# 2. Backup exhaustif des DEUX partitions
-# Partition A
-node1$ mysqldump --all-databases > /backup/partition_a_$(date +%s).sql
-
-# Partition B
-node3$ mysqldump --all-databases > /backup/partition_b_$(date +%s).sql
-
-# 3. Décision : Partition A = source de vérité
-
-# 4. Détruire et reconstruire Partition B
-node3$ systemctl stop mariadb
-node3$ rm -rf /var/lib/mysql/*
-node3$ systemctl start mariadb  # SST complet depuis Partition A
-
-# 5. Analyse manuelle des différences pour récupération données
-diff /backup/partition_a_*.sql /backup/partition_b_*.sql > divergences.txt
-
-# 6. Réappliquer manuellement les transactions perdues si nécessaire
-# (après validation business)
-```
-
-⚠️ **IMPORTANT** : Documenter exhaustivement l'incident et les décisions prises.
-
-### 4.2 Outils de Récupération
-
-#### **galera_recovery**
-
-```bash
-# Déterminer le dernier état connu du nœud
-/usr/bin/galera_recovery
-
-# Output :
-# WSREP: Recovered position: uuid:seqno = a1b2c3d4-e5f6-7890-abcd-ef1234567890:1234
-
-# Interprétation :
-# uuid : Identifiant unique du cluster
-# seqno : Numéro de séquence (transaction)
-# → Ce nœud a appliqué jusqu'à la transaction #1234
-```
-
-**Usage dans bootstrap** :
-```bash
-# Comparer seqno de tous les nœuds
-for node in node1 node2 node3; do
-    echo "=== $node ==="
-    ssh $node "/usr/bin/galera_recovery"
-done
-
-# Bootstrapper depuis le nœud avec seqno le plus élevé
-```
-
-#### **grastate.dat**
-
-```bash
-# Fichier d'état Galera
-cat /var/lib/mysql/grastate.dat
-
-# version: 2.1
-# uuid:    a1b2c3d4-e5f6-7890-abcd-ef1234567890
-# seqno:   1234
-# safe_to_bootstrap: 0
-
-# safe_to_bootstrap:
-#   0 = Shutdown non gracieux (crash) → Vérifier avec d'autres nœuds
-#   1 = Dernier nœud à se déconnecter proprement → Bootstrap OK
-```
-
-**Manipulation manuelle (cas extrême)** :
-```bash
-# SI ET SEULEMENT SI :
-# - Cluster complètement down
-# - Ce nœud a les données les plus récentes
-# - Backup effectué
-
-vim /var/lib/mysql/grastate.dat
-# Modifier :
-# safe_to_bootstrap: 1
-
-# Puis bootstrap
-systemctl start mariadb@bootstrap
-```
-
-⚠️ **DANGER** : Ne modifier grastate.dat qu'en dernier recours et avec backup !
+La section suivante introduit l'outil qui présente aux applications un point d'accès stable et route intelligemment les requêtes : **MaxScale**.
 
 ---
 
-## 5. Stratégies de Prévention
-
-### 5.1 Architecture Résiliante
-
-#### **Nombre de Nœuds Optimal**
-
-```
-Production recommandée :
-
-Small cluster  : 3 nœuds  (tolère 1 panne)
-Medium cluster : 5 nœuds  (tolère 2 pannes)
-Large cluster  : 7 nœuds  (tolère 3 pannes)
-
-Règle d'or : Toujours un nombre IMPAIR de nœuds
-→ Évite les partitions 50-50
-```
-
-**Distribution multi-DC** :
-```
-Exemple 5 nœuds, 3 DC :
-
-DC1 (Paris)   : 2 nœuds
-DC2 (Londres) : 2 nœuds
-DC3 (Dublin)  : 1 Garbd (arbitrator)
-
-Perte DC1 → {DC2 + DC3} = 2+1 = 3 ≥ 3 ✅
-Perte DC2 → {DC1 + DC3} = 2+1 = 3 ≥ 3 ✅
-Perte DC3 → {DC1 + DC2} = 2+2 = 4 ≥ 3 ✅
-```
-
-#### **Redondance Réseau**
-
-```bash
-# Configuration multi-path (bonding)
-# /etc/network/interfaces
-
-auto bond0
-iface bond0 inet static
-    address 10.0.1.10
-    netmask 255.255.255.0
-    bond-slaves eth0 eth1
-    bond-mode active-backup
-    bond-miimon 100
-    bond-primary eth0
-
-# Galera utilise l'interface bonding
-# → Tolérance panne d'une NIC
-```
-
-**VLAN dédié Galera** :
-```
-Réseau application : VLAN 10 (10.10.0.0/24)
-Réseau Galera      : VLAN 20 (10.20.0.0/24)
-Réseau management  : VLAN 30 (10.30.0.0/24)
-
-Avantages :
-- Isolation du trafic de réplication
-- QoS configurable
-- Debugging facilité
-```
-
-### 5.2 Configuration Conservatrice
-
-```ini
-# /etc/mysql/conf.d/galera.cnf
-[galera]
-
-# Timeouts généreux (surtout multi-DC)
-wsrep_provider_options = "
-    # Keepalive léger
-    evs.keepalive_period = PT1S;
-    
-    # Délai avant suspicion (générique)
-    evs.suspect_timeout = PT10S;
-    
-    # Timeout inactivité (multi-DC : 30s+)
-    evs.inactive_timeout = PT30S;
-    
-    # Timeout installation vue
-    evs.install_timeout = PT30S;
-    
-    # Send window (limiter burst)
-    evs.send_window = 512;
-    
-    # User messages (heartbeat applicatif)
-    evs.user_send_window = 256;
-    
-    # Consensus timeout
-    evs.consensus_timeout = PT30S;
-"
-
-# Éviter évictions prématurées
-# Multi-DC avec latence WAN : doubler/tripler ces valeurs
-```
-
-**Tuning réseau WAN** :
-```ini
-# Configuration pour latence 50-100ms inter-DC
-wsrep_provider_options = "
-    evs.suspect_timeout = PT30S;
-    evs.inactive_timeout = PT60S;
-    evs.install_timeout = PT60S;
-    
-    # Augmenter buffers
-    evs.send_window = 1024;
-    evs.user_send_window = 512;
-    
-    # Segment markers
-    gmcast.segment = 0;  # Ajuster par DC
-"
-```
-
-### 5.3 Monitoring et Alerting Agressif
-
-```yaml
-# prometheus_alerts.yml
-groups:
-  - name: galera_cluster
-    interval: 10s
-    rules:
-      - alert: GaleraNodeNonPrimary
-        expr: mysql_global_status_wsrep_cluster_status != 1
-        for: 30s
-        labels:
-          severity: critical
-        annotations:
-          summary: "Galera node {{ $labels.instance }} is NON-PRIMARY"
-          description: "Split-brain possible, immediate investigation required"
-      
-      - alert: GaleraClusterSizeReduced
-        expr: mysql_global_status_wsrep_cluster_size < 5
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Galera cluster degraded on {{ $labels.instance }}"
-          description: "Cluster size: {{ $value }}/5 - Risk of quorum loss"
-      
-      - alert: GaleraNodeDisconnected
-        expr: mysql_global_status_wsrep_connected != 1
-        for: 30s
-        labels:
-          severity: critical
-        annotations:
-          summary: "Galera node {{ $labels.instance }} disconnected"
-      
-      - alert: GaleraNodeNotReady
-        expr: mysql_global_status_wsrep_ready != 1
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Galera node {{ $labels.instance }} not ready"
-```
-
-### 5.4 Runbooks et Procédures
-
-**Checklist incident split-brain** :
-```markdown
-# RUNBOOK : Split-Brain Galera
-
-## Détection
-- [ ] Alerte Prometheus/Nagios reçue
-- [ ] Vérifier wsrep_cluster_status sur tous les nœuds
-- [ ] Identifier taille de chaque partition
-
-## Investigation
-- [ ] Analyser /var/log/mysql/error.log (patterns partition)
-- [ ] Vérifier connectivité réseau entre nœuds (ping, nc)
-- [ ] Consulter monitoring réseau (switch, firewall)
-
-## Résolution (si partition réseau résolue)
-- [ ] Attendre reconnexion automatique (5 min max)
-- [ ] Vérifier IST sur nœuds NON-PRIMARY
-- [ ] Valider cluster_size = attendu
-
-## Résolution (si cluster complètement down)
-- [ ] BACKUP immédiat de tous les nœuds
-- [ ] galera_recovery sur tous les nœuds
-- [ ] Identifier seqno max
-- [ ] Bootstrap depuis nœud seqno max
-- [ ] Rejoindre autres nœuds séquentiellement
-
-## Résolution (écritures divergentes)
-- [ ] BACKUP exhaustif TOUTES les partitions
-- [ ] Arbitrage business (quelle version garder)
-- [ ] Reconstruction partition perdante (SST complet)
-- [ ] Analyse diff pour récupération manuelle
-
-## Post-Mortem
-- [ ] Documenter incident timeline
-- [ ] Identifier root cause
-- [ ] Plan d'action préventif
-- [ ] Mise à jour runbook
-```
-
----
-
-## 6. Cas Avancés et Edge Cases
-
-### 6.1 Garagekeeper (Arbitrator) - Configuration Avancée
-
-```bash
-# Installation garbd
-apt-get install galera-arbitrator-4
-
-# Configuration systemd
-cat > /etc/systemd/system/garbd.service <<EOF
-[Unit]
-Description=Galera Arbitrator Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=nobody
-ExecStart=/usr/bin/garbd \\
-    --group production_cluster \\
-    --address "gcomm://node1:4567,node2:4567,node3:4567,node4:4567" \\
-    --options "gmcast.listen_addr=tcp://0.0.0.0:4567;gmcast.segment=2" \\
-    --log /var/log/garbd.log \\
-    --sst rsync
-
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable garbd
-systemctl start garbd
-```
-
-**Monitoring garbd** :
-```bash
-# Vérifier logs
-tail -f /var/log/garbd.log
-
-# Vérifier depuis nœuds DB
-mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
-# Doit inclure garbd (ex: 5 si 4 DB + 1 garbd)
-
-mysql -e "SHOW STATUS LIKE 'wsrep_incoming_addresses'"
-# Liste tous les membres incluant garbd
-```
-
-### 6.2 Weighted Quorum (PC Weight)
-
-**Configuration poids personnalisé** :
-```ini
-# Use case : Cluster asymétrique
-
-# Node1 (Datacenter principal, hardware puissant)
-[galera]
-wsrep_provider_options = "pc.weight=3"
-
-# Node2 (Datacenter principal)
-wsrep_provider_options = "pc.weight=3"
-
-# Node3 (Datacenter DR, hardware moindre)
-wsrep_provider_options = "pc.weight=1"
-
-# Node4 (Datacenter DR)
-wsrep_provider_options = "pc.weight=1"
-
-# Quorum basé sur poids :
-# Total weight = 3+3+1+1 = 8
-# Quorum weight = 8/2 + 1 = 5
-
-# Scénarios :
-# Perte DC principal (Node1+2) : weight=1+1=2 < 5 → NON-PRIMARY ❌
-# Perte DC DR (Node3+4)        : weight=3+3=6 ≥ 5 → PRIMARY ✅
-
-# → DC principal peut fonctionner seul
-```
-
-⚠️ **ATTENTION** : Usage avancé, nécessite compréhension profonde des implications.
-
-### 6.3 Last Committed (pc.recovery)
-
-```ini
-# Active automatiquement la récupération intelligente
-[galera]
-wsrep_provider_options = "pc.recovery=true"
-
-# Comportement :
-# - En cas de crash cluster complet
-# - Nœuds tentent automatiquement de déterminer
-#   lequel a le seqno le plus récent
-# - Bootstrap automatique depuis ce nœud
-# - SANS intervention manuelle
-
-# ⚠️ Utiliser avec précaution :
-# - Risque de bootstrap non intentionnel
-# - Préférer procédure manuelle contrôlée en prod
-```
-
----
-
-## ✅ Points Clés à Retenir
-
-- **Split-brain = divergence de données irréconciliable**, le pire scénario en système distribué
-- **Quorum = seul mécanisme fiable** pour prévenir split-brain (≥ 50% + 1)
-- **Toujours 3+ nœuds** (5 recommandé production), **jamais 2 nœuds** seuls
-- **Arbitrator (garbd)** excellent pour 3ᵉ site ou cluster 2+1
-- **Monitoring proactif** : alerting immédiat sur cluster_status, cluster_size
-- **Logs critiques** : surveiller patterns "Non-Primary", "forgetting node"
-- **Résolution automatique** si une partition a quorum clair (IST)
-- **Résolution manuelle** si cluster complètement down (bootstrap + galera_recovery)
-- **Arbitrage humain** si écritures divergentes (backup + reconstruction)
-- **Prévention** : architecture multi-DC, réseau redondant, timeouts conservateurs
-- **Runbooks essentiels** : procédures documentées et testées régulièrement
-
----
-
-## 🔗 Ressources et Références
-
-### Documentation Officielle
-- [📖 Galera Cluster Quorum](https://galeracluster.com/library/documentation/quorum.html)
-- [📖 PC (Primary Component) Protocol](https://galeracluster.com/library/documentation/pc-protocol.html)
-- [📖 Split-Brain Scenarios](https://galeracluster.com/library/kb/split-brain-and-quorum.html)
-
-### Whitepapers et Articles
-- **"Understanding Quorum in Distributed Systems"** - Academic Paper
-- **"Split-Brain Resolution Strategies"** - Codership Blog
-- **"Galera Arbitrator Deep Dive"** - MariaDB Knowledge Base
-
-### Outils
-- [garbd Documentation](https://galeracluster.com/library/documentation/arbitrator.html)
-- [myq_gadgets - Galera Monitoring](https://github.com/jayjanssen/myq_gadgets)
-- [Chaos Monkey for Galera](https://github.com/galera-chaos) - Testing tool
-
----
-
-## ➡️ Section Suivante
-
-**[14.4 MaxScale](/14-haute-disponibilite/04-maxscale.md)**
-
-Maintenant que vous maîtrisez la gestion du quorum et la résolution de split-brain, la section suivante introduit **MaxScale**, le proxy intelligent qui :
-- Détecte automatiquement les nœuds PRIMARY/NON-PRIMARY
-- Route les connexions vers les nœuds sains
-- Fournit le failover transparent pour les applications
-- Offre des fonctionnalités avancées (Database Firewall, Query Routing)
-
-MaxScale est la couche qui rend Galera réellement transparent pour les applications.
-
----
-
-**Le split-brain n'est pas une fatalité. Une compréhension solide du quorum et des procédures de récupération bien rodées sont votre meilleure assurance.**
+⬅️ [14.2.6 — Retry des write-sets](02.6-retry-write-sets.md) · [📑 Sommaire](../SOMMAIRE.md) · [14.4 — MaxScale ➡️](04-maxscale.md)
 
 ⏭️ [MaxScale](/14-haute-disponibilite/04-maxscale.md)

@@ -1,381 +1,169 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 14. Haute Disponibilité
+# Chapitre 14 — Haute Disponibilité
 
-> **Niveau** : Expert  
-> **Durée estimée** : 12-15 heures  
-> **Prérequis** : Chapitre 13 (Réplication), maîtrise de l'administration MariaDB, expérience en architecture distribuée
+> **Partie 6 : Réplication et Haute Disponibilité (DBA/DevOps)**  
+> Version de référence : **MariaDB 12.3 LTS** · LTS précédente de comparaison : 11.8
 
-## 🎯 Objectifs d'apprentissage
+La haute disponibilité (*High Availability*, HA) regroupe l'ensemble des techniques, architectures et outils qui permettent à un service de base de données de **rester accessible malgré les pannes** — qu'elles soient matérielles, logicielles, réseau ou humaines. Là où le chapitre 13 a posé les fondations de la *réplication* (comment propager les données d'un serveur à un autre), ce chapitre s'intéresse à la question complémentaire : **comment transformer cette redondance de données en disponibilité continue du service**, automatiser la bascule en cas d'incident, et présenter aux applications un point d'accès stable.
+
+---
+
+## À qui s'adresse ce chapitre ?
+
+Ce chapitre fait partie des parcours **Administrateur/DBA** et **DevOps/Cloud**. Il s'adresse à toute personne responsable de la disponibilité d'une base MariaDB en production : DBA, ingénieur SRE/DevOps, architecte d'infrastructure.
+
+---
+
+## Objectifs pédagogiques
 
 À l'issue de ce chapitre, vous serez capable de :
 
-- **Concevoir** des architectures haute disponibilité adaptées aux besoins métier (RTO/RPO)
-- **Déployer et configurer** MariaDB Galera Cluster en production
-- **Implémenter** MaxScale pour le load balancing, routing intelligent et sécurité
-- **Maîtriser** les nouveautés MaxScale 25.01 (Workload Capture/Replay, Diff Router)
-- **Gérer** les situations critiques : split-brain, quorum, failover automatique
-- **Exploiter** les fonctionnalités 11.8 : Transaction Replay et Connection Migration
-- **Mettre en place** des stratégies de récupération après incident robustes
+- distinguer les grandes **architectures de haute disponibilité** et leurs compromis (synchrone vs asynchrone, actif/actif vs actif/passif) ;
+- déployer et exploiter un **cluster MariaDB Galera** (réplication synchrone multi-maître) et comprendre la *certification-based replication* ;
+- diagnostiquer et prévenir les situations de **split-brain** grâce aux mécanismes de **quorum** ;
+- mettre en place **MaxScale** comme proxy intelligent (load balancing, *read/write split*, routage, pare-feu) et exploiter ses fonctionnalités récentes (*Workload Capture/Replay*, *Diff Router*) ;
+- concevoir une stratégie de **failover automatique** et de récupération après incident ;
+- assurer un point d'entrée stable via **Virtual IP / keepalived** ou des alternatives comme **ProxySQL** et **HAProxy** ;
+- offrir une expérience transparente au client grâce au **Transaction Replay** et à la **Connection Migration**.
 
 ---
 
-## Introduction
+## Prérequis
 
-La haute disponibilité (HA) est un enjeu critique pour les systèmes de bases de données modernes. Dans un contexte où l'indisponibilité d'une application peut coûter des milliers d'euros par minute, garantir une disponibilité de **99.99%** (moins de 53 minutes d'indisponibilité par an) ou **99.999%** (moins de 5 minutes par an) devient un impératif business.
+Ce chapitre suppose une bonne maîtrise des notions abordées précédemment :
 
-MariaDB offre un écosystème complet de solutions HA, depuis la réplication asynchrone traditionnelle jusqu'aux clusters synchrones multi-master avec Galera, en passant par des proxies intelligents comme MaxScale qui permettent de maintenir la continuité de service même lors de défaillances matérielles ou logicielles.
-
-### 🔍 Pourquoi la Haute Disponibilité ?
-
-La haute disponibilité répond à plusieurs objectifs stratégiques :
-
-1. **Continuité de service** : Maintenir l'application opérationnelle 24/7/365
-2. **Protection contre les défaillances** : Matériel, réseau, datacenter, erreurs humaines
-3. **Maintenance sans interruption** : Mises à jour, migrations, optimisations
-4. **Performance distribuée** : Répartition de charge sur plusieurs nœuds
-5. **Conformité réglementaire** : Respect des SLA contractuels ou légaux
-
-### 📊 Concepts Fondamentaux
-
-**RTO (Recovery Time Objective)** : Temps maximal acceptable d'interruption de service  
-**RPO (Recovery Point Objective)** : Perte de données maximale acceptable (en temps)
-
-| Architecture | RTO | RPO | Complexité | Coût |
-|--------------|-----|-----|------------|------|
-| **Standalone avec backup** | Heures | Minutes à heures | Faible | Faible |
-| **Réplication async** | Minutes | Secondes à minutes | Moyenne | Moyen |
-| **Réplication semi-sync** | Minutes | Quasi-zéro | Moyenne | Moyen |
-| **Galera Cluster** | Secondes | Zéro | Élevée | Élevé |
-| **Multi-datacenter** | Secondes | Zéro | Très élevée | Très élevé |
-
-### 🏗️ Vue d'Ensemble du Chapitre
-
-Ce chapitre est structuré pour vous accompagner de la théorie à la pratique opérationnelle :
-
-#### **Partie 1 : Fondations Architecturales**
-- **Section 14.1** : Principes et patterns d'architectures HA
-- Compréhension des trade-offs : CAP theorem, consistency vs availability
-
-#### **Partie 2 : MariaDB Galera Cluster**
-- **Section 14.2** : Architecture synchrone multi-master
-  - Certification-based replication
-  - Configuration et déploiement production
-  - State transfers (SST/IST)
-- **Section 14.3** : Gestion du split-brain et quorum
-  - Mécanismes de protection
-  - Stratégies de résolution
-
-#### **Partie 3 : MaxScale - Le Proxy Intelligent**
-- **Section 14.4** : Fonctionnalités core
-  - Load Balancing intelligent
-  - Read/Write Split automatique
-  - Query Routing avancé
-  - Database Firewall pour la sécurité
-
-- **Section 14.5** : 🆕 Nouveautés MaxScale 25.01
-  - **Workload Capture** : Enregistrement du trafic production
-  - **Workload Replay** : Tests de charge réalistes
-  - **Diff Router** : Comparaison de versions en temps réel
-
-#### **Partie 4 : Failover et Résilience**
-- **Section 14.6** : Solutions de failover automatique
-- **Section 14.7** : Virtual IP et keepalived
-- **Section 14.8** : Stratégies de récupération après incident
-
-#### **Partie 5 : Alternatives et Innovations**
-- **Section 14.9** : ProxySQL et HAProxy
-- **Section 14.10** : 🆕 Transaction Replay et Connection Migration (11.8)
+| Prérequis | Pourquoi c'est nécessaire |
+|-----------|---------------------------|
+| **Chapitre 13 — Réplication** | La HA s'appuie sur la réplication (asynchrone, semi-synchrone, GTID). |
+| **Chapitre 6 — Transactions et Concurrence** | Comprendre ACID, l'isolation et les verrous est indispensable pour raisonner sur la cohérence en cluster. |
+| **Chapitre 11 — Administration et Configuration** | La configuration du serveur (binlog, variables système) conditionne la HA. |
+| **Chapitre 12 — Sauvegarde et Restauration** | La HA ne remplace pas les sauvegardes ; elle les complète. |
 
 ---
 
-## 🆕 Nouveautés MariaDB 11.8 pour la Haute Disponibilité
+## Pourquoi la haute disponibilité ?
 
-### **1. Transaction Replay (Rejouabilité Automatique)**
+Une indisponibilité de base de données a un coût direct (perte de chiffre d'affaires, pénalités contractuelles via les SLA) et indirect (perte de confiance, dette opérationnelle). L'objectif de la HA est de **réduire ce coût** en agissant sur deux indicateurs fondamentaux :
 
-MariaDB 11.8 introduit la capacité de rejouer automatiquement les transactions en cas de défaillance d'un nœud :
+- **RTO — *Recovery Time Objective*** : durée maximale d'interruption tolérée. *« En combien de temps le service doit-il redevenir opérationnel ? »*
+- **RPO — *Recovery Point Objective*** : quantité maximale de données que l'on accepte de perdre. *« Jusqu'à quel point dans le passé peut-on remonter ? »*
 
-```sql
--- Configuration de Transaction Replay
-SET GLOBAL transaction_replay = ON;
-SET GLOBAL transaction_replay_attempts = 3;
-SET GLOBAL transaction_replay_timeout = 30; -- secondes
-```
+Une réplication **synchrone** (Galera) vise un RPO proche de zéro mais impose un surcoût à chaque écriture ; une réplication **asynchrone** offre de meilleures performances en écriture au prix d'un RPO non nul en cas de bascule.
 
-**Avantages** :
-- ✅ Réduction du RTO : moins d'interventions manuelles
-- ✅ Transparence applicative : l'application n'a pas besoin de gérer le retry
-- ✅ Cohérence garantie : rejeu uniquement si la transaction n'a pas été committée
+### Les « neuf » de la disponibilité
 
-**Cas d'usage** :
-```sql
--- Transaction automatiquement rejouée en cas de failover
-START TRANSACTION;
-UPDATE accounts SET balance = balance - 100 WHERE id = 123;
-UPDATE accounts SET balance = balance + 100 WHERE id = 456;
-COMMIT; -- Si échec ici, rejouée automatiquement sur nouveau primary
-```
+La disponibilité s'exprime souvent en pourcentage de temps de fonctionnement. Voici l'indisponibilité annuelle correspondante :
 
-### **2. Connection Migration (Migration Transparente)**
+| Disponibilité | Surnom | Indisponibilité / an |
+|--------------|--------|----------------------|
+| 99 % | *two nines* | ≈ 3,65 jours |
+| 99,9 % | *three nines* | ≈ 8,77 heures |
+| 99,99 % | *four nines* | ≈ 52,6 minutes |
+| 99,999 % | *five nines* | ≈ 5,26 minutes |
+| 99,9999 % | *six nines* | ≈ 31,5 secondes |
 
-Permet de migrer les connexions actives vers un autre nœud sans perte de session :
-
-```sql
--- Configuration de Connection Migration
-SET GLOBAL connection_migration = ON;
-SET GLOBAL connection_migration_preserve_session = ON;
-```
-
-**Fonctionnalités** :
-- Préservation des variables de session
-- Maintien des prepared statements
-- Continuité des transactions (couplé avec Transaction Replay)
-
-**Impact sur l'architecture** :
-```
-Client → MaxScale → Primary (défaillance détectée)
-                  ↓
-              Migration automatique
-                  ↓
-Client → MaxScale → New Primary (session préservée)
-```
-
-### **3. Améliorations Galera 4.x**
-
-- **Streaming Replication** : Réplication de très grandes transactions par fragments
-- **Parallel Applying** : Amélioration du parallélisme sur les replicas
-- **Automatic IST** : Déclenchement automatique d'IST au lieu de SST quand possible
+Chaque « neuf » supplémentaire augmente significativement la complexité et le coût de l'architecture. L'enjeu n'est pas de viser systématiquement le maximum, mais de **dimensionner la HA en fonction des besoins réels** du service.
 
 ---
 
-## 🎯 Architecture de Référence : Production-Ready HA
+## Vocabulaire clé du chapitre
 
-Voici une architecture complète combinant les meilleures pratiques :
-
-```
-                          ┌─────────────────┐
-                          │   Application   │
-                          │    Servers      │
-                          └────────┬────────┘
-                                   │
-                    ┌──────────────┼──────────────┐
-                    │              │              │
-              ┌─────▼─────┐  ┌─────▼─────┐  ┌─────▼─────┐
-              │ MaxScale  │  │ MaxScale  │  │ MaxScale  │
-              │  Primary  │  │  Standby  │  │  Standby  │
-              │ (VIP)     │  │           │  │           │
-              └─────┬─────┘  └────┬──────┘  └───┬───────┘
-                    │             │             │
-        ┌───────────┼─────────────┼─────────────┼───────────┐
-        │           │             │             │           │
-   ┌────▼────┐ ┌────▼────┐  ┌─────▼───┐  ┌──────▼──┐ ┌──────▼──┐
-   │ Galera  │ │ Galera  │  │ Galera  │  │ Galera  │ │ Galera  │
-   │ Node 1  │ │ Node 2  │  │ Node 3  │  │ Node 4  │ │ Node 5  │
-   │  DC1    │ │  DC1    │  │  DC2    │  │  DC2    │ │  DC3    │
-   │ Primary │ │ Primary │  │ Primary │  │ Primary │ │ Arbitr. │
-   └─────────┘ └─────────┘  └─────────┘  └─────────┘ └─────────┘
-```
-
-**Caractéristiques** :
-- **5 nœuds Galera** : Tolérance de 2 pannes simultanées
-- **3 datacenters** : Protection contre défaillance datacenter
-- **3 instances MaxScale** : Pas de SPOF au niveau proxy
-- **VIP avec keepalived** : Basculement automatique MaxScale
-- **Nœud arbitre (DC3)** : Garagekeeper pour quorum, sans données
-
-**Disponibilité théorique** : 99.999% (Five Nines)
+| Terme | Définition courte |
+|-------|-------------------|
+| **SPOF** (*Single Point of Failure*) | Composant unique dont la panne entraîne l'arrêt de tout le service. La HA vise à les éliminer. |
+| **Failover** | Bascule **automatique** vers un nœud sain après détection d'une panne. |
+| **Switchover** | Bascule **planifiée et contrôlée** (maintenance, mise à jour), sans incident. |
+| **Quorum** | Majorité de nœuds nécessaire pour qu'un cluster prenne des décisions et reste opérationnel. |
+| **Split-brain** | Situation où une partition réseau fait croire à plusieurs sous-groupes qu'ils sont seuls maîtres, menaçant la cohérence. |
+| **SST / IST** | *State Snapshot Transfer* (copie complète) et *Incremental State Transfer* (différentiel) : méthodes de synchronisation d'un nœud Galera rejoignant le cluster. |
+| **wsrep** | *Write Set Replication* : l'API et le protocole de réplication synchrone utilisés par Galera. |
+| **VIP** (*Virtual IP*) | Adresse IP flottante basculée d'un serveur à l'autre pour offrir un point d'accès stable. |
 
 ---
 
-## 📋 Matrice de Décision : Quelle Solution HA ?
+## Panorama des approches de HA sous MariaDB
 
-| Critère | Réplication Async | Galera Cluster | Multi-DC Galera |
-|---------|-------------------|----------------|-----------------|
-| **RTO** | 1-5 minutes | < 30 secondes | < 30 secondes |
-| **RPO** | Secondes-minutes | Zéro | Zéro |
-| **Writes simultanés** | ❌ Non | ✅ Oui | ✅ Oui |
-| **Latence réseau** | Tolérant | < 10ms recommandé | < 100ms |
-| **Complexité** | Faible | Moyenne | Élevée |
-| **Conflits** | N/A | Possibles (rares) | Plus fréquents |
-| **Scalabilité reads** | ✅ Excellente | ✅ Excellente | ✅ Excellente |
-| **Scalabilité writes** | ❌ Limitée | ⚠️ Moyenne | ⚠️ Moyenne |
-| **Coût infrastructure** | Faible | Moyen | Élevé |
+Il n'existe pas une seule « bonne » architecture : le choix dépend du profil de charge, de la tolérance à la perte de données et de la répartition géographique.
+
+| Approche | Topologie | RPO | Points forts | Points de vigilance |
+|----------|-----------|-----|--------------|---------------------|
+| **Galera Cluster** | Synchrone, multi-maître (actif/actif) | ≈ 0 | Pas de perte de données, adhésion automatique, lectures réparties | Écritures limitées par le nœud le plus lent et la latence réseau ; sensible aux gros transactions et aux points chauds |
+| **Réplication + proxy** | Asynchrone / semi-synchrone (actif/passif) | > 0 | Excellentes performances en écriture, souplesse géographique | Bascule à orchestrer, *replication lag*, perte possible en asynchrone |
+| **Proxy intelligent (MaxScale)** | Au-dessus des deux précédents | — | *Read/write split*, routage, failover automatique, pare-feu | Composant à rendre lui-même hautement disponible |
+
+Ces approches se combinent fréquemment : par exemple un cluster Galera placé derrière MaxScale, ou une réplication asynchrone entre deux clusters Galera géo-distribués.
 
 ---
 
-## ⚠️ Points Critiques à Maîtriser
+## Positionnement MariaDB 12.3 LTS
 
-### **1. Split-Brain : Le Cauchemar des Architectures Distribuées**
+La 12.3 LTS apporte plusieurs évolutions qui touchent directement la haute disponibilité :
 
-Un split-brain survient quand deux parties d'un cluster croient être le cluster légitime :
+- **Galera packagé séparément** : le support Galera est désormais fourni par un paquet dédié, `mariadb-server-galera`, et n'est plus une dépendance du serveur lui-même (voir 14.2.5). Cela a un impact concret sur les images Docker officielles et le déploiement via l'operator Kubernetes.
+- **Retry des *write sets*** : la variable `wsrep_applier_retry_count` permet de rejouer automatiquement les *write sets* en cas de conflit transitoire (voir 14.2.6).
+- **Réplication parallèle entre clusters Galera** : amélioration de `slave_parallel_threads` pour réduire le *lag* entre clusters (voir 13.11).
 
-```
-Cluster Initial (3 nœuds)
-    A ←→ B ←→ C
-         ↓ Partition réseau
-    A (seul)     B ←→ C
-    ↓ Continue   ↓ Continue
-  SPLIT-BRAIN !
-```
-
-**Conséquences** :
-- Divergence des données
-- Violations de contraintes
-- Corruption potentielle
-- Résolution manuelle complexe
-
-**Solutions** :
-- Quorum obligatoire (minimum 3 nœuds)
-- Garagekeeper (arbitre)
-- Fencing automatique
-- Monitoring proactif
-
-### **2. Quorum et Formation de Cluster**
-
-Le quorum garantit qu'une majorité de nœuds est d'accord :
-
-```
-3 nœuds : Quorum = 2 (tolère 1 panne)
-5 nœuds : Quorum = 3 (tolère 2 pannes)
-7 nœuds : Quorum = 4 (tolère 3 pannes)
-```
-
-**Formule** : `Quorum = (Nodes / 2) + 1`
-
-### **3. Failover : Automatique vs Manuel**
-
-**Failover Automatique** :
-- ✅ RTO minimal (< 1 minute)
-- ✅ Disponibilité 24/7
-- ⚠️ Risque de "flapping"
-- ⚠️ Nécessite configuration précise
-
-**Failover Manuel** :
-- ✅ Contrôle total
-- ✅ Évite les décisions précipitées
-- ❌ RTO plus long
-- ❌ Nécessite astreinte
-
-**Recommandation** : Automatique avec supervision humaine et alerting robuste
+Ces points sont signalés par le marqueur 🆕 dans le plan ci-dessous et détaillés dans leurs sections respectives.
 
 ---
 
-## 🔧 Outils de l'Écosystème HA
+## Plan du chapitre
 
-| Outil | Fonction | Niveau |
-|-------|----------|--------|
-| **MaxScale** | Proxy HA, routing, firewall | Production |
-| **ProxySQL** | Alternative proxy, query caching | Production |
-| **HAProxy** | Load balancing TCP/HTTP | Production |
-| **Keepalived** | Virtual IP, VRRP | Production |
-| **Corosync/Pacemaker** | Cluster management | Avancé |
-| **Orchestrator** | Topology management, failover | Avancé |
-| **MHA (Master HA)** | Failover MySQL/MariaDB | Legacy |
-| **ClusterControl** | Management GUI complet | Commercial |
+Le chapitre progresse des **concepts** vers les **outils**, puis vers les **stratégies opérationnelles**.
 
----
+1. **[14.1 — Architectures haute disponibilité : Concepts](01-architectures-ha-concepts.md)**
+   Fondations : SPOF, RTO/RPO, redondance, actif/actif vs actif/passif.
 
-## 📚 Structure des Sections Suivantes
+2. **[14.2 — MariaDB Galera Cluster](02-galera-cluster.md)**
+   Le cœur de la HA synchrone sous MariaDB.
+   - [14.2.1 — Architecture synchrone multi-master](02.1-architecture-synchrone.md)
+   - [14.2.2 — Certification-based replication](02.2-certification-based.md)
+   - [14.2.3 — Configuration et déploiement](02.3-configuration-deploiement.md)
+   - [14.2.4 — State transfers (SST, IST)](02.4-state-transfers.md)
+   - [14.2.5 — Packaging Galera en 12.3 : paquet `mariadb-server-galera` séparé](02.5-packaging-galera.md) 🆕
+   - [14.2.6 — Retry des write sets (`wsrep_applier_retry_count`)](02.6-retry-write-sets.md) 🆕
 
-Chaque section de ce chapitre est conçue pour être autonome mais s'intègre dans une progression logique :
+3. **[14.3 — Split-brain et quorum](03-split-brain-quorum.md)**
+   Garantir la cohérence lors des partitions réseau.
 
-1. **14.1** : Établir les fondations théoriques
-2. **14.2-14.3** : Maîtriser Galera Cluster en profondeur
-3. **14.4-14.5** : Exploiter MaxScale et ses nouveautés
-4. **14.6-14.8** : Gérer les situations opérationnelles
-5. **14.9-14.10** : Explorer les alternatives et innovations
+4. **[14.4 — MaxScale](04-maxscale.md)**
+   Le proxy de base de données de MariaDB.
+   - [14.4.1 — Load Balancing](04.1-load-balancing.md)
+   - [14.4.2 — Read/Write Split](04.2-read-write-split.md)
+   - [14.4.3 — Query Routing](04.3-query-routing.md)
+   - [14.4.4 — Database Firewall](04.4-database-firewall.md)
 
----
+5. **[14.5 — MaxScale : fonctionnalités récentes](05-maxscale-nouveautes.md)**
+   - [14.5.1 — Workload Capture](05.1-workload-capture.md)
+   - [14.5.2 — Workload Replay](05.2-workload-replay.md)
+   - [14.5.3 — Diff Router](05.3-diff-router.md)
 
-## 💡 Conseils pour Aborder ce Chapitre
+6. **[14.6 — Solutions de failover automatique](06-failover-automatique.md)**
+   Détection de panne et bascule sans intervention humaine.
 
-### **Pour les Architectes**
-- Concentrez-vous sur les sections 14.1, 14.8, et la matrice de décision
-- Évaluez les trade-offs CAP selon vos contraintes métier
-- Considérez les coûts opérationnels, pas seulement techniques
+7. **[14.7 — Virtual IP et keepalived](07-virtual-ip-keepalived.md)**
+   Offrir un point d'accès stable via une IP flottante (VRRP).
 
-### **Pour les DBA Senior**
-- Pratiquez les sections 14.2-14.3 en environnement de test
-- Maîtrisez les commandes de diagnostic Galera
-- Préparez des runbooks pour chaque scénario de défaillance
+8. **[14.8 — Stratégies de récupération après incident](08-strategies-recuperation.md)**
+   Procédures et plans de reprise.
 
-### **Pour les DevOps/SRE**
-- Automatisez les déploiements (sections 14.2, 14.4)
-- Intégrez le monitoring (Prometheus, Grafana)
-- Testez régulièrement vos procédures de failover
+9. **[14.9 — Alternatives : ProxySQL et HAProxy](09-proxysql-haproxy.md)**
+   Comparaison avec d'autres couches de routage et d'équilibrage.
 
----
-
-## ⚡ Quick Start : Lab HA en 30 Minutes
-
-Pour expérimenter rapidement avec la HA :
-
-```bash
-# Déployer un cluster Galera 3 nœuds avec Docker Compose
-git clone https://github.com/mariadb-corporation/mariadb-docker-galera
-cd mariadb-docker-galera
-docker-compose up -d
-
-# Déployer MaxScale
-docker run -d \
-  --name maxscale \
-  --network mariadb-galera_default \
-  -v $(pwd)/maxscale.cnf:/etc/maxscale.cnf \
-  mariadb/maxscale:25.01
-
-# Tester le failover
-docker stop galera-node1
-# Observer la bascule automatique dans MaxScale
-```
-
-Cette configuration de lab vous permettra d'expérimenter les concepts avant de les déployer en production.
+10. **[14.10 — Transaction Replay et Connection Migration](10-transaction-replay-connection-migration.md)**
+    Rendre la bascule transparente pour le client.
 
 ---
 
-## ✅ Prérequis Techniques Avant de Continuer
+## À retenir avant de commencer
 
-Assurez-vous de maîtriser :
-
-- [ ] Réplication MariaDB (Chapitre 13)
-- [ ] Binary logs et GTID
-- [ ] Transactions et niveaux d'isolation
-- [ ] Configuration réseau (latence, bande passante)
-- [ ] Linux : iptables, systemd, monitoring
-- [ ] Concepts de quorum et consensus distribué
-
-Si vous n'êtes pas à l'aise avec ces sujets, revoyez le Chapitre 13 avant de poursuivre.
+- La **haute disponibilité n'est pas une sauvegarde** : un cluster réplique aussi les erreurs (un `DROP TABLE` accidentel se propage à tous les nœuds). HA et sauvegarde (chapitre 12) sont **complémentaires**, pas substituables.
+- Tout composant introduit pour la HA (proxy, VIP) peut devenir à son tour un **SPOF** : il doit lui-même être rendu redondant.
+- Le bon dimensionnement se fait **à partir des objectifs métier** (RTO/RPO, SLA), pas à partir de la technologie disponible.
 
 ---
 
-## 🔗 Ressources et Références
-
-### Documentation Officielle
-- [📖 MariaDB Galera Cluster](https://mariadb.com/kb/en/galera-cluster/)
-- [📖 MaxScale 25.01 Documentation](https://mariadb.com/kb/en/maxscale/)
-- [📖 High Availability Solutions](https://mariadb.com/kb/en/high-availability/)
-
-### Articles Techniques
-- **"Understanding Galera Cluster"** - MariaDB Corporation
-- **"MaxScale Best Practices"** - MariaDB Enterprise Guide
-- **"CAP Theorem and MariaDB"** - Architectural Whitepaper
-
-### Outils Open Source
-- [Galera Cluster GitHub](https://github.com/codership/galera)
-- [MaxScale GitHub](https://github.com/mariadb-corporation/MaxScale)
-- [Orchestrator](https://github.com/openark/orchestrator)
-
----
-
-## ➡️ Section Suivante
-
-**[14.1 Architectures haute disponibilité : Concepts](/14-haute-disponibilite/01-architectures-ha-concepts.md)**
-
-Dans la section suivante, nous poserons les fondations théoriques essentielles : le théorème CAP, les patterns d'architecture (active-passive, active-active, multi-datacenter), et les métriques de disponibilité. Nous établirons également un framework de décision pour choisir l'architecture adaptée à vos besoins.
-
----
-
-**Bonne exploration de la haute disponibilité avec MariaDB ! 🚀**
-
-*Ce chapitre représente le sommet de l'expertise opérationnelle MariaDB. Prenez le temps de bien assimiler chaque concept et de les tester dans des environnements contrôlés avant toute mise en production.*
+⬅️ [Chapitre 13 — Réplication](../13-replication/README.md) · [📑 Sommaire](../SOMMAIRE.md) · [14.1 — Concepts ➡️](01-architectures-ha-concepts.md)
 
 ⏭️ [Architectures haute disponibilité : Concepts](/14-haute-disponibilite/01-architectures-ha-concepts.md)
