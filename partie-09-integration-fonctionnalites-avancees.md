@@ -10,11 +10,11 @@
 
 ## 🎯 MariaDB au cœur de l'innovation applicative
 
-Cette neuvième partie marque un **tournant stratégique** dans votre maîtrise de MariaDB : vous allez apprendre à l'intégrer dans des applications modernes et à exploiter ses fonctionnalités les plus avancées. MariaDB 11.8 LTS n'est pas qu'une base de données relationnelle traditionnelle — c'est une **plateforme polyvalente** capable de supporter des architectures d'IA de pointe, des systèmes temporels complexes, et des applications cloud-native hautement évolutives.
+Cette neuvième partie marque un **tournant stratégique** dans votre maîtrise de MariaDB : vous allez apprendre à l'intégrer dans des applications modernes et à exploiter ses fonctionnalités les plus avancées. MariaDB 12.3 LTS n'est pas qu'une base de données relationnelle traditionnelle — c'est une **plateforme polyvalente** capable de supporter des architectures d'IA de pointe, des systèmes temporels complexes, et des applications cloud-native hautement évolutives.
 
 L'intégration applicative moderne va bien au-delà du simple "connecter et exécuter des requêtes". Elle englobe les **connection pools** optimisés, les ORM intelligents, les patterns de retry résilients, la prévention des injections SQL, et l'utilisation de prepared statements. Une intégration mal conçue peut transformer une base de données performante en goulot d'étranglement ; une intégration bien pensée permet de libérer tout le potentiel de MariaDB.
 
-Mais la véritable révolution de MariaDB 11.8 réside dans **MariaDB Vector** : la capacité native de stocker, indexer, et rechercher des embeddings vectoriels haute dimension. Cette fonctionnalité transforme MariaDB en une **plateforme tout-en-un** pour les applications d'IA modernes : données relationnelles structurées, JSON semi-structuré, recherche full-text, et recherche vectorielle sémantique — le tout dans un seul système cohérent, transactionnel, et hautement performant.
+Mais la véritable révolution réside dans **MariaDB Vector** (GA depuis la 11.8 LTS, optimisé en 12.3) : la capacité native de stocker, indexer, et rechercher des embeddings vectoriels haute dimension. Cette fonctionnalité transforme MariaDB en une **plateforme tout-en-un** pour les applications d'IA modernes : données relationnelles structurées, JSON semi-structuré, recherche full-text, et recherche vectorielle sémantique — le tout dans un seul système cohérent, transactionnel, et hautement performant.
 
 L'objectif de cette partie est de vous donner les **compétences pour développer des applications modernes** exploitant pleinement MariaDB : intégration multi-langages (Python, Java, Node.js, Go, .NET), architectures RAG (Retrieval-Augmented Generation) avec LLMs, semantic search, recommendation engines, et utilisation des fonctionnalités avancées comme les System-Versioned Tables pour l'audit temporel et les Application Time Period Tables pour la validité temporelle métier.
 
@@ -50,7 +50,7 @@ Ce module couvre les best practices d'intégration de MariaDB dans des applicati
   - database/sql interface
   - Context management
   - Prepared statements
-- **.NET** : MySqlConnector, MariaDB.Data, ADO.NET 🔄
+- **.NET** : MySqlConnector, MySql.Data, ADO.NET 🔄
   - Entity Framework Core
   - Async/await patterns
   - Connection resilience
@@ -124,9 +124,9 @@ Ce module couvre les best practices d'intégration de MariaDB dans des applicati
 ---
 
 ### Module 18 : Fonctionnalités Avancées
-**11 sections | Durée : ~2,5 jours**
+**12 sections | Durée : ~2,5 jours**
 
-Ce module explore les fonctionnalités les plus innovantes de MariaDB 11.8 :
+Ce module explore les fonctionnalités les plus innovantes de MariaDB 12.3 LTS :
 
 #### 🔢 Sequences (CREATE SEQUENCE)
 - **Auto-increment alternatif** : Contrôle fin de génération d'IDs
@@ -153,7 +153,7 @@ Ce module explore les fonctionnalités les plus innovantes de MariaDB 11.8 :
 - **Backward compatibility** : Anciennes versions d'application
 
 #### 📦 Compression de tables
-- **ROW_FORMAT** : COMPRESSED, DYNAMIC
+- **PAGE_COMPRESSED** (moderne, recommandé) et **ROW_FORMAT=COMPRESSED**
 - **Trade-offs** : Espace disque vs CPU
 - **Use cases** : Archives, données froides
 
@@ -172,42 +172,45 @@ Ce module explore les fonctionnalités les plus innovantes de MariaDB 11.8 :
 
 #### 🤖 MariaDB Vector : La révolution IA/ML 🆕
 - **Type de données VECTOR** : Stockage d'embeddings haute dimension 🔄
-  - Dimensions : 128 à 2048+
-  - Formats : FLOAT32, FLOAT16
-  - Storage optimization
+  - Dimensions : `VECTOR(N)`, jusqu'à 16383
+  - Stockage : `float32` (4 octets/dimension) ; l'index quantifie en `int16`
+  - Dimension à aligner sur le modèle d'embedding
 - **Index HNSW** : Recherche vectorielle ultra-rapide 🔄
-  - Algorithme HNSW (Hierarchical Navigable Small Worlds)
-  - k-NN search en <5ms sur millions de vecteurs
-  - Configuration : ef_construction, M parameter
+  - Algorithme HNSW (Hierarchical Navigable Small Worlds) modifié
+  - k-NN approximatif (ANN) sur des millions de vecteurs
+  - Configuration : `M` (3-200), `DISTANCE` (euclidean|cosine), `mhnsw_ef_search`
 - **Fonctions de distance** : Calculs de similarité 🔄
-  - `VEC_DISTANCE_EUCLIDEAN()` : Distance euclidienne
-  - `VEC_DISTANCE_COSINE()` : Similarité cosinus (default pour NLP)
-  - `VEC_DISTANCE_DOT()` : Produit scalaire
+  - `VEC_DISTANCE_EUCLIDEAN()` : distance euclidienne (L2)
+  - `VEC_DISTANCE_COSINE()` : distance cosinus (idéale pour le texte/NLP)
+  - `VEC_DISTANCE()` : générique, s'adapte à la métrique de l'index (MariaDB n'expose pas de distance par produit scalaire)
 - **Fonctions de conversion** : Manipulation des vecteurs 🔄
-  - `VEC_FromText()` : String → Vector
-  - `VEC_ToText()` : Vector → String
-  - `VEC_Dimensions()` : Obtenir dimensionnalité
+  - `VEC_FromText()` : texte (tableau JSON) → vecteur binaire
+  - `VEC_ToText()` : vecteur binaire → texte
 - **Optimisations SIMD** : Performance hardware 🔄
   - AVX2 support (Intel/AMD)
-  - AVX512 support (Xeon, Ryzen)
+  - AVX512 support (Xeon, Ryzen Zen4+)
   - ARM NEON (Apple Silicon, AWS Graviton)
   - IBM Power10 (VSX)
 - **Intégration LLMs** : Connexion avec modèles de langage 🔄
-  - OpenAI embeddings (ada-002, text-embedding-3)
-  - Anthropic Claude embeddings
-  - Open-source (LLaMA, Mistral, BERT)
+  - OpenAI embeddings (text-embedding-3, ada-002)
+  - Anthropic : pas de modèle d'embedding propre → Voyage AI (recommandé)
+  - Open-source pour embeddings (Sentence-Transformers, BGE) ; LLM : LLaMA, Mistral
   - Local models (Ollama, llama.cpp)
 
 #### 🆕 Online Schema Change (ALTER TABLE non-bloquant)
-- **Algorithm INPLACE** : Modifications en ligne
-- **Concurrent DML** : Table reste accessible
+- **ALGORITHM** : INSTANT (métadonnées) < NOCOPY < INPLACE < COPY
+- **LOCK=NONE** : table accessible en lecture **et** écriture pendant l'opération
 - **Use cases** : Zero-downtime migrations
+
+#### 🆕 Contraintes FK : noms uniques par table seulement
+- **Nouveauté 12.3** (MDEV-28933) : un nom de contrainte FK n'est plus unique par base, mais **par table**
+- **Bénéfice** : deux tables peuvent réutiliser le même nom de contrainte (ORM, consolidation)
 
 💡 **Impact innovation** : MariaDB Vector élimine le besoin de bases vectorielles séparées (Pinecone, Weaviate, Qdrant), réduisant la complexité architecturale de 60-80% et les coûts d'infrastructure de 40-70%.
 
 ---
 
-## 🆕 MariaDB Vector : La fonctionnalité phare de MariaDB 11.8
+## 🆕 MariaDB Vector : la fonctionnalité phare IA de MariaDB
 
 ### La révolution de la recherche sémantique native
 
@@ -216,36 +219,32 @@ Ce module explore les fonctionnalités les plus innovantes de MariaDB 11.8 :
 #### Architecture et concepts
 
 ```sql
--- Créer une table avec colonnes vectorielles
+-- Créer une table avec une colonne vectorielle
 CREATE TABLE documents (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(500),
     content TEXT,
     category VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Embedding vectoriel (1536 dimensions pour OpenAI ada-002)
-    embedding VECTOR(1536) NOT NULL,
-    
-    -- Index HNSW pour recherche k-NN ultra-rapide
-    VECTOR INDEX idx_embedding (embedding)
-        USING HNSW
-        WITH (
-            ef_construction = 200,  -- Qualité construction (défaut: 200)
-            M = 16                  -- Connexions par nœud (défaut: 16)
-        )
+
+    -- Embedding vectoriel (1536 dimensions pour OpenAI text-embedding-3-small)
+    embedding VECTOR(1536) NOT NULL,    -- NOT NULL obligatoire pour une colonne indexée
+
+    -- Index vectoriel HNSW : M = connexions par nœud (défaut mhnsw_default_m = 6)
+    -- DISTANCE = euclidean (défaut) | cosine
+    VECTOR INDEX (embedding) M=16 DISTANCE=cosine
 ) ENGINE=InnoDB;
 
--- Les embeddings sont stockés efficacement (4 bytes × dimensions)
--- Index HNSW permet recherche approximative avec 95%+ recall
+-- Stockage : float32 (4 octets × dimensions) ; l'index quantifie en int16
+-- HNSW = recherche approximative (ANN), rappel réglable via mhnsw_ef_search
 ```
 
 #### Génération d'embeddings : Intégration LLMs
 
 **Exemple Python avec OpenAI** :
 ```python
-import openai
-import mariadb
+import openai  
+import mariadb  
 
 # 1. Générer embeddings avec OpenAI
 def get_embedding(text: str) -> list[float]:
@@ -265,8 +264,8 @@ conn = mariadb.connect(
 cursor = conn.cursor()
 
 # Document à indexer
-doc_title = "Introduction to Machine Learning"
-doc_content = "Machine learning is a subset of artificial intelligence..."
+doc_title = "Introduction to Machine Learning"  
+doc_content = "Machine learning is a subset of artificial intelligence..."  
 
 # Générer embedding
 embedding = get_embedding(f"{doc_title} {doc_content}")
@@ -294,9 +293,9 @@ SELECT
     title,
     category,
     VEC_DISTANCE_COSINE(embedding, @query_embedding) AS similarity
-FROM documents
-ORDER BY similarity ASC  -- Plus petit = plus similaire
-LIMIT 10;
+FROM documents  
+ORDER BY similarity ASC  -- Plus petit = plus similaire  
+LIMIT 10;  
 
 -- Performance : <5ms sur 1M documents avec index HNSW
 -- Sans index : ~2000ms (400x plus lent)
@@ -313,15 +312,15 @@ SELECT
     d.category,
     d.created_at,
     VEC_DISTANCE_COSINE(d.embedding, @query_embedding) AS similarity
-FROM documents d
-WHERE 
+FROM documents d  
+WHERE  
     -- Filtres SQL traditionnels
     d.category = 'AI/ML'
     AND d.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
     -- Recherche vectorielle
     AND VEC_DISTANCE_COSINE(d.embedding, @query_embedding) < 0.3
-ORDER BY similarity ASC
-LIMIT 20;
+ORDER BY similarity ASC  
+LIMIT 20;  
 
 -- Puissance : Requêtes impossibles avec bases vectorielles seules
 -- MariaDB combine le meilleur des deux mondes
@@ -336,9 +335,9 @@ LIMIT 20;
 **Concept** : Augmenter les LLMs avec contexte pertinent depuis base de connaissances.
 
 ```python
-from langchain.chat_models import ChatOpenAI
-from langchain.embeddings import OpenAIEmbeddings
-import mariadb
+from langchain.chat_models import ChatOpenAI  
+from langchain.embeddings import OpenAIEmbeddings  
+import mariadb  
 
 class MariaDBVectorStore:
     """Custom LangChain vector store pour MariaDB"""
@@ -379,13 +378,13 @@ vector_store = MariaDBVectorStore({
 })
 
 # 1. Récupérer contexte pertinent
-user_question = "How does gradient descent work in neural networks?"
-relevant_docs = vector_store.similarity_search(user_question, k=3)
+user_question = "How does gradient descent work in neural networks?"  
+relevant_docs = vector_store.similarity_search(user_question, k=3)  
 
 # 2. Construire prompt avec contexte
-context = "\n\n".join([doc["content"] for doc in relevant_docs])
-prompt = f"""
-Answer the following question based on the provided context:
+context = "\n\n".join([doc["content"] for doc in relevant_docs])  
+prompt = f"""  
+Answer the following question based on the provided context:  
 
 Context:
 {context}
@@ -396,8 +395,8 @@ Answer:
 """
 
 # 3. Générer réponse avec LLM
-llm = ChatOpenAI(model="gpt-4", temperature=0)
-response = llm.predict(prompt)
+llm = ChatOpenAI(model="gpt-4", temperature=0)  
+response = llm.predict(prompt)  
 
 print(response)
 # → Réponse précise basée sur votre base de connaissances
@@ -518,12 +517,12 @@ SELECT
     p.description,
     p.price,
     VEC_DISTANCE_COSINE(p.product_embedding, u.preference_embedding) AS match_score
-FROM products p
-CROSS JOIN users u
-WHERE u.user_id = ?  -- Utilisateur cible
+FROM products p  
+CROSS JOIN users u  
+WHERE u.user_id = ?  -- Utilisateur cible  
   AND VEC_DISTANCE_COSINE(p.product_embedding, u.preference_embedding) < 0.4
-ORDER BY match_score ASC
-LIMIT 10;
+ORDER BY match_score ASC  
+LIMIT 10;  
 
 -- Performance : Recommandations en <10ms
 ```
@@ -587,9 +586,9 @@ class FraudDetector:
 #### LangChain : Framework LLM le plus populaire
 
 ```python
-from langchain.vectorstores import VectorStore
-from langchain.embeddings import OpenAIEmbeddings
-import mariadb
+from langchain.vectorstores import VectorStore  
+from langchain.embeddings import OpenAIEmbeddings  
+import mariadb  
 
 class MariaDBVectorStore(VectorStore):
     """Custom LangChain vectorstore pour MariaDB Vector"""
@@ -639,8 +638,8 @@ class MariaDBVectorStore(VectorStore):
         ]
 
 # Utilisation dans LangChain
-from langchain.chains import RetrievalQA
-from langchain.chat_models import ChatOpenAI
+from langchain.chains import RetrievalQA  
+from langchain.chat_models import ChatOpenAI  
 
 # Initialiser vectorstore MariaDB
 vectorstore = MariaDBVectorStore(
@@ -657,16 +656,16 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # Poser questions
-answer = qa_chain.run("What is the return policy for electronics?")
-print(answer)
+answer = qa_chain.run("What is the return policy for electronics?")  
+print(answer)  
 ```
 
 #### LlamaIndex : Framework de données pour LLMs
 
 ```python
-from llama_index import VectorStoreIndex, StorageContext
-from llama_index.vector_stores import MariaDBVectorStore as LlamaMariaDB
-from llama_index.embeddings import OpenAIEmbedding
+from llama_index import VectorStoreIndex, StorageContext  
+from llama_index.vector_stores import MariaDBVectorStore as LlamaMariaDB  
+from llama_index.embeddings import OpenAIEmbedding  
 
 # Configurer MariaDB comme vector store
 vector_store = LlamaMariaDB(
@@ -683,8 +682,8 @@ vector_store = LlamaMariaDB(
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
 # Créer index depuis documents
-documents = [...]  # Vos documents
-index = VectorStoreIndex.from_documents(
+documents = [...]  # Vos documents  
+index = VectorStoreIndex.from_documents(  
     documents,
     storage_context=storage_context,
     embed_model=OpenAIEmbedding()
@@ -694,8 +693,8 @@ index = VectorStoreIndex.from_documents(
 query_engine = index.as_query_engine()
 
 # Poser questions
-response = query_engine.query("Explain the product return process")
-print(response)
+response = query_engine.query("Explain the product return process")  
+print(response)  
 ```
 
 ---
@@ -783,7 +782,7 @@ Cette partie est **essentielle** pour développeurs et IA/ML engineers, très ut
 
 ### Pourquoi MariaDB Vector est révolutionnaire ?
 
-**Avant MariaDB 11.8** :
+**Avant MariaDB Vector** :
 ```plaintext
 Application IA typique (complexité élevée)
 ├── PostgreSQL + pgvector (données relationnelles + vecteurs)
@@ -796,10 +795,10 @@ Application IA typique (complexité élevée)
     → Complexité, latence, coûts
 ```
 
-**Avec MariaDB 11.8** :
+**Avec MariaDB Vector (depuis la 11.8 LTS)** :
 ```plaintext
 Application IA moderne (simplicité maximale)
-└── MariaDB 11.8 (tout-en-un)
+└── MariaDB 12.3 LTS (tout-en-un)
     ├── Données relationnelles (tables SQL)
     ├── JSON semi-structuré (type JSON)
     ├── Full-text search (index FULLTEXT)
@@ -819,7 +818,7 @@ Les applications IA les plus innovantes combineront :
 3. **Bases vectorielles** pour recherche de contexte
 4. **Bases relationnelles** pour données structurées
 
-**MariaDB 11.8 unifie 3 et 4 en un seul système** — c'est un game-changer.
+**MariaDB unifie 3 et 4 en un seul système** — c'est un game-changer.
 
 ---
 
@@ -910,12 +909,12 @@ SELECT
     price,
     rating,
     VEC_DISTANCE_COSINE(description_embedding, @query_embedding) as relevance
-FROM products
-WHERE category IN ('Footwear', 'Shoes')
+FROM products  
+WHERE category IN ('Footwear', 'Shoes')  
   AND price BETWEEN 50 AND 200
   AND rating >= 4.0
-ORDER BY relevance ASC
-LIMIT 20;
+ORDER BY relevance ASC  
+LIMIT 20;  
 ```
 
 **Résultats** :
@@ -933,8 +932,8 @@ LIMIT 20;
 **Solution** :
 ```sql
 -- Profil utilisateur = moyenne embeddings articles lus
-UPDATE users
-SET preference_embedding = (
+UPDATE users  
+SET preference_embedding = (  
     SELECT AVG(a.article_embedding)
     FROM user_reads ur
     JOIN articles a ON ur.article_id = a.id
@@ -950,13 +949,13 @@ SELECT
     a.category,
     a.published_at,
     VEC_DISTANCE_COSINE(a.article_embedding, u.preference_embedding) as match_score
-FROM articles a
-CROSS JOIN users u
-WHERE u.user_id = ?
+FROM articles a  
+CROSS JOIN users u  
+WHERE u.user_id = ?  
   AND a.published_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
   AND VEC_DISTANCE_COSINE(a.article_embedding, u.preference_embedding) < 0.4
-ORDER BY match_score ASC
-LIMIT 10;
+ORDER BY match_score ASC  
+LIMIT 10;  
 ```
 
 **Résultats** :
@@ -992,8 +991,8 @@ Bienvenue dans le monde du développement moderne avec MariaDB ! 🚀
 
 ---
 
-**MariaDB** : Version 11.8 LTS  
+**MariaDB** : Version 12.3 LTS (MariaDB Vector GA depuis la 11.8 LTS)  
 **LangChain** : 0.1.x  
-**LlamaIndex** : 0.9.x
+**LlamaIndex** : 0.9.x  
 
 ⏭️ [Intégration et Développement](/17-integration-developpement/README.md)

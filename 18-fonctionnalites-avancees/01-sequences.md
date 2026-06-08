@@ -1,996 +1,247 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 18.1 Sequences (CREATE SEQUENCE)
+[← Retour au chapitre 18](README.md)
 
-> **Niveau** : Avancé  
-> **Durée estimée** : 1-1.5 heures  
-> **Prérequis** : Chapitre 2 (Bases SQL), compréhension AUTO_INCREMENT
+# 18.1 Sequences (`CREATE SEQUENCE`)
 
-## 🎯 Objectifs d'apprentissage
+## Qu'est-ce qu'une séquence ?
 
-À l'issue de cette section, vous serez capable de :
+Une **séquence** est un objet de base de données dont l'unique rôle est de produire, à la demande, une suite de nombres entiers selon des règles que l'on définit : valeur de départ, pas d'incrément, bornes, mise en cache et éventuel cyclage. Contrairement à l'attribut `AUTO_INCREMENT`, qui est attaché à une colonne précise d'une table, une séquence existe de façon autonome. Elle peut alimenter plusieurs tables, être interrogée sans qu'aucune ligne ne soit insérée, et offrir un contrôle bien plus fin sur la génération des valeurs.
 
-- Créer et configurer des **sequences** avec tous leurs paramètres
-- Comprendre les **différences fondamentales** entre SEQUENCE et AUTO_INCREMENT
-- Utiliser les sequences pour générer des **identifiants multi-tables**
-- Implémenter des **schémas de numérotation métier** (factures, commandes, tickets)
-- Maîtriser les fonctions **NEXT VALUE, LASTVAL, SETVAL**
-- Optimiser les performances avec le paramètre **CACHE**
-- Gérer les sequences dans un contexte de **haute concurrence**
+Présentes dans MariaDB depuis la version 10.3, les séquences répondent à un standard SQL et à une attente forte des utilisateurs venant d'Oracle ou de PostgreSQL, où elles constituent le mécanisme d'identité de référence. Elles sont stockées en interne comme une table à une seule ligne (moteur InnoDB par défaut), ce qui les rend transparentes pour les outils de sauvegarde et robustes face aux arrêts brutaux.
 
----
+## Séquence ou `AUTO_INCREMENT` ?
 
-## Introduction
+Avant d'entrer dans la syntaxe, il est utile de situer les deux mécanismes l'un par rapport à l'autre. Aucun n'est universellement supérieur : le choix dépend du besoin.
 
-Les **sequences** sont des objets de base de données qui génèrent des **nombres séquentiels uniques** de manière indépendante des tables. Contrairement à AUTO_INCREMENT qui est lié à une colonne de table spécifique, une sequence est un objet autonome réutilisable.
+| Critère | `AUTO_INCREMENT` | Séquence |
+|---|---|---|
+| Portée | Liée à une colonne d'une table | Objet indépendant, partageable entre tables |
+| Configuration | Minimale (incrément global du serveur) | Fine : pas, bornes, cache, cyclage |
+| Sens de progression | Croissant uniquement | Croissant **ou** décroissant |
+| Cyclage à la borne | Impossible | Possible (`CYCLE`) |
+| Obtenir une valeur sans `INSERT` | Non | Oui (`NEXTVAL`) |
+| Portabilité Oracle / PostgreSQL | Faible | Forte |
+| Simplicité de mise en œuvre | Très simple | Plus verbeux |
 
-### Pourquoi utiliser des Sequences ?
+En résumé, on privilégie `AUTO_INCREMENT` pour une simple clé technique mono-table, et une séquence dès que l'on a besoin de partager un compteur entre plusieurs tables, de réserver un identifiant avant l'insertion, de progresser autrement que par pas de 1, ou d'assurer la compatibilité avec un schéma Oracle ou PostgreSQL.
 
-**Problématiques résolues** :
-1. **Numérotation multi-tables** : Partager un compteur entre plusieurs tables
-2. **Contrôle granulaire** : Min/Max, Step, Cycle, Cache
-3. **Schémas de numérotation métier** : Format année-numéro, préfixes, etc.
-4. **Performance** : Allocation par batch (CACHE)
-5. **Indépendance** : Pas de lock de table lors de génération
+## Créer une séquence
 
-**Cas d'usage typiques** :
-- 📄 Numérotation de documents (factures, commandes, tickets)
-- 🔢 Identifiants partagés entre tables d'un même domaine
-- 📊 Génération de clés techniques dans architectures distribuées
-- 🔄 Systèmes avec rotations annuelles/mensuelles
-- 🎫 Systèmes de ticketing avec garantie de séquence
-
-💡 **Philosophie** : Une sequence est à la génération de nombres ce qu'une vue est à une requête - un objet réutilisable et configurable.
-
----
-
-## Syntaxe CREATE SEQUENCE
-
-### Syntaxe Complète
+### Syntaxe générale
 
 ```sql
-CREATE [OR REPLACE] [TEMPORARY] SEQUENCE [IF NOT EXISTS] sequence_name
-    [START WITH start_value]
-    [INCREMENT BY increment_value]
-    [MINVALUE min_value | NO MINVALUE]
-    [MAXVALUE max_value | NO MAXVALUE]
-    [CACHE cache_size | NOCACHE]
-    [CYCLE | NOCYCLE];
+CREATE [OR REPLACE] [TEMPORARY] SEQUENCE [IF NOT EXISTS] nom_sequence
+  [ INCREMENT [=] increment ]
+  [ MINVALUE [=] minvalue | NO MINVALUE ]
+  [ MAXVALUE [=] maxvalue | NO MAXVALUE ]
+  [ START [ WITH ] depart ]
+  [ CACHE [=] cache | NOCACHE ]
+  [ CYCLE | NOCYCLE ]
+  [ AS type_entier ]
+  [ ENGINE = nom_moteur ];
 ```
 
-### Paramètres Détaillés
-
-| Paramètre | Description | Valeur par défaut | Contraintes |
-|-----------|-------------|-------------------|-------------|
-| **START WITH** | Valeur de départ | 1 (ou MINVALUE si INCREMENT < 0) | Entre MINVALUE et MAXVALUE |
-| **INCREMENT BY** | Pas d'incrémentation | 1 | Positif ou négatif, ≠ 0 |
-| **MINVALUE** | Valeur minimale | 1 (ou -9223372036854775807 si négatif) | < MAXVALUE |
-| **MAXVALUE** | Valeur maximale | 9223372036854775807 | > MINVALUE |
-| **CACHE** | Taille du cache | 1000 | 0 (NOCACHE) ou entier positif |
-| **CYCLE** | Retour au début après MAX | NOCYCLE | CYCLE ou NOCYCLE |
-
-### Exemples de Création
+La forme la plus simple se contente du nom :
 
 ```sql
--- 1. Sequence simple (comportement par défaut)
-CREATE SEQUENCE simple_seq;
--- Démarre à 1, incrémente de 1, pas de limite supérieure
-
--- 2. Sequence pour numérotation de factures (commence à 1000)
-CREATE SEQUENCE invoice_seq
-    START WITH 1000
-    INCREMENT BY 1
-    MINVALUE 1000
-    MAXVALUE 999999
-    CACHE 50;
-
--- 3. Sequence décrémentale
-CREATE SEQUENCE countdown_seq
-    START WITH 100
-    INCREMENT BY -1
-    MINVALUE 1
-    MAXVALUE 100
-    NOCACHE;
-
--- 4. Sequence cyclique (rotative)
-CREATE SEQUENCE rotation_seq
-    START WITH 1
-    INCREMENT BY 1
-    MINVALUE 1
-    MAXVALUE 100
-    CYCLE
-    CACHE 20;
-
--- 5. Sequence par année (réinitialisée manuellement chaque année)
-CREATE SEQUENCE order_2025_seq
-    START WITH 1
-    INCREMENT BY 1
-    MINVALUE 1
-    MAXVALUE 9999999;
-
--- 6. Sequence temporaire (session uniquement)
-CREATE TEMPORARY SEQUENCE temp_batch_seq
-    START WITH 1
-    INCREMENT BY 1;
+CREATE SEQUENCE seq_commande;
 ```
 
-⚠️ **Attention** : 
-- `MAXVALUE` n'est PAS une limite du nombre de valeurs, mais la valeur maximale autorisée
-- Une fois MAXVALUE atteinte sans CYCLE, la sequence lève une erreur
-- `CACHE` améliore les performances mais peut créer des gaps en cas de crash
+Cette séquence utilise alors l'ensemble des valeurs par défaut, qui correspondent à une séquence croissante classique :
 
----
+| Clause | Rôle | Valeur par défaut (séquence croissante) |
+|---|---|---|
+| `INCREMENT` | Pas d'incrément à chaque appel | `1` |
+| `START WITH` | Première valeur produite | égale à `MINVALUE`, soit `1` |
+| `MINVALUE` | Borne basse | `1` |
+| `MAXVALUE` | Borne haute | `9223372036854775806` (max d'un `BIGINT` signé, la dernière valeur étant réservée) |
+| `CACHE` | Nombre de valeurs réservées en mémoire | `1000` |
+| `CYCLE` / `NOCYCLE` | Reprise au début une fois la borne atteinte | `NOCYCLE` |
 
-## Utilisation des Sequences
+Quelques précisions sur les clauses les plus structurantes :
 
-### Fonctions Principales
+L'**`INCREMENT`** définit le pas. Une valeur positive donne une séquence croissante, une valeur négative une séquence décroissante. Il ne peut pas être nul.
 
-#### NEXT VALUE FOR - Obtenir la Prochaine Valeur
+Le **`CACHE`** est un levier de performance. Plutôt que de mettre à jour la table sous-jacente à chaque valeur produite, le serveur réserve d'un coup un bloc de `n` valeurs en mémoire. C'est rapide, mais cela a une contrepartie abordée plus loin (les valeurs réservées non consommées sont perdues en cas de redémarrage). `NOCACHE` impose l'écriture à chaque appel.
+
+Le **`CYCLE`** autorise la séquence à repartir de sa borne basse (ou haute, pour une séquence décroissante) une fois la borne opposée atteinte. Par défaut (`NOCYCLE`), atteindre la borne provoque une erreur lors de l'appel suivant.
+
+Par défaut, une séquence est de type `BIGINT`. La clause optionnelle `AS type` (introduite en MariaDB 11.5) permet de choisir un type entier plus petit (par exemple `SMALLINT UNSIGNED`) afin de contraindre l'amplitude des valeurs et de réduire l'occupation.
+
+### Exemples
+
+Une séquence de numérotation de factures démarrant à 1000, avec un petit cache :
 
 ```sql
--- Syntaxe
-SELECT NEXT VALUE FOR sequence_name;
-
--- Utilisation dans INSERT
-INSERT INTO invoices (invoice_number, customer_id, amount)
-VALUES (NEXT VALUE FOR invoice_seq, 123, 1500.00);
-
--- Utilisation dans UPDATE
-UPDATE orders 
-SET tracking_number = NEXT VALUE FOR tracking_seq
-WHERE order_id = 456;
-
--- Assigner à une variable
-SET @next_id = NEXT VALUE FOR simple_seq;
-
--- Dans un SELECT (génère une valeur pour chaque ligne)
-SELECT 
-    NEXT VALUE FOR batch_seq AS batch_id,
-    product_name,
-    quantity
-FROM staging_products;
+CREATE SEQUENCE seq_facture
+  START WITH 1000
+  INCREMENT 1
+  MINVALUE 1000
+  MAXVALUE 999999
+  CACHE 50
+  NOCYCLE;
 ```
 
-**Comportement** :
-- ✅ Thread-safe (pas de risque de doublon)
-- ✅ Incrémente la sequence à chaque appel
-- ✅ Utilise le cache si configuré
-- ⚠️ Non transactionnel (pas de ROLLBACK possible)
-
-#### LASTVAL - Dernière Valeur Générée
+Une séquence décroissante :
 
 ```sql
--- Obtenir la dernière valeur générée (dans la session courante)
-SELECT LASTVAL(invoice_seq);
-
--- Exemple d'utilisation après INSERT
-INSERT INTO invoices (invoice_number, customer_id)
-VALUES (NEXT VALUE FOR invoice_seq, 123);
-
--- Récupérer le numéro généré
-SET @invoice_num = LASTVAL(invoice_seq);
-
-INSERT INTO invoice_items (invoice_number, product_id, quantity)
-VALUES (@invoice_num, 789, 5);
+CREATE SEQUENCE seq_decompte
+  START WITH 100
+  INCREMENT -1
+  MINVALUE 1
+  MAXVALUE 100;
 ```
 
-**Important** :
-- LASTVAL retourne la **dernière valeur générée dans la session**
-- Si aucune valeur n'a été générée, retourne NULL
-- Similaire à LAST_INSERT_ID() pour AUTO_INCREMENT
-
-#### SETVAL - Modifier la Valeur Courante
+Une séquence cyclique, par exemple pour répartir un travail sur cinq files :
 
 ```sql
--- Définir la prochaine valeur
-SELECT SETVAL(sequence_name, new_value);
-
--- Exemple : Réinitialiser une sequence annuelle
-SELECT SETVAL(order_2025_seq, 1);
-
--- Définir avec is_called (false = la valeur est incluse dans la prochaine génération)
-SELECT SETVAL(invoice_seq, 5000, false);
--- Prochaine valeur sera 5000
-
-SELECT SETVAL(invoice_seq, 5000, true);
--- Prochaine valeur sera 5001 (5000 a déjà été "consommée")
-
--- Exemple : Synchroniser après import de données
--- Si dernière facture importée = 4523
-SELECT SETVAL(invoice_seq, 4523, true);
--- Prochaine facture sera 4524
+CREATE SEQUENCE seq_file
+  START WITH 1
+  MINVALUE 1
+  MAXVALUE 5
+  CYCLE;
+-- ... 4, 5, 1, 2, 3, 4, 5, 1, ...
 ```
 
-⚠️ **Attention** : 
-- SETVAL ne vérifie pas les conflits avec les données existantes
-- Responsabilité de l'administrateur d'assurer la cohérence
+> **Compatibilité Oracle.** Sous `sql_mode = ORACLE`, MariaDB accepte la phraséologie Oracle telle que `INCREMENT BY` en complément des formes natives. Ce point est repris dans la migration depuis Oracle (§19.2.1).
 
----
+## Obtenir et manipuler les valeurs
 
-## Gestion et Administration
+### `NEXTVAL` et `NEXT VALUE FOR`
 
-### Inspection des Sequences
+La fonction `NEXTVAL()` renvoie la valeur suivante et fait progresser la séquence :
 
 ```sql
--- Lister toutes les sequences de la base
-SELECT * FROM information_schema.SEQUENCES;
-
--- Détails d'une sequence spécifique
-SHOW CREATE SEQUENCE invoice_seq;
-
--- Résultat typique :
--- CREATE SEQUENCE `invoice_seq` 
---   START WITH 1000 
---   INCREMENT BY 1 
---   MINVALUE 1000 
---   MAXVALUE 999999 
---   CACHE 50 
---   NOCYCLE;
-
--- Valeur courante (sans la consommer)
-SELECT * FROM invoice_seq;
--- Retourne : next_not_cached_value, minimum_value, maximum_value, 
---            start_value, increment, cache_size, cycle_option
+SELECT NEXTVAL(seq_commande);   -- 1
+SELECT NEXTVAL(seq_commande);   -- 2
+SELECT NEXTVAL(seq_commande);   -- 3
 ```
 
-### Modification de Sequences
+La forme standard SQL `NEXT VALUE FOR` est strictement équivalente :
 
 ```sql
--- ALTER SEQUENCE pour modifier les paramètres
-ALTER SEQUENCE invoice_seq
-    MAXVALUE 9999999
-    CACHE 100;
-
--- Redémarrer une sequence (nouveau cycle)
-ALTER SEQUENCE order_2025_seq RESTART;
-
--- Redémarrer avec nouvelle valeur de départ
-ALTER SEQUENCE order_2025_seq RESTART WITH 1;
-
--- Changer l'incrément
-ALTER SEQUENCE rotation_seq INCREMENT BY 5;
-
--- Activer le cycle
-ALTER SEQUENCE ticket_seq CYCLE;
+SELECT NEXT VALUE FOR seq_commande;   -- 4
 ```
 
-### Suppression de Sequences
+### `PREVIOUS VALUE FOR` et `LASTVAL`
+
+Ces deux expressions renvoient la **dernière valeur produite par `NEXTVAL` dans la session courante**, sans faire progresser la séquence. Elles sont locales à la connexion : si aucun `NEXTVAL` n'a encore été appelé dans la session, le résultat est `NULL`.
 
 ```sql
--- Supprimer une sequence
-DROP SEQUENCE IF EXISTS old_seq;
-
--- Supprimer et recréer
-CREATE OR REPLACE SEQUENCE invoice_seq
-    START WITH 1000
-    INCREMENT BY 1;
+SELECT PREVIOUS VALUE FOR seq_commande;   -- 4
+SELECT LASTVAL(seq_commande);             -- 4
 ```
 
----
+C'est le mécanisme typique pour récupérer l'identifiant que l'on vient d'attribuer, par exemple afin de l'utiliser comme clé étrangère dans une ligne enfant insérée juste après.
 
-## Sequences vs AUTO_INCREMENT
+### `SETVAL`
 
-### Comparaison Technique
-
-| Aspect | SEQUENCE | AUTO_INCREMENT |
-|--------|----------|----------------|
-| **Scope** | Indépendant des tables | Lié à une colonne |
-| **Partage** | ✅ Multi-tables | ❌ Une seule table |
-| **Contrôle** | ✅ Total (min/max/cycle/cache) | ⚠️ Limité |
-| **Performance** | ✅ CACHE optimisé | ⚠️ Lock de table possible |
-| **Gaps** | ✅ Acceptables | ⚠️ Créés par ROLLBACK |
-| **Réinitialisation** | ✅ SETVAL, ALTER RESTART | ⚠️ ALTER TABLE AUTO_INCREMENT |
-| **Standards SQL** | ✅ SQL:2003 | ❌ MySQL-specific |
-| **Complexité** | ⚠️ Plus complexe | ✅ Simple |
-
-### Quand Utiliser Quoi ?
-
-**Utilisez AUTO_INCREMENT si** :
-- ✅ Clé primaire simple d'une seule table
-- ✅ Pas de besoin de numérotation spécifique
-- ✅ Simplicité prioritaire
-- ✅ Équipe peu familière avec les sequences
-
-**Utilisez SEQUENCE si** :
-- ✅ Partage d'identifiants entre tables
-- ✅ Schéma de numérotation métier complexe
-- ✅ Besoin de contrôle (min/max/cycle)
-- ✅ Performance critique (CACHE élevé)
-- ✅ Architectures distribuées
-- ✅ Compatibilité PostgreSQL/Oracle
-
-### Migration AUTO_INCREMENT → SEQUENCE
+`SETVAL()` repositionne explicitement une séquence. Sa syntaxe est compatible avec PostgreSQL :
 
 ```sql
--- Situation initiale : Table avec AUTO_INCREMENT
-CREATE TABLE orders_old (
-    order_id INT AUTO_INCREMENT PRIMARY KEY,
-    customer_id INT,
-    order_date DATE
+SETVAL(nom_sequence, valeur, [is_used, [round]])
+```
+
+Le paramètre `is_used` vaut `TRUE` (1) par défaut : la `valeur` est alors considérée comme déjà consommée, et le prochain `NEXTVAL` renverra la valeur suivante. À `FALSE` (0), le prochain `NEXTVAL` renverra exactement `valeur`. Le paramètre `round`, rarement utilisé, sert à indiquer le numéro de cycle pour les séquences `CYCLE`.
+
+```sql
+SELECT SETVAL(seq_facture, 5000);          -- prochain NEXTVAL : 5001
+SELECT SETVAL(seq_facture, 5000, FALSE);   -- prochain NEXTVAL : 5000
+```
+
+Un point essentiel : **`SETVAL` ne fait jamais reculer une séquence**. Si la valeur demandée est inférieure à la position courante, la demande est ignorée. Ce comportement n'est pas une limitation arbitraire mais une garantie de cohérence en réplication, où des instructions peuvent arriver dans un ordre non strictement chronologique.
+
+## Utiliser une séquence comme valeur par défaut
+
+Une séquence peut alimenter directement la valeur par défaut d'une colonne, ce qui reproduit le confort de l'`AUTO_INCREMENT` tout en conservant la souplesse d'un objet partagé :
+
+```sql
+CREATE TABLE commande (
+  id      BIGINT       NOT NULL DEFAULT NEXTVAL(seq_commande) PRIMARY KEY,
+  client  VARCHAR(100),
+  montant DECIMAL(10,2)
 );
 
--- Migration vers SEQUENCE
--- Étape 1 : Créer la sequence
-CREATE SEQUENCE order_seq
-    START WITH 1
-    INCREMENT BY 1
-    CACHE 100;
-
--- Étape 2 : Synchroniser avec les données existantes
-SELECT SETVAL(order_seq, (SELECT MAX(order_id) FROM orders_old), true);
-
--- Étape 3 : Nouvelle table sans AUTO_INCREMENT
-CREATE TABLE orders_new (
-    order_id INT PRIMARY KEY,
-    customer_id INT,
-    order_date DATE
-);
-
--- Étape 4 : Utilisation dans l'application
-INSERT INTO orders_new (order_id, customer_id, order_date)
-VALUES (NEXT VALUE FOR order_seq, 123, CURDATE());
-
--- Alternative : Trigger pour transparence
-DELIMITER $$
-CREATE TRIGGER orders_before_insert
-BEFORE INSERT ON orders_new
-FOR EACH ROW
-BEGIN
-    IF NEW.order_id IS NULL OR NEW.order_id = 0 THEN
-        SET NEW.order_id = NEXT VALUE FOR order_seq;
-    END IF;
-END$$
-DELIMITER ;
-
--- Désormais, INSERT sans order_id fonctionne
-INSERT INTO orders_new (customer_id, order_date)
-VALUES (123, CURDATE());
+INSERT INTO commande (client, montant) VALUES ('Dupont', 149.90);
+INSERT INTO commande (client, montant) VALUES ('Martin',  79.00);
 ```
 
----
+Comme la séquence est indépendante, la même peut servir à plusieurs tables qui partageraient alors un espace d'identifiants commun — utile, par exemple, lorsque l'on veut garantir l'unicité d'un numéro à travers plusieurs entités.
 
-## Cas d'Usage Avancés
+## Inspecter et modifier une séquence
 
-### 1. Numérotation de Factures avec Format Année
+### Voir la définition et l'état
 
-**Besoin** : Factures numérotées `2025-0001`, `2025-0002`, etc. avec reset annuel.
+`SHOW CREATE SEQUENCE` restitue la définition :
 
 ```sql
--- Sequence pour 2025
-CREATE SEQUENCE invoice_2025_seq
-    START WITH 1
-    INCREMENT BY 1
-    MINVALUE 1
-    MAXVALUE 9999
-    CACHE 50;
-
--- Table des factures
-CREATE TABLE invoices (
-    invoice_id INT PRIMARY KEY AUTO_INCREMENT,
-    invoice_number VARCHAR(20) UNIQUE NOT NULL,
-    customer_id INT,
-    amount DECIMAL(10,2),
-    invoice_date DATE
-);
-
--- Procédure pour générer le numéro de facture
-DELIMITER $$
-CREATE FUNCTION generate_invoice_number(year INT)
-RETURNS VARCHAR(20)
-DETERMINISTIC
-BEGIN
-    DECLARE seq_name VARCHAR(50);
-    DECLARE seq_value INT;
-    
-    SET seq_name = CONCAT('invoice_', year, '_seq');
-    
-    -- Générer la prochaine valeur
-    SET @sql = CONCAT('SELECT NEXT VALUE FOR ', seq_name, ' INTO @seq_value');
-    PREPARE stmt FROM @sql;
-    EXECUTE stmt;
-    DEALLOCATE PREPARE stmt;
-    
-    -- Format : YYYY-NNNN
-    RETURN CONCAT(year, '-', LPAD(@seq_value, 4, '0'));
-END$$
-DELIMITER ;
-
--- Utilisation
-INSERT INTO invoices (invoice_number, customer_id, amount, invoice_date)
-VALUES (
-    generate_invoice_number(YEAR(CURDATE())),
-    123,
-    1500.00,
-    CURDATE()
-);
-
--- Résultat : invoice_number = '2025-0001'
-
--- En début d'année suivante, créer nouvelle sequence
-CREATE SEQUENCE invoice_2026_seq
-    START WITH 1
-    INCREMENT BY 1
-    MINVALUE 1
-    MAXVALUE 9999
-    CACHE 50;
+SHOW CREATE SEQUENCE seq_commande\G
 ```
 
-### 2. Identifiants Partagés Multi-Tables
-
-**Besoin** : Tables `customers` et `suppliers` partagent le même pool d'identifiants pour garantir unicité globale.
+Comme une séquence est stockée sous forme de table, on peut aussi interroger directement son contenu pour lire son état interne :
 
 ```sql
--- Sequence partagée pour entités business
-CREATE SEQUENCE business_entity_seq
-    START WITH 1000
-    INCREMENT BY 1
-    CACHE 100;
-
--- Table customers
-CREATE TABLE customers (
-    entity_id INT PRIMARY KEY,
-    entity_type VARCHAR(10) DEFAULT 'CUSTOMER',
-    customer_name VARCHAR(100),
-    -- autres champs
-);
-
--- Table suppliers
-CREATE TABLE suppliers (
-    entity_id INT PRIMARY KEY,
-    entity_type VARCHAR(10) DEFAULT 'SUPPLIER',
-    supplier_name VARCHAR(100),
-    -- autres champs
-);
-
--- Insertion dans customers
-INSERT INTO customers (entity_id, customer_name)
-VALUES (NEXT VALUE FOR business_entity_seq, 'Acme Corp');
--- entity_id = 1000
-
--- Insertion dans suppliers
-INSERT INTO suppliers (entity_id, supplier_name)
-VALUES (NEXT VALUE FOR business_entity_seq, 'Global Supplies');
--- entity_id = 1001
-
--- Vue unifiée
-CREATE VIEW business_entities AS
-    SELECT entity_id, entity_type, customer_name AS name FROM customers
-    UNION ALL
-    SELECT entity_id, entity_type, supplier_name AS name FROM suppliers;
-
--- Recherche : entity_id unique dans tout le système
-SELECT * FROM business_entities WHERE entity_id = 1000;
+SELECT * FROM seq_commande\G
 ```
 
-**Avantages** :
-- ✅ Unicité garantie entre tables
-- ✅ Simplification des jointures et références
-- ✅ Facilite les migrations (customer → supplier)
+Les colonnes exposées comprennent notamment `next_not_cached_value` (la prochaine valeur non encore mise en cache), `minimum_value`, `maximum_value`, `start_value`, `increment`, `cache_size`, `cycle_option` et `cycle_count`.
 
-### 3. Système de Ticketing avec Priorités
+### `ALTER SEQUENCE`
 
-**Besoin** : Tickets avec numérotation par priorité (P1: 1xxx, P2: 2xxx, P3: 3xxx).
+On modifie les paramètres d'une séquence existante avec `ALTER SEQUENCE`, et on la réinitialise avec `RESTART` :
 
 ```sql
--- Sequences par priorité
-CREATE SEQUENCE ticket_p1_seq START WITH 1000 MAXVALUE 1999 CACHE 10;
-CREATE SEQUENCE ticket_p2_seq START WITH 2000 MAXVALUE 2999 CACHE 20;
-CREATE SEQUENCE ticket_p3_seq START WITH 3000 MAXVALUE 3999 CACHE 50;
-
--- Table tickets
-CREATE TABLE tickets (
-    ticket_id INT PRIMARY KEY AUTO_INCREMENT,
-    ticket_number INT UNIQUE NOT NULL,
-    priority ENUM('P1','P2','P3'),
-    title VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Procédure pour créer un ticket
-DELIMITER $$
-CREATE PROCEDURE create_ticket(
-    IN p_priority ENUM('P1','P2','P3'),
-    IN p_title VARCHAR(255),
-    OUT p_ticket_number INT
-)
-BEGIN
-    CASE p_priority
-        WHEN 'P1' THEN
-            SET p_ticket_number = NEXT VALUE FOR ticket_p1_seq;
-        WHEN 'P2' THEN
-            SET p_ticket_number = NEXT VALUE FOR ticket_p2_seq;
-        WHEN 'P3' THEN
-            SET p_ticket_number = NEXT VALUE FOR ticket_p3_seq;
-    END CASE;
-    
-    INSERT INTO tickets (ticket_number, priority, title)
-    VALUES (p_ticket_number, p_priority, p_title);
-END$$
-DELIMITER ;
-
--- Utilisation
-CALL create_ticket('P1', 'Production database down', @ticket_num);
-SELECT @ticket_num;  -- 1000
-
-CALL create_ticket('P3', 'Update documentation', @ticket_num);
-SELECT @ticket_num;  -- 3000
+ALTER SEQUENCE seq_commande INCREMENT 5 MAXVALUE 1000000;
+ALTER SEQUENCE seq_commande RESTART;            -- repart à START WITH
+ALTER SEQUENCE seq_commande RESTART WITH 500;   -- repart à 500
 ```
 
-### 4. Batch Processing avec Sequences
-
-**Besoin** : Assigner un batch_id unique à chaque lot de traitement.
+### Supprimer une séquence
 
 ```sql
--- Sequence pour batch IDs
-CREATE SEQUENCE batch_seq
-    START WITH 1
-    INCREMENT BY 1
-    CACHE 1;  -- NOCACHE pour garantie stricte
-
--- Table de logs de batch
-CREATE TABLE batch_logs (
-    batch_id INT PRIMARY KEY,
-    start_time TIMESTAMP,
-    end_time TIMESTAMP,
-    records_processed INT,
-    status ENUM('RUNNING','SUCCESS','FAILED')
-);
-
--- Procédure de batch processing
-DELIMITER $$
-CREATE PROCEDURE process_daily_batch()
-BEGIN
-    DECLARE batch_id INT;
-    DECLARE records_count INT;
-    
-    -- Générer batch_id unique
-    SET batch_id = NEXT VALUE FOR batch_seq;
-    
-    -- Logger le début
-    INSERT INTO batch_logs (batch_id, start_time, status)
-    VALUES (batch_id, NOW(), 'RUNNING');
-    
-    -- Traitement (exemple)
-    INSERT INTO processed_data (batch_id, data_value)
-    SELECT batch_id, raw_value
-    FROM staging_data
-    WHERE processed = 0;
-    
-    SET records_count = ROW_COUNT();
-    
-    -- Marquer les données comme traitées
-    UPDATE staging_data 
-    SET processed = 1, batch_id = batch_id
-    WHERE processed = 0;
-    
-    -- Logger la fin
-    UPDATE batch_logs
-    SET end_time = NOW(),
-        records_processed = records_count,
-        status = 'SUCCESS'
-    WHERE batch_id = batch_id;
-END$$
-DELIMITER ;
-
--- Exécution
-CALL process_daily_batch();
-
--- Traçabilité complète
-SELECT batch_id, 
-       start_time, 
-       end_time,
-       records_processed,
-       TIMESTAMPDIFF(SECOND, start_time, end_time) AS duration_sec
-FROM batch_logs
-ORDER BY batch_id DESC
-LIMIT 10;
+DROP SEQUENCE IF EXISTS seq_commande;
 ```
 
-### 5. Distributed ID Generation (Architectures Distribuées)
-
-**Besoin** : Générer des IDs uniques dans un système multi-datacenter.
-
-```sql
--- Chaque datacenter a sa propre sequence avec range réservé
--- DC1 : 1-1000000, DC2 : 1000001-2000000, DC3 : 2000001-3000000
-
--- Datacenter 1
-CREATE SEQUENCE dc1_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    MINVALUE 1
-    MAXVALUE 1000000
-    CACHE 1000;
-
--- Datacenter 2
-CREATE SEQUENCE dc2_id_seq
-    START WITH 1000001
-    INCREMENT BY 1
-    MINVALUE 1000001
-    MAXVALUE 2000000
-    CACHE 1000;
-
--- Datacenter 3
-CREATE SEQUENCE dc3_id_seq
-    START WITH 2000001
-    INCREMENT BY 1
-    MINVALUE 2000001
-    MAXVALUE 3000000
-    CACHE 1000;
-
--- Fonction pour générer ID selon DC
-DELIMITER $$
-CREATE FUNCTION generate_distributed_id(datacenter_id INT)
-RETURNS INT
-DETERMINISTIC
-BEGIN
-    DECLARE id INT;
-    
-    CASE datacenter_id
-        WHEN 1 THEN SET id = NEXT VALUE FOR dc1_id_seq;
-        WHEN 2 THEN SET id = NEXT VALUE FOR dc2_id_seq;
-        WHEN 3 THEN SET id = NEXT VALUE FOR dc3_id_seq;
-        ELSE SIGNAL SQLSTATE '45000' 
-             SET MESSAGE_TEXT = 'Invalid datacenter_id';
-    END CASE;
-    
-    RETURN id;
-END$$
-DELIMITER ;
-
--- Utilisation dans application
-SET @current_dc = 1;  -- Déterminé par configuration application
-
-INSERT INTO global_orders (order_id, customer_id)
-VALUES (generate_distributed_id(@current_dc), 123);
-```
-
-**Alternative moderne : Snowflake-like IDs**
-```sql
--- Format : timestamp (41 bits) + datacenter (5 bits) + sequence (18 bits)
--- Nécessite fonction custom ou UDF
-```
-
----
-
-## Performance et Optimisation
-
-### Impact du Paramètre CACHE
-
-Le paramètre **CACHE** est crucial pour les performances en haute concurrence.
-
-```sql
--- Sans cache (NOCACHE ou CACHE 1)
-CREATE SEQUENCE slow_seq NOCACHE;
--- Chaque NEXT VALUE génère une écriture disque (lent)
--- Garantie : aucun gap en cas de crash
-
--- Avec cache modéré
-CREATE SEQUENCE medium_seq CACHE 100;
--- 1 écriture disque toutes les 100 valeurs
--- Compromis performance/gaps
-
--- Avec cache élevé
-CREATE SEQUENCE fast_seq CACHE 10000;
--- Optimal pour très haute fréquence
--- Peut créer des gaps de 10000 en cas de crash
-```
-
-**Benchmark typique (insertions/sec)** :
-
-| Configuration | Insertions/sec | Gaps possibles |
-|---------------|----------------|----------------|
-| NOCACHE | ~5,000 | 0 |
-| CACHE 10 | ~15,000 | 10 |
-| CACHE 100 | ~50,000 | 100 |
-| CACHE 1000 | ~80,000 | 1000 |
-| CACHE 10000 | ~100,000 | 10000 |
-
-💡 **Best practice** : 
-- CACHE 1-10 : Logs d'audit critiques (gaps inacceptables)
-- CACHE 100-500 : Usage général (bon compromis)
-- CACHE 1000-10000 : Très haute fréquence (gaps acceptables)
-
-### Contention et Concurrence
-
-```sql
--- Test de concurrence : 10 threads insèrent simultanément
--- Thread 1
-INSERT INTO orders (order_id, ...) VALUES (NEXT VALUE FOR order_seq, ...);
-
--- Thread 2
-INSERT INTO orders (order_id, ...) VALUES (NEXT VALUE FOR order_seq, ...);
-
--- Thread 10
-INSERT INTO orders (order_id, ...) VALUES (NEXT VALUE FOR order_seq, ...);
-
--- MariaDB garantit :
--- - Aucun doublon
--- - Thread-safe
--- - Performance linéaire avec CACHE approprié
-```
-
-**Monitoring de performance** :
-```sql
--- Statistiques sequences (MariaDB 11.x+)
-SELECT TABLE_NAME, 
-       NEXT_NOT_CACHED_VALUE,
-       CACHE_SIZE
-FROM information_schema.SEQUENCES
-WHERE TABLE_SCHEMA = DATABASE();
-
--- Identifier sequences à faible cache
-SELECT TABLE_NAME
-FROM information_schema.SEQUENCES
-WHERE CACHE_SIZE < 100
-  AND TABLE_SCHEMA = DATABASE();
-```
-
----
-
-## Best Practices et Recommandations
-
-### ✅ Bonnes Pratiques
-
-1. **Nommage explicite**
-```sql
--- ✅ Bon : Nom descriptif avec suffixe _seq
-CREATE SEQUENCE invoice_number_seq;
-CREATE SEQUENCE customer_id_seq;
-
--- ❌ Mauvais : Nom ambigu
-CREATE SEQUENCE s1;
-CREATE SEQUENCE seq;
-```
-
-2. **CACHE adapté au volume**
-```sql
--- Faible fréquence (< 100/sec)
-CREATE SEQUENCE occasional_seq CACHE 10;
-
--- Moyenne fréquence (100-1000/sec)
-CREATE SEQUENCE standard_seq CACHE 100;
-
--- Haute fréquence (> 1000/sec)
-CREATE SEQUENCE high_freq_seq CACHE 1000;
-```
-
-3. **MINVALUE/MAXVALUE pour limites métier**
-```sql
--- Limiter range pour éviter débordement
-CREATE SEQUENCE yearly_invoice_seq
-    START WITH 1
-    MAXVALUE 999999  -- Max 999,999 factures/an
-    NOCYCLE;         -- Erreur si dépassement (volontaire)
-```
-
-4. **Documentation dans commentaires**
-```sql
--- MariaDB ne supporte pas COMMENT sur SEQUENCE
--- Documenter dans une table dédiée
-CREATE TABLE sequence_documentation (
-    sequence_name VARCHAR(64) PRIMARY KEY,
-    description TEXT,
-    owner VARCHAR(64),
-    reset_policy VARCHAR(100)
-);
-
-INSERT INTO sequence_documentation VALUES
-('invoice_2025_seq', 'Numérotation factures 2025', 'Finance', 'Annuel');
-```
-
-5. **Monitoring et alertes**
-```sql
--- Créer une vue pour monitoring
-CREATE VIEW sequence_health AS
-SELECT 
-    TABLE_NAME AS sequence_name,
-    NEXT_NOT_CACHED_VALUE AS current_value,
-    MINIMUM_VALUE,
-    MAXIMUM_VALUE,
-    ROUND((NEXT_NOT_CACHED_VALUE - MINIMUM_VALUE) / 
-          (MAXIMUM_VALUE - MINIMUM_VALUE) * 100, 2) AS usage_percent
-FROM information_schema.SEQUENCES
-WHERE TABLE_SCHEMA = DATABASE();
-
--- Identifier sequences proches de la limite
-SELECT * FROM sequence_health WHERE usage_percent > 90;
-```
-
-### ⚠️ Pièges à Éviter
-
-1. **Oublier NOCYCLE avec limites strictes**
-```sql
--- ❌ Mauvais : CYCLE sans le vouloir
-CREATE SEQUENCE limited_seq
-    MAXVALUE 1000;
-    -- CYCLE par défaut si on atteint 1000, repart à MINVALUE
-
--- ✅ Bon : NOCYCLE explicite
-CREATE SEQUENCE limited_seq
-    MAXVALUE 1000
-    NOCYCLE;  -- Erreur explicite si limite atteinte
-```
-
-2. **CACHE trop élevé pour séquences critiques**
-```sql
--- ❌ Mauvais : Gaps importants possibles
-CREATE SEQUENCE audit_log_seq CACHE 10000;
--- Crash serveur = perte potentielle de 10000 numéros
-
--- ✅ Bon : CACHE minimal pour audit
-CREATE SEQUENCE audit_log_seq CACHE 1;
-```
-
-3. **Ne pas synchroniser après import de données**
-```sql
--- ❌ Oubli de synchronisation
--- Import de factures existantes avec numéros jusqu'à 5000
--- Sequence toujours à 1
--- → Conflit de clés
-
--- ✅ Synchronisation post-import
-SELECT SETVAL(invoice_seq, 
-              (SELECT MAX(invoice_number) FROM invoices), 
-              true);
-```
-
-4. **Utiliser NEXT VALUE dans WHERE/JOIN**
-```sql
--- ❌ Erreur : NEXT VALUE consomme la sequence à chaque évaluation
-SELECT * FROM orders 
-WHERE order_id = NEXT VALUE FOR order_seq;
--- Comportement imprévisible
-
--- ✅ Assigner d'abord à variable
-SET @target_id = NEXT VALUE FOR order_seq;
-SELECT * FROM orders WHERE order_id = @target_id;
-```
-
----
-
-## Gestion en Production
-
-### Backup et Restauration
-
-```sql
--- Sauvegarder la configuration des sequences
-SELECT 
-    CONCAT(
-        'CREATE SEQUENCE ', TABLE_NAME,
-        ' START WITH ', START_VALUE,
-        ' INCREMENT BY ', INCREMENT,
-        ' MINVALUE ', MINIMUM_VALUE,
-        ' MAXVALUE ', MAXIMUM_VALUE,
-        ' CACHE ', CACHE_SIZE,
-        IF(CYCLE_OPTION='YES', ' CYCLE', ' NOCYCLE'),
-        ';'
-    ) AS create_statement
-FROM information_schema.SEQUENCES
-WHERE TABLE_SCHEMA = 'your_database';
-
--- Sauvegarder les valeurs courantes
-SELECT 
-    TABLE_NAME,
-    NEXT_NOT_CACHED_VALUE
-FROM information_schema.SEQUENCES
-WHERE TABLE_SCHEMA = 'your_database';
-
--- Restauration : Recréer sequences puis SETVAL
-SELECT SETVAL(invoice_seq, 12345, true);
-```
-
-### Migration et Déploiement
-
-```sql
--- Script de migration (versioning de schéma)
--- migrations/V001__create_sequences.sql
-
--- Créer sequences avec IF NOT EXISTS
-CREATE SEQUENCE IF NOT EXISTS invoice_seq
-    START WITH 1000
-    INCREMENT BY 1
-    CACHE 100;
-
-CREATE SEQUENCE IF NOT EXISTS order_seq
-    START WITH 1
-    INCREMENT BY 1
-    CACHE 500;
-
--- Rollback script
--- migrations/V001__rollback.sql
-DROP SEQUENCE IF EXISTS invoice_seq;
-DROP SEQUENCE IF EXISTS order_seq;
-```
-
-### Monitoring en Production
-
-```sql
--- Requête pour tableau de bord
-SELECT 
-    s.TABLE_NAME AS sequence_name,
-    s.NEXT_NOT_CACHED_VALUE AS current_value,
-    s.MAXIMUM_VALUE AS max_value,
-    ROUND((s.NEXT_NOT_CACHED_VALUE / s.MAXIMUM_VALUE) * 100, 2) AS fill_percent,
-    s.CACHE_SIZE,
-    CASE 
-        WHEN s.NEXT_NOT_CACHED_VALUE / s.MAXIMUM_VALUE > 0.9 THEN 'CRITICAL'
-        WHEN s.NEXT_NOT_CACHED_VALUE / s.MAXIMUM_VALUE > 0.75 THEN 'WARNING'
-        ELSE 'OK'
-    END AS status
-FROM information_schema.SEQUENCES s
-WHERE s.TABLE_SCHEMA = DATABASE()
-ORDER BY fill_percent DESC;
-```
-
----
-
-## ✅ Points clés à retenir
-
-### Fondamentaux
-- ✅ Les **sequences** sont des objets indépendants générant des nombres séquentiels
-- ✅ Offrent plus de **flexibilité et contrôle** qu'AUTO_INCREMENT
-- ✅ **Thread-safe** et optimisés pour la concurrence
-- ✅ Standard **SQL:2003** (portable PostgreSQL, Oracle)
-
-### Fonctions Essentielles
-- ✅ **NEXT VALUE FOR** : Obtenir la prochaine valeur (incrémente)
-- ✅ **LASTVAL()** : Dernière valeur générée dans la session
-- ✅ **SETVAL()** : Modifier la valeur courante (admin)
-
-### Performance
-- ✅ **CACHE** est crucial : 100-1000 pour haute fréquence
-- ✅ CACHE élevé = performance ↑ mais gaps possibles en cas de crash
-- ✅ NOCACHE = garantie sans gaps mais performance ↓
-
-### Cas d'Usage
-- ✅ **Numérotation multi-tables** (entités business partagées)
-- ✅ **Schémas métier** (factures, tickets, commandes avec format spécifique)
-- ✅ **Batch processing** (traçabilité des lots)
-- ✅ **Systèmes distribués** (ranges réservés par datacenter)
-
-### Best Practices
-- ✅ Nommage explicite avec suffixe `_seq`
-- ✅ MINVALUE/MAXVALUE selon contraintes métier
-- ✅ NOCYCLE pour éviter reset silencieux
-- ✅ Documenter la politique de reset (annuel, etc.)
-- ✅ Monitoring du fill_percent (alertes > 90%)
-- ✅ Synchronisation post-import avec SETVAL
-
-### Pièges à Éviter
-- ❌ Ne pas oublier SETVAL après import de données
-- ❌ CACHE trop élevé pour séquences critiques/audit
-- ❌ CYCLE par défaut non voulu (toujours expliciter)
-- ❌ Utiliser NEXT VALUE dans WHERE/JOIN
-
----
-
-## 🔗 Ressources et références
-
-### Documentation Officielle MariaDB
-- 📖 [CREATE SEQUENCE](https://mariadb.com/kb/en/create-sequence/) - Syntaxe complète
-- 📖 [NEXT VALUE FOR](https://mariadb.com/kb/en/next-value-for/) - Fonction de génération
-- 📖 [SETVAL](https://mariadb.com/kb/en/setval/) - Modifier une sequence
-- 📖 [ALTER SEQUENCE](https://mariadb.com/kb/en/alter-sequence/) - Modification
-- 📖 [INFORMATION_SCHEMA.SEQUENCES](https://mariadb.com/kb/en/information-schema-sequences-table/) - Métadonnées
-
-### Articles et Blogs
-- 📝 [MariaDB Sequences vs AUTO_INCREMENT](https://mariadb.com/kb/en/sequences-vs-auto_increment/) - Comparaison approfondie
-- 📝 [Sequence Performance Best Practices](https://mariadb.org/sequences-performance/)
-- 📝 [Using Sequences in Production](https://mariadb.com/resources/blog/sequences-production/)
-
-### Comparaison avec Autres SGBD
-- 🔄 [PostgreSQL Sequences](https://www.postgresql.org/docs/current/sql-createsequence.html) - Syntaxe quasi-identique
-- 🔄 [Oracle Sequences](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/CREATE-SEQUENCE.html) - Inspiration originale
-- 🔄 [SQL Server IDENTITY vs SEQUENCE](https://docs.microsoft.com/en-us/sql/t-sql/statements/create-sequence-transact-sql)
-
----
-
-## ➡️ Section suivante
-
-**[18.2 System-Versioned Tables (Tables Temporelles)](./02-system-versioned-tables.md)** : Découvrez comment MariaDB conserve automatiquement l'historique complet des modifications de vos tables pour audit, conformité et analyse forensique.
-
----
+L'option `TEMPORARY` permet par ailleurs de créer une séquence éphémère, limitée à la session, et `OR REPLACE` / `IF NOT EXISTS` facilitent l'écriture de scripts ré-exécutables.
 
+## Comportements à connaître et pièges
+
+### Des trous sont normaux
+
+La génération de valeurs **n'est pas transactionnelle**. Si une transaction appelle `NEXTVAL` puis effectue un `ROLLBACK`, la valeur consommée n'est pas restituée : un trou apparaît dans la numérotation. C'est exactement le comportement d'`AUTO_INCREMENT`, et c'est volontaire — restituer les valeurs imposerait une sérialisation qui ruinerait les performances.
+
+La conséquence pratique est importante : **une séquence ne garantit pas une numérotation sans trou.** Pour un besoin réglementaire de numérotation strictement continue (certaines numérotations de factures, par exemple), il faut prévoir un mécanisme applicatif dédié plutôt que de s'appuyer sur une séquence ou un `AUTO_INCREMENT`.
+
+### Cache et redémarrage
+
+Le cache accélère la production de valeurs mais réserve un bloc à l'avance. Les valeurs réservées et non encore consommées sont **perdues lors d'un redémarrage du serveur**, ce qui crée également des trous. Le réglage du `CACHE` est donc un compromis : un grand cache maximise le débit mais accroît les sauts potentiels ; `NOCACHE` supprime ces sauts au prix d'une écriture à chaque appel. Pour une clé technique, des trous sont sans conséquence et un cache confortable est préférable.
+
+### Réplication
+
+Les séquences sont répliquées. Les opérations qui font avancer le compteur sont journalisées, et la propriété « jamais en arrière » de `SETVAL` garantit la convergence même lorsque des instructions parviennent dans le désordre au réplica. Le réglage du cache et le format du binlog peuvent influencer le détail du journal ; ces aspects rejoignent les considérations générales de réplication (Partie 6).
+
+## Privilèges requis
+
+L'utilisation des séquences s'appuie sur les privilèges habituels appliqués à la « table » qui les représente :
+
+- `NEXTVAL` et `SETVAL` requièrent le privilège **`INSERT`** sur la séquence ;
+- la lecture via `SELECT` ou `PREVIOUS VALUE FOR` requiert le privilège **`SELECT`** ;
+- `CREATE SEQUENCE`, `ALTER SEQUENCE` et `DROP SEQUENCE` requièrent respectivement **`CREATE`**, **`ALTER`** et **`DROP`**.
+
+## Cas d'usage typiques
+
+Les séquences brillent dès que la génération d'identifiants doit être maîtrisée plutôt que subie. On les retrouve pour produire un **identifiant partagé** par plusieurs tables, pour **réserver un identifiant avant l'insertion** (réserver l'`id` d'une commande pour le journaliser ou le retourner à un service tiers avant même d'écrire la ligne), ou pour mettre en place des **identifiants distribués multi-nœuds** en attribuant à chaque nœud un `START` et un `INCREMENT` décalés, sur le même principe que `auto_increment_offset` et `auto_increment_increment`.
+
+Elles jouent enfin un rôle clé lors d'une **migration depuis Oracle ou PostgreSQL** : les schémas issus de ces systèmes reposent massivement sur des séquences, et MariaDB permet de les transposer presque à l'identique. Ce point est développé dans les sections consacrées à la migration depuis Oracle (§19.2.1) et depuis PostgreSQL (§19.2.3).
+
+## Points clés à retenir
+
+- Une séquence est un **objet autonome** qui génère des entiers selon des règles configurables, là où `AUTO_INCREMENT` reste lié à une colonne.
+- `NEXTVAL` (ou `NEXT VALUE FOR`) produit et avance ; `PREVIOUS VALUE FOR` / `LASTVAL` relisent la dernière valeur **de la session** ; `SETVAL` repositionne, sans jamais reculer.
+- Une séquence peut servir de `DEFAULT` de colonne et être partagée entre plusieurs tables.
+- La génération n'est **pas transactionnelle** et le cache crée des sauts : des **trous** sont à prévoir et acceptables pour une clé technique, mais inadaptés à une numérotation strictement continue.
+- Le réglage du `CACHE` arbitre entre débit et continuité ; les séquences sont sûres en réplication.
+- Atout majeur pour la **portabilité Oracle / PostgreSQL** et pour les scénarios d'identifiants partagés ou distribués.
 
 ⏭️ [Tables temporelles (System-Versioned Tables)](/18-fonctionnalites-avancees/02-system-versioned-tables.md)
