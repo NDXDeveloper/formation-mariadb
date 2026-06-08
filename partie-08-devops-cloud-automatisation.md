@@ -44,7 +44,7 @@ Ce module couvre l'intégralité du spectre DevOps appliqué à MariaDB, des fon
 - **Testing** : Molecule pour validation des playbooks
 
 #### ☁️ Déploiement avec Terraform
-- **Providers cloud** : AWS RDS MariaDB, GCP Cloud SQL, Azure Database 🔄
+- **Providers cloud** : AWS RDS (MariaDB), SkySQL (le cloud MariaDB) ; paysage managé contrasté pour MariaDB (GCP Cloud SQL **ne propose pas** MariaDB, Azure Database for MariaDB **retirée** en 2025) → l'auto-gestion reste souvent nécessaire 🔄
 - **Modules MariaDB** : VPC, Security Groups, instances, backups
 - **State management** : Remote backends (S3, GCS), state locking
 - **Workspaces** : Gestion multi-environnements (dev, staging, prod)
@@ -104,7 +104,7 @@ Ce module couvre l'intégralité du spectre DevOps appliqué à MariaDB, des fon
   - Rollback support
   - Database-agnostic
 - **gh-ost et pt-online-schema-change** : Zero-downtime migrations 🔄
-  - Triggerless replication
+  - Table fantôme + copie en ligne (triggers pour pt-osc, lecture du binlog pour gh-ost)
   - Throttling et pause/resume
   - Validation et rollback
 
@@ -153,21 +153,21 @@ Ce module couvre l'intégralité du spectre DevOps appliqué à MariaDB, des fon
 
 ## 🛠️ Outils modernes pour Database DevOps
 
-### MariaDB Enterprise Operator : Kubernetes-native automation 🆕
+### mariadb-operator : automation Kubernetes-native 🆕
 
-Le **MariaDB Enterprise Operator** représente l'évolution de la gestion de bases de données dans Kubernetes, offrant des capacités enterprise au-delà de l'operator open source.
+Le **mariadb-operator** (open source, groupe d'API `k8s.mariadb.com`) gère MariaDB dans Kubernetes de façon entièrement déclarative via des CRDs. Son pendant commercial, le **MariaDB Enterprise Operator** (groupe d'API distinct `enterprise.mariadb.com`), en reprend le modèle et les ressources en y ajoutant support contractuel et fonctionnalités d'entreprise (détaillé en §16.6). Les exemples ci-dessous emploient l'opérateur communautaire.
 
 #### Architecture et fonctionnement
 
 ```yaml
 # Custom Resource Definition : MariaDB cluster
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: MariaDB
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: MariaDB  
+metadata:  
   name: mariadb-galera
 spec:
-  # Version et replicas
-  mariadbVersion: "11.8"
+  # Image (la version vient de l'étiquette d'image) et replicas
+  image: mariadb:12.3
   replicas: 3
   
   # Galera cluster configuration
@@ -187,19 +187,12 @@ spec:
   podDisruptionBudget:
     maxUnavailable: 1
     
-  # Monitoring
+  # Monitoring (l'operator crée un exportateur sidecar + ServiceMonitor)
   metrics:
     enabled: true
-    serviceMonitor: true
-    
-  # Backups automatisés
-  backup:
-    enabled: true
-    schedule: "0 2 * * *"
-    s3:
-      bucket: mariadb-backups
-      endpoint: s3.amazonaws.com
-      region: us-east-1
+
+  # Sauvegardes automatisées : déclarées via une ressource Backup distincte
+  # (CronJob planifié vers S3/Azure Blob/PVC — voir l'exemple plus bas)
 ```
 
 #### Fonctionnalités avancées
@@ -209,7 +202,7 @@ spec:
 # Rolling upgrade sans downtime
 kubectl patch mariadb mariadb-galera \
   --type merge \
-  --patch '{"spec":{"mariadbVersion":"11.8.1"}}'
+  --patch '{"spec":{"image":"mariadb:12.3.2"}}'
 
 # L'operator gère automatiquement :
 # 1. Upgrade un nœud à la fois
@@ -220,9 +213,9 @@ kubectl patch mariadb mariadb-galera \
 **2. Backup et Restore déclaratifs**
 ```yaml
 # Backup on-demand
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: Backup
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: Backup  
+metadata:  
   name: mariadb-backup-20251215
 spec:
   mariadbRef:
@@ -232,9 +225,9 @@ spec:
     prefix: prod/
 
 # Restore depuis backup
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: Restore
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: Restore  
+metadata:  
   name: restore-from-20251215
 spec:
   mariadbRef:
@@ -246,9 +239,9 @@ spec:
 **3. User et Database management as code**
 ```yaml
 # Création utilisateur déclarative
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: User
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: User  
+metadata:  
   name: app-user
 spec:
   mariadbRef:
@@ -259,9 +252,9 @@ spec:
   maxUserConnections: 100
 
 # Création database
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: Database
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: Database  
+metadata:  
   name: production-db
 spec:
   mariadbRef:
@@ -270,9 +263,9 @@ spec:
   collate: utf8mb4_unicode_ci
 
 # Grant privileges
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: Grant
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: Grant  
+metadata:  
   name: app-user-grants
 spec:
   mariadbRef:
@@ -299,9 +292,9 @@ spec:
 **1. mysqld_exporter : Métriques MariaDB**
 ```yaml
 # Déploiement exporter en sidecar
-apiVersion: apps/v1
-kind: Deployment
-metadata:
+apiVersion: apps/v1  
+kind: Deployment  
+metadata:  
   name: mariadb-with-exporter
 spec:
   template:
@@ -309,19 +302,26 @@ spec:
       containers:
       # Container MariaDB principal
       - name: mariadb
-        image: mariadb:11.8
+        image: mariadb:12.3
         ports:
         - containerPort: 3306
           
       # Sidecar : mysqld_exporter
+      # (depuis l'exporter 0.15.0, DATA_SOURCE_NAME est supprimé :
+      #  on passe par --mysqld.address/--mysqld.username + MYSQLD_EXPORTER_PASSWORD)
       - name: exporter
         image: prom/mysqld-exporter:latest
         ports:
         - containerPort: 9104
         env:
-        - name: DATA_SOURCE_NAME
-          value: "exporter:password@(localhost:3306)/"
+        - name: MYSQLD_EXPORTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-exporter-secret
+              key: password
         args:
+        - --mysqld.address=localhost:3306
+        - --mysqld.username=exporter
         - --collect.info_schema.tables
         - --collect.info_schema.innodb_metrics
         - --collect.global_status
@@ -330,9 +330,9 @@ spec:
 
 **2. ServiceMonitor : Scraping automatique**
 ```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
+apiVersion: monitoring.coreos.com/v1  
+kind: ServiceMonitor  
+metadata:  
   name: mariadb-metrics
 spec:
   selector:
@@ -450,12 +450,12 @@ migrations/
 └── R__refresh_materialized_views.sql  # Repeatable
 
 # Configuration flyway.conf
-flyway.url=jdbc:mariadb://mariadb-primary:3306/production
-flyway.user=flyway_user
-flyway.password=${FLYWAY_PASSWORD}
-flyway.schemas=production
-flyway.table=flyway_schema_history
-flyway.locations=filesystem:./migrations
+flyway.url=jdbc:mariadb://mariadb-primary:3306/production  
+flyway.user=flyway_user  
+flyway.password=${FLYWAY_PASSWORD}  
+flyway.schemas=production  
+flyway.table=flyway_schema_history  
+flyway.locations=filesystem:./migrations  
 
 # Exécution dans CI/CD
 flyway migrate
@@ -515,9 +515,9 @@ MariaDB clusters running
 **Configuration Flux** :
 ```yaml
 # flux-system/gotk-sync.yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
+apiVersion: source.toolkit.fluxcd.io/v1  
+kind: GitRepository  
+metadata:  
   name: mariadb-configs
   namespace: flux-system
 spec:
@@ -529,9 +529,9 @@ spec:
     name: github-credentials
     
 ---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
+apiVersion: kustomize.toolkit.fluxcd.io/v1  
+kind: Kustomization  
+metadata:  
   name: mariadb-prod
   namespace: flux-system
 spec:
@@ -728,9 +728,9 @@ Architectures modernes sont **cloud-native by design** :
 **Solution** : StatefulSet avec ordinal index.
 
 ```yaml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
+apiVersion: apps/v1  
+kind: StatefulSet  
+metadata:  
   name: mariadb
 spec:
   serviceName: mariadb-headless
@@ -745,7 +745,7 @@ spec:
     spec:
       containers:
       - name: mariadb
-        image: mariadb:11.8
+        image: mariadb:12.3
         ports:
         - containerPort: 3306
           name: mysql
@@ -821,30 +821,33 @@ func (r *MariaDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 **Solution** : Sidecar pattern avec exporter.
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
+apiVersion: v1  
+kind: Pod  
+metadata:  
   name: mariadb-with-monitoring
 spec:
   containers:
   # Container principal
   - name: mariadb
-    image: mariadb:11.8
+    image: mariadb:12.3
     ports:
     - containerPort: 3306
       
-  # Sidecar : mysqld_exporter
+  # Sidecar : mysqld_exporter (config via .my.cnf ou variables, cf. §16.9.1)
   - name: metrics-exporter
     image: prom/mysqld-exporter:latest
     ports:
     - containerPort: 9104
       name: metrics
     env:
-    - name: DATA_SOURCE_NAME
+    - name: MYSQLD_EXPORTER_PASSWORD
       valueFrom:
         secretKeyRef:
           name: mariadb-exporter-secret
-          key: dsn
+          key: password
+    args:
+    - --mysqld.address=localhost:3306
+    - --mysqld.username=exporter
 ```
 
 **Avantages sidecar** :
@@ -860,9 +863,9 @@ spec:
 **Solution** : Init containers exécutés séquentiellement.
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
+apiVersion: v1  
+kind: Pod  
+metadata:  
   name: mariadb-initialized
 spec:
   initContainers:
@@ -876,7 +879,7 @@ spec:
       
   # 2. Restore from backup if needed
   - name: restore-backup
-    image: mariadb:11.8
+    image: mariadb:12.3
     command: ['sh', '-c', 'if [ -f /backup/backup.sql ]; then mariadb < /backup/backup.sql; fi']
     volumeMounts:
     - name: data
@@ -886,7 +889,7 @@ spec:
       
   containers:
   - name: mariadb
-    image: mariadb:11.8
+    image: mariadb:12.3
     volumeMounts:
     - name: data
       mountPath: /var/lib/mysql
@@ -910,9 +913,9 @@ spec:
 ```yaml
 # ✅ Déclaratif (GitOps)
 # Fichier : mariadb-prod.yaml dans Git
-apiVersion: k8s.mariadb.com/v1alpha1
-kind: MariaDB
-metadata:
+apiVersion: k8s.mariadb.com/v1alpha1  
+kind: MariaDB  
+metadata:  
   name: production-db
 spec:
   replicas: 3
@@ -1075,9 +1078,9 @@ ALTER TABLE users ADD COLUMN email VARCHAR(255);
 
 ```yaml
 # ❌ NEVER do this
-apiVersion: v1
-kind: Secret
-metadata:
+apiVersion: v1  
+kind: Secret  
+metadata:  
   name: mariadb-root-password
 stringData:
   password: "SuperSecretPassword123"  # In Git = BAD
@@ -1086,9 +1089,9 @@ stringData:
 **Solutions** :
 ```yaml
 # ✅ External Secrets Operator
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
+apiVersion: external-secrets.io/v1beta1  
+kind: ExternalSecret  
+metadata:  
   name: mariadb-credentials
 spec:
   refreshInterval: 1h
@@ -1120,32 +1123,32 @@ spec:
 
 #### 1. Deployment Frequency
 ```
-Avant automatisation : 1 deployment / mois (maintenance windows)
-Après automatisation : 10-20 deployments / jour (schema migrations via CI/CD)
+Avant automatisation : 1 deployment / mois (maintenance windows)  
+Après automatisation : 10-20 deployments / jour (schema migrations via CI/CD)  
 
 → Amélioration : 200-600x
 ```
 
 #### 2. Lead Time for Changes
 ```
-Avant : 2-4 semaines (planning → approval → maintenance window)
-Après : 2-4 heures (PR → review → automated deployment)
+Avant : 2-4 semaines (planning → approval → maintenance window)  
+Après : 2-4 heures (PR → review → automated deployment)  
 
 → Amélioration : 100x
 ```
 
 #### 3. Mean Time to Recovery (MTTR)
 ```
-Avant : 2-8 heures (manual diagnosis + fix + deployment)
-Après : 5-15 minutes (automated detection + rollback/failover)
+Avant : 2-8 heures (manual diagnosis + fix + deployment)  
+Après : 5-15 minutes (automated detection + rollback/failover)  
 
 → Amélioration : 24-96x
 ```
 
 #### 4. Change Failure Rate
 ```
-Avant : 15-30% (manual errors, insufficient testing)
-Après : 0-5% (automated testing, validation gates)
+Avant : 15-30% (manual errors, insufficient testing)  
+Après : 0-5% (automated testing, validation gates)  
 
 → Amélioration : 3-6x
 ```
@@ -1190,9 +1193,9 @@ Bienvenue dans l'ère du Database DevOps ! 🚀
 
 ---
 
-**MariaDB** : Version 11.8 LTS  
+**MariaDB** : Version 12.3 LTS  
 **Kubernetes** : 1.28+  
 **Flux CD** : 2.x  
-**Terraform** : 1.6+
+**Terraform** : 1.6+  
 
 ⏭️ [DevOps et Automatisation](/16-devops-automatisation/README.md)

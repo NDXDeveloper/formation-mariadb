@@ -1,1264 +1,172 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 16.10 Observabilité : Logs, Metrics, Traces
+# 16.10 — Observabilité : Logs, Metrics, Traces
 
-> **Niveau** : Expert  
-> **Durée estimée** : 8-9 heures  
-> **Prérequis** : 
-> - Section 16.9 Monitoring Prometheus/Grafana maîtrisée
-> - Compréhension des concepts d'observabilité
-> - Expérience avec analyse de logs et debugging
-> - Notions de distributed tracing
-> - Familiarité avec ELK stack ou Loki
+> **Positionnement.** La section [16.9](09-monitoring-prometheus-grafana.md) a posé le pilier *Metrics* (Prometheus, Grafana, `mysqld_exporter`). Cette section prend de la hauteur : elle replace les métriques dans le cadre plus large de l'**observabilité**, dont elles ne sont qu'un tiers, et montre comment les trois piliers — **Logs, Metrics, Traces** — se combinent pour superviser MariaDB dans une architecture moderne et distribuée.
 
-## 🎯 Objectifs d'apprentissage
+## Monitoring n'est pas observabilité
 
-À l'issue de cette section, vous serez capable de :
+Ces deux termes sont souvent confondus, mais ils ne répondent pas à la même question.
 
-- **Comprendre** les 3 piliers de l'observabilité et leur complémentarité
-- **Collecter** et centraliser tous les logs MariaDB (error, slow query, audit)
-- **Analyser** les logs avec Loki ou ELK stack
-- **Corréler** logs et metrics dans Grafana
-- **Implémenter** distributed tracing pour requêtes database
-- **Diagnostiquer** incidents complexes via observabilité complète
-- **Créer** des dashboards unifiés (logs + metrics + traces)
-- **Appliquer** observability-driven development
+Le **monitoring** consiste à surveiller des indicateurs *connus à l'avance* pour détecter des modes de défaillance *anticipés* : « le serveur répond-il ? », « la réplication est-elle en retard ? ». On construit pour cela des dashboards et des alertes figés. Le monitoring excelle face aux problèmes que l'on a déjà su nommer.
 
----
+L'**observabilité** est une propriété plus ambitieuse : c'est la capacité à comprendre l'état interne d'un système *uniquement à partir de ses sorties externes*, y compris pour des questions que l'on n'avait pas prévues — sans avoir à déployer du nouveau code pour investiguer. Elle vise les *unknown unknowns* : « pourquoi cette requête précise, déclenchée par ce service précis, est-elle lente uniquement le mardi à 14 h ? ». Le monitoring dit *qu'*un problème existe ; l'observabilité permet de comprendre *pourquoi*.
 
-## Introduction
+Pour atteindre cette propriété, on s'appuie sur trois sources de données complémentaires, traditionnellement appelées les **trois piliers de l'observabilité**.
 
-### Les 3 piliers de l'observabilité revisités
+## Les trois piliers en un coup d'œil
 
-Dans la section 16.9, nous avons vu **Metrics** (Prometheus). Maintenant, explorons **Logs** et **Traces**, puis leur **corrélation**.
+| Pilier | Question à laquelle il répond | Nature de la donnée | Source côté MariaDB |
+|--------|-------------------------------|---------------------|----------------------|
+| **Metrics** | *Quoi* et *quand* ? (santé agrégée) | Séries temporelles numériques | Variables de statut → `mysqld_exporter` |
+| **Logs** | *Pourquoi* ? (événements unitaires) | Enregistrements horodatés, textuels | Error log, slow query log, audit log… |
+| **Traces** | *Où* dans la requête distribuée ? | Arbres de spans corrélés par requête | Instrumentation **applicative** (OpenTelemetry) |
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│           Observability: Complete Picture                       │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  1️⃣  METRICS (What is happening?)                          │ │
-│  │  ────────────────────────────────────────────────────────  │ │
-│  │  Agrégations numériques dans le temps                      │ │
-│  │                                                            │ │
-│  │  Exemple: CPU usage = 87% (at timestamp T)                 │ │
-│  │                                                            │ │
-│  │  Questions répondues:                                      │ │
-│  │  - Système en bonne santé?                                 │ │
-│  │  - Performance dégradée?                                   │ │
-│  │  - Tendances (scaling needed?)                             │ │
-│  │                                                            │ │
-│  │  Limites:                                                  │ │
-│  │  ❌ Ne dit pas POURQUOI problème                           │ │
-│  │  ❌ Pas de contexte détaillé                               │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  2️⃣  LOGS (Why is it happening?)                           │ │
-│  │  ────────────────────────────────────────────────────────  │ │
-│  │  Événements discrets avec contexte riche                   │ │
-│  │                                                            │ │
-│  │  Exemple:                                                  │ │
-│  │  [ERROR] Table 'users' doesn't exist                       │ │
-│  │  [WARN] Aborted connection (Got timeout reading)           │ │
-│  │                                                            │ │
-│  │  Questions répondues:                                      │ │
-│  │  - Quel est le message d'erreur exact?                     │ │
-│  │  - Quand est-ce arrivé (timestamp précis)?                 │ │
-│  │  - Quel utilisateur/query?                                 │ │
-│  │                                                            │ │
-│  │  Limites:                                                  │ │
-│  │  ❌ Verbose (beaucoup de bruit)                            │ │
-│  │  ❌ Difficile de voir tendances                            │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  3️⃣  TRACES (How did it flow through system?)              │ │
-│  │  ────────────────────────────────────────────────────────  │ │
-│  │  Suivi d'une requête à travers composants distribués       │ │
-│  │                                                            │ │
-│  │  Exemple:                                                  │ │
-│  │  API (50ms) → App (120ms) → MariaDB (800ms) → Total: 970ms │ │
-│  │                                                            │ │
-│  │  Questions répondues:                                      │ │
-│  │  - Quel composant est lent?                                │ │
-│  │  - Quel est le chemin critique?                            │ │
-│  │  - Dépendances entre services?                             │ │
-│  │                                                            │ │
-│  │  Limites:                                                  │ │
-│  │  ❌ Complexité instrumentation                             │ │
-│  │  ❌ Overhead performance                                   │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  🔗 CORRELATION = SUPER POWER                              │ │
-│  │  ────────────────────────────────────────────────────────  │ │
-│  │  Metrics → Alerte "Slow queries spike"                     │ │
-│  │      ↓                                                     │ │
-│  │  Logs → "Table lock timeout on orders table"               │ │
-│  │      ↓                                                     │ │
-│  │  Traces → "Request from API v2.1 taking 5s on checkout"    │ │
-│  │      ↓                                                     │ │
-│  │  Root cause: New query in API v2.1 missing index           │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
+Aucun pilier ne se suffit à lui-même. Les métriques signalent une anomalie mais n'en donnent pas la cause ; les logs détaillent un événement mais ne le situent pas dans une requête de bout en bout ; les traces montrent le chemin d'une requête à travers les services mais sans le détail interne de chaque base. La valeur réelle de l'observabilité naît de leur **corrélation**, traitée plus loin.
 
-### Observabilité vs Monitoring
+## Pilier 1 — Metrics
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│           Monitoring (traditionnel)                          │
-├──────────────────────────────────────────────────────────────┤
-│  Focus: "Système up ou down?"                                │
-│  Approche: Prédéfinir métriques et alertes                   │
-│  Questions: Connues à l'avance                               │
-│  Exemple: "CPU >80%" → alerte                                │
-│                                                              │
-│  Limitation: Ne peut détecter que ce qu'on a prévu           │
-└──────────────────────────────────────────────────────────────┘
+Les métriques sont des mesures numériques échantillonnées dans le temps : nombre de connexions, débit de requêtes, taux de hits du Buffer Pool, lag de réplication. Elles sont **peu coûteuses à stocker** (une valeur par point de temps), agrégeables, et idéales pour les tendances, les seuils et les alertes.
 
-                           VS
+Ce pilier a été traité en détail en [16.9](09-monitoring-prometheus-grafana.md) : `mysqld_exporter` traduit les variables de statut de MariaDB en métriques, Prometheus les scrape selon un modèle *pull*, et Grafana les visualise. On retiendra ici simplement leur **rôle dans l'observabilité** : les métriques constituent le point d'entrée du diagnostic. C'est une métrique (un pic de latence, une chute du hit ratio) qui déclenche l'investigation — laquelle se poursuit ensuite dans les logs et les traces.
 
-┌──────────────────────────────────────────────────────────────┐
-│           Observability (moderne)                            │
-├──────────────────────────────────────────────────────────────┤
-│  Focus: "Pourquoi comportement inattendu?"                   │
-│  Approche: Collecter TOUT, interroger dynamiquement          │
-│  Questions: Posées APRÈS incident (inconnues au départ)      │
-│  Exemple: "Pourquoi latence spike à 14h23 sur user_id=123?"  │
-│          → Drill down logs + traces + metrics                │
-│                                                              │
-│  Avantage: Peut investiguer l'imprévisible                   │
-└──────────────────────────────────────────────────────────────┘
-```
+Leur limite est intrinsèque : une métrique est **agrégée**. `slow_queries` augmente, mais la métrique seule ne dit pas *quelle* requête est lente, *qui* l'a lancée, ni *pourquoi*. Pour cela, il faut descendre d'un cran.
 
----
+## Pilier 2 — Logs
 
-## Pilier 1 : Logs MariaDB
+Les logs sont des enregistrements d'**événements unitaires et datés**. Là où une métrique dit « il y a eu 12 requêtes lentes », un log dit « *cette* requête, à *cet* instant, a duré 4,2 s avec *ce* plan d'exécution ». MariaDB est riche en journaux, chacun avec une finalité distincte.
 
-### Types de logs MariaDB
+### Les journaux de MariaDB pertinents pour l'observabilité
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    MariaDB Log Types                         │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  1. ERROR LOG                                                │
-│     Localisation: /var/log/mysql/error.log                   │
-│     Contenu: Erreurs serveur, warnings, startup/shutdown     │
-│     Utilité: Debugging crashes, config errors                │
-│                                                              │
-│  2. SLOW QUERY LOG                                           │
-│     Localisation: /var/log/mysql/slow.log                    │
-│     Contenu: Requêtes dépassant long_query_time              │
-│     Utilité: Performance optimization                        │
-│                                                              │
-│  3. GENERAL QUERY LOG                                        │
-│     Localisation: /var/log/mysql/general.log                 │
-│     Contenu: TOUTES les requêtes (⚠️ très verbose)           │
-│     Utilité: Debugging, audit (dev only)                     │
-│                                                              │
-│  4. BINARY LOG                                               │
-│     Localisation: /var/lib/mysql/mysql-bin.000001            │
-│     Contenu: Changements de données (DML)                    │
-│     Utilité: Réplication, point-in-time recovery             │
-│                                                              │
-│  5. AUDIT LOG (🆕 Plugin MariaDB Audit)                      │
-│     Localisation: /var/log/mysql/audit.log                   │
-│     Contenu: Connexions, queries (compliance)                │
-│     Utilité: Sécurité, compliance (GDPR, SOC2)               │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
+| Journal | Variable de contrôle | Contenu | Usage en observabilité |
+|---------|----------------------|---------|------------------------|
+| **Error log** | `log_error`, `log_warnings` | Démarrages/arrêts, erreurs, warnings, crashs | Diagnostic d'incidents, santé du serveur |
+| **Slow query log** | `slow_query_log`, `long_query_time` | Requêtes dépassant un seuil de durée | Analyse de performance (cœur du sujet) |
+| **General query log** | `general_log` | *Toutes* les requêtes reçues | Débogage ponctuel — **jamais en prod** (volume) |
+| **Audit log** | `server_audit_*` (plugin) | Connexions, requêtes, accès — traçabilité | Sécurité, conformité, SIEM (voir [§10.8](../10-securite-gestion-utilisateurs/08-audit-logging.md)) |
+| **Binary log** | `log_bin` | Modifications de données (réplication) | Source de CDC plus qu'observabilité (voir [§20.8](../20-cas-usage-architectures/08-architectures-event-driven.md)) |
 
-### Configuration des logs
-
-**my.cnf configuration** :
+Pour l'observabilité de performance, le **slow query log** est le journal central (détaillé en [§11.4.2](../11-administration-configuration/04.2-slow-query-log.md)). MariaDB permet d'en enrichir considérablement le contenu via `log_slow_verbosity`, qui peut y joindre le plan d'exécution et des statistiques InnoDB :
 
 ```ini
-[mysqld]
-# 1. Error log
-log_error = /var/log/mysql/error.log
-log_warnings = 2  # 0=off, 1=important, 2=all
-
-# 2. Slow query log
-slow_query_log = 1
-slow_query_log_file = /var/log/mysql/slow.log
-long_query_time = 2  # secondes
-log_queries_not_using_indexes = 1
-min_examined_row_limit = 1000  # Éviter bruit
-
-# 3. General query log (⚠️ DEV ONLY)
-general_log = 0  # OFF en production (trop verbose)
-general_log_file = /var/log/mysql/general.log
-
-# 4. Binary log
-log_bin = /var/lib/mysql/mysql-bin
-binlog_format = ROW
-expire_logs_days = 7
-max_binlog_size = 100M
-
-# 🆕 MariaDB 11.8 - Binary log compression
-binlog_row_image = MINIMAL  # Réduit taille binlog
+[mariadb]
+slow_query_log        = ON  
+slow_query_log_file   = /var/log/mysql/mariadb-slow.log  
+long_query_time       = 0.5          # seuil en secondes  
+log_slow_verbosity    = query_plan,innodb,explain  
+log_queries_not_using_indexes = ON  
+log_output            = FILE         # voir ci-dessous  
 ```
 
-**Audit plugin (Enterprise)** :
+### FILE ou TABLE : un choix structurant
+
+La variable `log_output` détermine où atterrissent le slow log et le general log : dans un **fichier** (`FILE`), dans une **table système** (`TABLE` → `mysql.slow_log`, `mysql.general_log`), ou les deux.
+
+Le mode `TABLE` rend les logs immédiatement interrogeables en SQL, ce qui est pratique pour une analyse ponctuelle. Mais en contexte d'observabilité centralisée, on privilégie **`FILE`** : un agent de collecte tail le fichier et l'expédie vers un système d'agrégation, sans imposer à MariaDB le surcoût d'écriture dans une table à chaque requête lente.
+
+### Centraliser les logs
+
+Sur un parc de plusieurs instances, consulter les logs serveur par serveur est ingérable. Le principe de l'observabilité moderne est d'**agréger tous les logs dans un système centralisé et indexé**. La chaîne type comporte un **agent de collecte** sur chaque hôte (Promtail ou Grafana Alloy, Fluent Bit, Vector…) qui lit les fichiers de log, les parse, les enrichit d'étiquettes (hôte, environnement, type de journal) et les pousse vers un backend.
+
+```yaml
+# Exemple : collecte vers Loki (extrait de configuration d'agent)
+scrape_configs:
+  - job_name: mariadb-logs
+    static_configs:
+      - targets: [localhost]
+        labels:
+          host: db-prod-01
+          log: mariadb-error
+          __path__: /var/log/mysql/error.log
+      - targets: [localhost]
+        labels:
+          host: db-prod-01
+          log: mariadb-slow
+          __path__: /var/log/mysql/mariadb-slow.log
+```
+
+Deux familles de backends dominent : **Loki** (écosystème Grafana, indexation par étiquettes, recherche LogQL) et la **suite Elastic** (Elasticsearch + Kibana, indexation plein texte). Le choix relève de l'architecture d'entreprise ; les deux remplissent la même fonction : rendre l'ensemble des logs du parc consultables, filtrables et corrélables depuis un point unique.
+
+> 🆕 **Tie-in MariaDB 12.x.** À fort volume, l'écriture de l'audit log peut devenir un goulot. Le plugin d'audit gère désormais une **écriture bufferisée** (`server_audit_file_buffer_size`, voir [§10.8.3](../10-securite-gestion-utilisateurs/08.3-audit-bufferise.md)), ce qui réduit l'impact de la collecte de traçabilité sur les performances — un point appréciable lorsque l'audit log alimente un pipeline d'observabilité ou un SIEM.
+
+## Pilier 3 — Traces
+
+Le *tracing distribué* suit une requête utilisateur **de bout en bout** à travers tous les services qu'elle traverse, sous forme d'un arbre de **spans** (un span = une unité de travail, avec durée, parent et attributs). Dans une architecture microservices, une seule requête HTTP peut solliciter une passerelle, plusieurs services et plusieurs bases. La trace répond à la question : *où* part le temps, et *quelle* dépendance est responsable de la latence ?
+
+### Le défi pour une base de données
+
+C'est ici qu'il faut être lucide : **MariaDB n'émet pas nativement de traces OpenTelemetry**. Il n'existe pas, dans le serveur, de mécanisme produisant des spans pour chaque requête. Le tracing d'un appel base de données se fait donc **au niveau du connecteur ou de l'application**.
+
+Concrètement, les bibliothèques d'instrumentation OpenTelemetry des connecteurs (JDBC pour Java, les connecteurs Python/SQLAlchemy, `mysql2` pour Node.js, etc. — voir [§17.1](../17-integration-developpement/01-connexion-langages.md)) entourent chaque exécution de requête d'un **span enfant**. Ce span porte, selon les conventions sémantiques OpenTelemetry, des attributs comme `db.system`, `db.statement` ou `db.operation`. Du point de vue de la trace, l'appel à MariaDB apparaît comme un span dont on connaît la durée et le contexte applicatif — mais c'est l'application qui le crée, pas la base.
+
+### Corréler une trace à une requête : le contexte dans le commentaire SQL
+
+Reste un fossé à combler : la trace sait *qu'*un appel à la base a duré 4 s, mais comment relier ce span au slow query log de MariaDB, qui, lui, connaît le plan d'exécution réel ? La technique la plus largement adoptée est l'**injection du contexte de trace dans un commentaire SQL** (approche *SQLCommenter*, intégrée à l'écosystème OpenTelemetry).
+
+L'application ajoute le `traceparent` (identifiant de trace W3C) en commentaire de la requête :
 
 ```sql
--- Installer plugin
-INSTALL SONAME 'server_audit';
-
--- Configuration
-SET GLOBAL server_audit_logging = ON;
-SET GLOBAL server_audit_events = 'CONNECT,QUERY_DDL,QUERY_DML';
-SET GLOBAL server_audit_file_path = '/var/log/mysql/audit.log';
-SET GLOBAL server_audit_file_rotate_size = 1000000;  # 1MB
-SET GLOBAL server_audit_file_rotations = 9;
-
--- Exclure utilisateurs (monitoring)
-SET GLOBAL server_audit_excl_users = 'exporter,grafana';
+SELECT * FROM commandes WHERE client_id = 42
+/*traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/;
 ```
 
-### Exemple de logs
+Le commentaire est ignoré par l'exécution SQL, mais il **apparaît tel quel dans le slow query log et dans PERFORMANCE_SCHEMA**. On peut alors joindre, par l'identifiant de trace, le span applicatif (côté APM) à la requête exacte enregistrée côté base — fermant la boucle entre les trois piliers.
 
-**Error log** :
+### PERFORMANCE_SCHEMA : l'introspection interne
 
-```
-2025-12-14 10:23:45 0 [Note] Server socket created on IP: '0.0.0.0'.
-2025-12-14 10:23:45 0 [Note] /usr/sbin/mysqld: ready for connections.
-2025-12-14 11:15:32 123 [Warning] Aborted connection 123 to db: 'myapp' user: 'appuser' host: '10.0.1.5' (Got timeout reading communication packets)
-2025-12-14 11:30:12 456 [ERROR] Table 'myapp.orders_old' doesn't exist
-```
+Au-delà des logs, MariaDB offre une source d'introspection puissante via **PERFORMANCE_SCHEMA** et le schéma `sys` (voir [§15.8](../15-performance-tuning/08-performance-schema-sys.md) et [§9.7.2](../09-vues-et-donnees-virtuelles/07.2-performance-schema.md)). La table `events_statements_summary_by_digest` agrège les requêtes par *digest* (forme normalisée), ce qui identifie les requêtes les plus coûteuses sans dépendre du slow log :
 
-**Slow query log** :
-
-```
-# Time: 2025-12-14T11:45:32.123456Z
-# User@Host: appuser[appuser] @ app-pod-5 [10.0.1.10]
-# Thread_id: 789  Schema: myapp  QC_hit: No
-# Query_time: 5.234567  Lock_time: 0.000123  Rows_sent: 1234  Rows_examined: 567890
-SET timestamp=1734177932;
-SELECT o.*, u.email, u.name 
-FROM orders o 
-JOIN users u ON o.user_id = u.id 
-WHERE o.created_at > '2024-01-01' 
-ORDER BY o.created_at DESC;
+```sql
+SELECT digest_text,
+       count_star,
+       ROUND(sum_timer_wait / 1e12, 2) AS total_s,
+       ROUND(avg_timer_wait / 1e9, 2)  AS avg_ms
+FROM performance_schema.events_statements_summary_by_digest  
+ORDER BY sum_timer_wait DESC  
+LIMIT 10;  
 ```
 
-**Audit log** :
+Ce n'est pas du tracing au sens distribué, mais cela fournit une vue d'introspection fine que les pipelines d'observabilité peuvent collecter périodiquement (certains exporters dédiés exposent ces données comme métriques).
 
-```json
-{
-  "timestamp": "2025-12-14T12:00:00.123Z",
-  "event": "CONNECT",
-  "user": "admin",
-  "host": "10.0.2.5",
-  "database": "myapp",
-  "status": 0
-}
-{
-  "timestamp": "2025-12-14T12:00:05.456Z",
-  "event": "QUERY",
-  "user": "admin",
-  "host": "10.0.2.5",
-  "database": "myapp",
-  "query": "DROP TABLE old_data",
-  "status": 0
-}
-```
+## Corréler les trois piliers : là où réside la valeur
+
+L'objectif final n'est pas trois silos d'outils, mais une **boucle de diagnostic fluide**. Un parcours d'incident type illustre la complémentarité :
+
+1. **Metrics** — une alerte se déclenche : la latence p99 d'un service grimpe, et en parallèle le taux de requêtes lentes de MariaDB augmente. *On sait qu'il y a un problème, et quand.*
+2. **Traces** — on ouvre une trace lente de la période concernée : la majorité du temps est consommée dans un span « base de données », pointant vers une requête précise. *On sait où.*
+3. **Logs** — via le `traceparent` injecté, on retrouve cette requête exacte dans le slow query log, avec son plan d'exécution : un *full scan* sur une table récemment grossie. *On sait pourquoi.*
+
+Le ciment de cette corrélation, ce sont des **identifiants communs** : un identifiant de trace partagé, des étiquettes cohérentes (hôte, service, environnement) et une **synchronisation temporelle** (NTP) rigoureuse entre tous les composants. Sans horloges alignées, corréler un pic de métrique à un log devient un exercice approximatif.
+
+## La stack d'observabilité moderne
+
+Deux approches structurent le marché, articulées autour d'un standard pivot, **OpenTelemetry (OTel)**. OTel fournit un format et un protocole *neutres* (les conventions sémantiques, le protocole OTLP) ainsi qu'un **Collector** qui reçoit, transforme et route les trois types de signaux vers les backends de son choix — ce qui évite l'enfermement propriétaire.
+
+| Pilier | Stack Grafana (« LGTM ») | Suite Elastic |
+|--------|--------------------------|----------------|
+| Metrics | Prometheus / Mimir | Elasticsearch (+ Metricbeat) |
+| Logs | **L**oki | **E**lasticsearch (+ Filebeat) |
+| Traces | **T**empo | Elastic APM |
+| Visualisation | **G**rafana | **K**ibana |
+
+La stack **Grafana** (Loki pour les logs, Tempo pour les traces, Mimir/Prometheus pour les métriques, le tout unifié dans **Grafana**) a l'avantage de fédérer les trois piliers dans une seule interface, avec navigation directe d'un dashboard de métrique vers les logs puis les traces correspondants. La **suite Elastic** offre une indexation plein texte particulièrement puissante pour la recherche dans les logs. Dans les deux cas, **OpenTelemetry** s'intercale idéalement comme couche de collecte standardisée en amont.
+
+## Bonnes pratiques d'observabilité pour MariaDB
+
+- **Choisir ses journaux avec discernement.** Slow query log et error log centralisés : oui. General log en production : non (volume ingérable, surcoût). Audit log : selon les besoins de conformité, idéalement en mode bufferisé.
+- **Logguer en `FILE`, pas en `TABLE`**, dès que la collecte est centralisée, pour ne pas faire payer à MariaDB le coût d'écriture en table.
+- **Enrichir le slow log** via `log_slow_verbosity` (plan d'exécution, InnoDB) : un slow log sans plan d'exécution oblige à rejouer la requête pour comprendre.
+- **Propager le contexte de trace dans les commentaires SQL** côté application : c'est le maillon qui transforme trois silos en une chaîne de diagnostic.
+- **Synchroniser les horloges (NTP)** sur tous les composants : sans cela, la corrélation temporelle entre piliers est illusoire.
+- **Gérer le rapport signal/bruit.** Plus de données n'égale pas plus d'observabilité. Un `long_query_time` trop bas noie les vraies anomalies ; des étiquettes incohérentes rendent la corrélation impossible. Définir la rétention et le niveau de détail en fonction du coût et de l'usage réel.
+
+## Points clés à retenir
+
+L'observabilité dépasse le monitoring : elle vise la compréhension du *pourquoi*, y compris pour des questions non anticipées, à partir de trois piliers complémentaires. Les **métriques** ([16.9](09-monitoring-prometheus-grafana.md)) signalent et alertent mais restent agrégées ; les **logs** de MariaDB (slow query log en tête, à centraliser via Loki ou Elastic) détaillent les événements unitaires ; les **traces**, qui ne sont *pas* produites par MariaDB mais par l'instrumentation applicative OpenTelemetry, situent l'appel base de données dans la requête distribuée. La valeur émerge de leur **corrélation** — rendue possible par l'injection du contexte de trace dans les commentaires SQL, des étiquettes cohérentes et une horloge commune. En pratique, on s'appuie sur OpenTelemetry comme standard de collecte et sur une stack unifiée (Grafana LGTM ou suite Elastic), en gardant à l'esprit que la pertinence prime sur le volume.
 
 ---
 
-## Stack de logging : Loki vs ELK
-
-### Comparaison
-
-| Aspect | Loki (Grafana Labs) | ELK (Elasticsearch, Logstash, Kibana) |
-|--------|---------------------|--------------------------------------|
-| **Philosophie** | Logs comme metrics (labels) | Full-text indexing |
-| **Storage** | Objet storage (S3, GCS) | Elasticsearch indices |
-| **Query language** | LogQL (like PromQL) | Lucene query syntax |
-| **Resource usage** | ⭐⭐⭐⭐⭐ Léger | ⭐⭐ Lourd (RAM hungry) |
-| **Cost** | 💰 Faible | 💰💰💰 Élevé |
-| **Learning curve** | ⭐⭐ Facile (si connaît PromQL) | ⭐⭐⭐⭐ Difficile |
-| **Full-text search** | ⚠️ Limité | ✅ Excellent |
-| **Grafana integration** | ✅ Native | ⚠️ Via plugin |
-| **Scalability** | ✅ Horizontal | ✅ Horizontal (complexe) |
-| **Use case** | Cloud-native, Kubernetes | Enterprise, compliance stricte |
-
-**Recommandation** :
-- **Loki** : Kubernetes, intégration Grafana, budget limité
-- **ELK** : Compliance stricte, full-text search crucial, infrastructure existante
-
-### Architecture Loki
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Loki Architecture                            │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                  MariaDB Pods                              │ │
-│  │                                                            │ │
-│  │  /var/log/mysql/error.log                                  │ │
-│  │  /var/log/mysql/slow.log                                   │ │
-│  │  /var/log/mysql/audit.log                                  │ │
-│  └───────────────────┬────────────────────────────────────────┘ │
-│                      │                                          │
-│                      │ tail logs                                │
-│                      ▼                                          │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │               Promtail (agent)                             │ │
-│  │  - Scrape logs from pods                                   │ │
-│  │  - Parse and label                                         │ │
-│  │  - Push to Loki                                            │ │
-│  └───────────────────┬────────────────────────────────────────┘ │
-│                      │                                          │
-│                      │ HTTP push                                │
-│                      ▼                                          │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                    Loki                                    │ │
-│  │                                                            │ │
-│  │  ┌──────────────────────────────────────────────────────┐  │ │
-│  │  │  Distributor (receive logs)                          │  │ │
-│  │  └──────────────┬───────────────────────────────────────┘  │ │
-│  │                 │                                          │ │
-│  │  ┌──────────────▼───────────────────────────────────────┐  │ │
-│  │  │  Ingester (index + chunk logs)                       │  │ │
-│  │  └──────────────┬───────────────────────────────────────┘  │ │
-│  │                 │                                          │ │
-│  │  ┌──────────────▼───────────────────────────────────────┐  │ │
-│  │  │  Storage (S3, GCS, local)                            │  │ │
-│  │  │  - Chunks (compressed logs)                          │  │ │
-│  │  │  - Index (time + labels)                             │  │ │
-│  │  └──────────────────────────────────────────────────────┘  │ │
-│  │                                                            │ │
-│  │  ┌──────────────────────────────────────────────────────┐  │ │
-│  │  │  Querier (query logs)                                │  │ │
-│  │  └──────────────────────────────────────────────────────┘  │ │
-│  └───────────────────┬────────────────────────────────────────┘ │
-│                      │                                          │
-│                      │ LogQL queries                            │
-│                      ▼                                          │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                   Grafana                                  │ │
-│  │  - Explore logs                                            │ │
-│  │  - Dashboards (logs + metrics)                             │ │
-│  │  - Alerting on log patterns                                │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Déploiement Loki sur Kubernetes
-
-**1. Installer Loki stack via Helm** :
-
-```bash
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
-
-helm install loki grafana/loki-stack \
-  --namespace logging \
-  --create-namespace \
-  --set loki.persistence.enabled=true \
-  --set loki.persistence.size=100Gi \
-  --set promtail.enabled=true \
-  --set grafana.enabled=false  # Déjà installé via kube-prometheus-stack
-```
-
-**2. Configuration Promtail pour MariaDB** :
-
-```yaml
-# promtail-mariadb-config.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: promtail-mariadb-config
-  namespace: databases
-data:
-  promtail.yaml: |
-    server:
-      http_listen_port: 9080
-      grpc_listen_port: 0
-    
-    positions:
-      filename: /tmp/positions.yaml
-    
-    clients:
-    - url: http://loki.logging.svc.cluster.local:3100/loki/api/v1/push
-    
-    scrape_configs:
-    # Error log
-    - job_name: mariadb-error
-      static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: mariadb
-          log_type: error
-          __path__: /var/log/mysql/error.log
-      
-      # Pipeline pour parser error log
-      pipeline_stages:
-      - regex:
-          expression: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<thread_id>\d+) \[(?P<level>\w+)\] (?P<message>.*)'
-      - labels:
-          level:
-          thread_id:
-      - timestamp:
-          source: timestamp
-          format: '2006-01-02 15:04:05'
-    
-    # Slow query log
-    - job_name: mariadb-slow
-      static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: mariadb
-          log_type: slow_query
-          __path__: /var/log/mysql/slow.log
-      
-      # Pipeline pour parser slow query log
-      pipeline_stages:
-      - multiline:
-          firstline: '^\# Time:'
-          max_wait_time: 3s
-      - regex:
-          expression: '# Time: (?P<timestamp>.*)\n# User@Host: (?P<user>\S+)\[(?P<user2>\S+)\] @ (?P<host>\S+) \[(?P<ip>[\d\.]+)\]\n# Thread_id: (?P<thread_id>\d+)  Schema: (?P<schema>\S+).*\n# Query_time: (?P<query_time>[\d\.]+)  Lock_time: (?P<lock_time>[\d\.]+)  Rows_sent: (?P<rows_sent>\d+)  Rows_examined: (?P<rows_examined>\d+)'
-      - labels:
-          user:
-          schema:
-      - metrics:
-          query_time:
-            type: Histogram
-            description: "Query execution time"
-            source: query_time
-            config:
-              buckets: [0.1, 0.5, 1, 2, 5, 10]
-    
-    # Audit log (JSON format)
-    - job_name: mariadb-audit
-      static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: mariadb
-          log_type: audit
-          __path__: /var/log/mysql/audit.log
-      
-      pipeline_stages:
-      - json:
-          expressions:
-            timestamp: timestamp
-            event: event
-            user: user
-            host: host
-            database: database
-            query: query
-      - labels:
-          event:
-          user:
-          database:
-      - timestamp:
-          source: timestamp
-          format: RFC3339
-```
-
-**3. DaemonSet Promtail** :
-
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: promtail-mariadb
-  namespace: databases
-spec:
-  selector:
-    matchLabels:
-      app: promtail-mariadb
-  template:
-    metadata:
-      labels:
-        app: promtail-mariadb
-    spec:
-      serviceAccountName: promtail
-      containers:
-      - name: promtail
-        image: grafana/promtail:2.9.3
-        args:
-        - -config.file=/etc/promtail/promtail.yaml
-        volumeMounts:
-        - name: config
-          mountPath: /etc/promtail
-        - name: mariadb-logs
-          mountPath: /var/log/mysql
-          readOnly: true
-        - name: positions
-          mountPath: /tmp
-        ports:
-        - containerPort: 9080
-          name: http-metrics
-      volumes:
-      - name: config
-        configMap:
-          name: promtail-mariadb-config
-      - name: mariadb-logs
-        hostPath:
-          path: /var/log/mysql  # Ou volume partagé avec MariaDB
-      - name: positions
-        emptyDir: {}
-```
-
-**4. Queries LogQL dans Grafana** :
-
-```logql
-# Tous les logs MariaDB
-{job="mariadb"}
-
-# Erreurs seulement
-{job="mariadb", level="ERROR"}
-
-# Slow queries >5s
-{job="mariadb", log_type="slow_query"} | json | query_time > 5
-
-# Audit: Connexions d'un utilisateur spécifique
-{job="mariadb", log_type="audit", event="CONNECT", user="admin"}
-
-# Rate d'erreurs
-sum(rate({job="mariadb", level="ERROR"}[5m]))
-
-# Top 10 slow queries
-topk(10, 
-  sum by (query) (
-    rate({job="mariadb", log_type="slow_query"}[5m])
-  )
-)
-```
-
----
-
-## Pilier 2 : Metrics (rappel)
-
-**Déjà couvert en section 16.9**, mais intégration avec logs :
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│          Metrics → Logs Correlation                          │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Scenario: Alerte "Slow queries spike"                       │
-│                                                              │
-│  1. Metric alerte:                                           │
-│     rate(mysql_global_status_slow_queries[5m]) > 10          │
-│                                                              │
-│  2. Cliquer sur alerte dans Grafana                          │
-│     → Ouvre dashboard avec timestamp de l'alerte             │
-│                                                              │
-│  3. Panel logs (Loki) avec même timestamp:                   │
-│     {job="mariadb", log_type="slow_query"}                   │
-│     | json                                                   │
-│     | query_time > 2                                         │
-│                                                              │
-│  4. Voir requêtes lentes exactes pendant spike               │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Dashboard Grafana unifié (Metrics + Logs)
-
-```json
-{
-  "dashboard": {
-    "title": "MariaDB Observability - Unified",
-    "panels": [
-      {
-        "id": 1,
-        "title": "QPS (Metrics)",
-        "type": "graph",
-        "datasource": "Prometheus",
-        "targets": [
-          {
-            "expr": "rate(mysql_global_status_queries[5m])"
-          }
-        ]
-      },
-      {
-        "id": 2,
-        "title": "Slow Queries Count (Metrics)",
-        "type": "graph",
-        "datasource": "Prometheus",
-        "targets": [
-          {
-            "expr": "rate(mysql_global_status_slow_queries[5m])"
-          }
-        ],
-        "alert": {
-          "conditions": [
-            {
-              "evaluator": {
-                "params": [10],
-                "type": "gt"
-              }
-            }
-          ]
-        }
-      },
-      {
-        "id": 3,
-        "title": "Slow Query Log (Logs)",
-        "type": "logs",
-        "datasource": "Loki",
-        "targets": [
-          {
-            "expr": "{job=\"mariadb\", log_type=\"slow_query\"} | json | query_time > 2"
-          }
-        ],
-        "options": {
-          "showTime": true,
-          "wrapLogMessage": true
-        }
-      },
-      {
-        "id": 4,
-        "title": "Error Logs (Logs)",
-        "type": "logs",
-        "datasource": "Loki",
-        "targets": [
-          {
-            "expr": "{job=\"mariadb\", level=\"ERROR\"}"
-          }
-        ]
-      },
-      {
-        "id": 5,
-        "title": "Query Time Histogram (Logs-derived metric)",
-        "type": "heatmap",
-        "datasource": "Loki",
-        "targets": [
-          {
-            "expr": "sum by (le) (rate({job=\"mariadb\", log_type=\"slow_query\"} | json | unwrap query_time | __error__=\"\" [5m]))"
-          }
-        ]
-      }
-    ],
-    "templating": {
-      "list": [
-        {
-          "name": "namespace",
-          "type": "query",
-          "datasource": "Prometheus",
-          "query": "label_values(mysql_up, namespace)"
-        },
-        {
-          "name": "instance",
-          "type": "query",
-          "datasource": "Prometheus",
-          "query": "label_values(mysql_up{namespace=\"$namespace\"}, pod)"
-        }
-      ]
-    }
-  }
-}
-```
-
----
-
-## Pilier 3 : Traces distribuées
-
-### Concept de distributed tracing
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              Distributed Trace Example                          │
-│                                                                 │
-│  User Request: GET /api/orders/123                              │
-│                                                                 │
-│  Trace ID: abc-def-ghi-123                                      │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                 │
-│  Span 1: API Gateway                                            │
-│  ├─ Start: T+0ms                                                │
-│  ├─ End: T+1200ms                                               │
-│  └─ Tags: service=api-gateway, http.method=GET                  │
-│                                                                 │
-│     Span 2: Authentication Service                              │
-│     ├─ Start: T+10ms                                            │
-│     ├─ End: T+150ms                                             │
-│     ├─ Parent: Span 1                                           │
-│     └─ Tags: service=auth, user_id=456                          │
-│                                                                 │
-│     Span 3: Application Logic                                   │
-│     ├─ Start: T+160ms                                           │
-│     ├─ End: T+1180ms                                            │
-│     ├─ Parent: Span 1                                           │
-│     └─ Tags: service=app, endpoint=/orders                      │
-│                                                                 │
-│        Span 4: MariaDB Query 🗄️                                 
-│        ├─ Start: T+200ms                                        │
-│        ├─ End: T+1150ms                                         │
-│        ├─ Parent: Span 3                                        │
-│        ├─ Tags:                                                 │
-│        │   - db.system=mariadb                                  │
-│        │   - db.name=myapp                                      │
-│        │   - db.statement=SELECT * FROM orders WHERE id=?       │
-│        │   - db.user=appuser                                    │
-│        │   - net.peer.name=mariadb-0.mariadb.svc                │
-│        │   - net.peer.port=3306                                 │
-│        └─ Duration: 950ms ⚠️ SLOW                               │
-│                                                                 │
-│  Total Duration: 1200ms                                         │
-│  Slowest Span: MariaDB Query (950ms = 79% of total)             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Insight** : MariaDB query est le goulot d'étranglement (79% du temps total)
-
-### OpenTelemetry pour MariaDB
-
-**OpenTelemetry** = Standard pour instrumentation (metrics + logs + traces)
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│           OpenTelemetry Architecture                         │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Application (Python, Java, Go, Node.js...)                  │
-│      ↓                                                       │
-│  OpenTelemetry SDK                                           │
-│      ├─> Auto-instrumentation (databases, HTTP, etc.)        │
-│      └─> Manual instrumentation (custom spans)               │
-│      ↓                                                       │
-│  OpenTelemetry Collector                                     │
-│      ├─> Receive traces                                      │
-│      ├─> Process (sampling, filtering)                       │
-│      └─> Export to backend                                   │
-│      ↓                                                       │
-│  Backend (Jaeger, Zipkin, Tempo)                             │
-│      └─> Store and query traces                              │
-│      ↓                                                       │
-│  Grafana                                                     │
-│      └─> Visualize traces + correlate with metrics/logs      │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Exemple : Application Python avec tracing MariaDB
-
-```python
-# app.py
-from flask import Flask
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.flask import FlaskInstrumentor
-from opentelemetry.instrumentation.pymysql import PyMySQLInstrumentor
-import pymysql
-
-# Setup OpenTelemetry
-trace.set_tracer_provider(TracerProvider())
-tracer = trace.get_tracer(__name__)
-
-# Export to OpenTelemetry Collector
-otlp_exporter = OTLPSpanExporter(
-    endpoint="http://otel-collector.observability.svc.cluster.local:4317",
-    insecure=True
-)
-trace.get_tracer_provider().add_span_processor(
-    BatchSpanProcessor(otlp_exporter)
-)
-
-# Auto-instrument Flask
-app = Flask(__name__)
-FlaskInstrumentor().instrument_app(app)
-
-# Auto-instrument PyMySQL (MariaDB)
-PyMySQLInstrumentor().instrument()
-
-# Database connection
-def get_db():
-    return pymysql.connect(
-        host='mariadb.databases.svc.cluster.local',
-        port=3306,
-        user='appuser',
-        password='password',
-        database='myapp'
-    )
-
-@app.route('/orders/<int:order_id>')
-def get_order(order_id):
-    # Auto-instrumented: Creates span for this request
-    
-    with tracer.start_as_current_span("fetch_order_from_db") as span:
-        # Custom span attributes
-        span.set_attribute("order.id", order_id)
-        
-        db = get_db()
-        cursor = db.cursor()
-        
-        # Auto-instrumented: Creates span for MariaDB query
-        cursor.execute(
-            "SELECT * FROM orders WHERE id = %s",
-            (order_id,)
-        )
-        result = cursor.fetchone()
-        
-        cursor.close()
-        db.close()
-        
-        if result:
-            span.set_attribute("order.found", True)
-            return {"order": result}
-        else:
-            span.set_attribute("order.found", False)
-            return {"error": "Order not found"}, 404
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-```
-
-**Ce code génère automatiquement** :
-- Span pour requête HTTP Flask
-- Span pour query MariaDB (avec statement SQL, duration, host, etc.)
-- Propagation trace ID entre services
-
-### Déployer Jaeger sur Kubernetes
-
-```bash
-# Via Jaeger Operator
-kubectl create namespace observability
-kubectl create -f https://github.com/jaegertracing/jaeger-operator/releases/download/v1.51.0/jaeger-operator.yaml -n observability
-
-# Créer instance Jaeger
-kubectl apply -f - <<EOF
-apiVersion: jaegertracing.io/v1
-kind: Jaeger
-metadata:
-  name: jaeger
-  namespace: observability
-spec:
-  strategy: production
-  storage:
-    type: elasticsearch
-    options:
-      es:
-        server-urls: http://elasticsearch.observability.svc:9200
-  ingress:
-    enabled: true
-  query:
-    replicas: 2
-  collector:
-    replicas: 3
-    resources:
-      limits:
-        cpu: 1
-        memory: 1Gi
-EOF
-```
-
-### OpenTelemetry Collector
-
-```yaml
-# otel-collector-config.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: otel-collector-config
-  namespace: observability
-data:
-  otel-collector-config.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-    
-    processors:
-      batch:
-        timeout: 10s
-        send_batch_size: 1024
-      
-      # Sampling: Garder seulement 10% des traces normales, 100% des erreurs
-      probabilistic_sampler:
-        sampling_percentage: 10
-      
-      # Ajouter attributs
-      resource:
-        attributes:
-        - key: cluster
-          value: production
-          action: insert
-    
-    exporters:
-      # Export vers Jaeger
-      jaeger:
-        endpoint: jaeger-collector.observability.svc.cluster.local:14250
-        tls:
-          insecure: true
-      
-      # Export vers Tempo (alternative Grafana)
-      otlp:
-        endpoint: tempo.observability.svc.cluster.local:4317
-        tls:
-          insecure: true
-      
-      # Logging (debug)
-      logging:
-        loglevel: info
-    
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [batch, probabilistic_sampler, resource]
-          exporters: [jaeger, otlp, logging]
-```
-
----
-
-## Corrélation complète : Logs + Metrics + Traces
-
-### Scenario de debugging complet
-
-**Problème** : Utilisateurs reportent lenteurs sur page checkout à 14h30
-
-**Investigation avec observabilité complète** :
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  Debugging Workflow                             │
-│                                                                 │
-│  1️⃣  METRICS (Grafana dashboard)                                │
-│     ────────────────────────────────────────────────────────    │
-│     Graph: QPS spike à 14h30                                    │
-│     Graph: Slow queries spike (10 → 150/min)                    │
-│     Graph: Connection usage spike (50% → 95%)                   │
-│                                                                 │
-│     ✅ Confirmation: Problème à 14h30, lié slow queries         │
-│                                                                 │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                 │
-│  2️⃣  LOGS (Loki via Grafana Explore)                            │
-│     ────────────────────────────────────────────────────────    │
-│     Query LogQL:                                                │
-│     {job="mariadb", log_type="slow_query"}                      │
-│     | json                                                      │
-│     | query_time > 5                                            │
-│     | line_format "{{.query}}"                                  │
-│                                                                 │
-│     Résultat: Query récurrente:                                 │
-│     SELECT p.*, i.stock                                         │
-│     FROM products p                                             │
-│     JOIN inventory i ON p.id = i.product_id                     │
-│     WHERE p.category = 'electronics'                            │
-│     ORDER BY p.created_at DESC                                  │
-│                                                                 │
-│     ✅ Query lente identifiée, mais pourquoi soudain lente?     │
-│                                                                 │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                 │
-│  3️⃣  TRACES (Jaeger via Grafana)                                │
-│     ────────────────────────────────────────────────────────    │
-│     Search traces:                                              │
-│     - Service: checkout-api                                     │
-│     - Time: 14h30-14h35                                         │
-│     - Min duration: >5s                                         │
-│                                                                 │
-│     Résultat: Trace ID abc-123                                  │
-│     ├─ API Gateway: 50ms                                        │
-│     ├─ Auth: 120ms                                              │
-│     ├─ Checkout Service: 8500ms                                 │
-│     │  └─ MariaDB query: 8200ms ⚠️                              │
-│     │     Statement: [Query ci-dessus]                          │
-│     │     Tags:                                                 │
-│     │       - db.rows_examined: 5,234,567 ⚠️⚠️⚠️                
-│     │       - db.rows_sent: 250                                 │
-│                                                                 │
-│     ✅ Root cause: Full table scan (5M rows examinées!)         │
-│                                                                 │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                 │
-│  4️⃣  SOLUTION                                                   │
-│     ────────────────────────────────────────────────────────    │
-│     EXPLAIN query:                                              │
-│     -> Pas d'index sur products.category                        │
-│                                                                 │
-│     Fix:                                                        │
-│     CREATE INDEX idx_products_category                          │
-│       ON products(category, created_at);                        │
-│                                                                 │
-│     Déployer via migration (Flyway)                             │
-│                                                                 │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                 │
-│  5️⃣  VERIFICATION (post-deployment)                             │
-│     ────────────────────────────────────────────────────────    │
-│     Metrics: Slow queries retombent à 5/min                     │
-│     Logs: Query time < 100ms                                    │
-│     Traces: MariaDB span < 150ms                                │
-│                                                                 │
-│     ✅ Problème résolu!                                         │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Temps de résolution** : 15 minutes (vs plusieurs heures sans observabilité)
-
-### Grafana unified dashboard
-
-**Panels corrélés** :
-
-```json
-{
-  "panels": [
-    {
-      "id": 1,
-      "title": "Timeline - Metrics + Logs + Traces",
-      "type": "timeseries",
-      "datasource": "-- Mixed --",
-      "targets": [
-        {
-          "datasource": "Prometheus",
-          "expr": "rate(mysql_global_status_slow_queries[1m])",
-          "legendFormat": "Slow queries/min (metrics)"
-        },
-        {
-          "datasource": "Loki",
-          "expr": "sum(count_over_time({job=\"mariadb\", log_type=\"slow_query\"}[1m]))",
-          "legendFormat": "Slow query logs (logs)"
-        },
-        {
-          "datasource": "Tempo",
-          "query": {
-            "queryType": "metrics",
-            "serviceName": "mariadb",
-            "spanName": "SELECT",
-            "metric": "duration"
-          },
-          "legendFormat": "Query duration p95 (traces)"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Trace → Logs Correlation",
-      "type": "trace-to-logs",
-      "datasource": "Tempo",
-      "options": {
-        "datasourceUid": "loki-uid",
-        "tags": [
-          {
-            "key": "trace_id",
-            "value": "traceID"
-          }
-        ],
-        "query": "{job=\"mariadb\"} |= \"$${__trace.traceId}\""
-      }
-    }
-  ]
-}
-```
-
-**Workflow utilisateur dans Grafana** :
-
-1. Voir spike dans metrics
-2. Cliquer sur point dans graph
-3. "View related logs" → Ouvre Loki avec même timerange
-4. Cliquer sur log line
-5. "View related trace" → Ouvre Jaeger avec trace ID
-6. Voir détails complets requête DB
-
----
-
-## Best practices observabilité
-
-### 1. Structured logging
-
-**❌ Mauvais** (logs non structurés) :
-
-```
-2025-12-14 10:30:15 User admin connected from 10.0.1.5
-```
-
-**✅ Bon** (logs structurés JSON) :
-
-```json
-{
-  "timestamp": "2025-12-14T10:30:15.123Z",
-  "level": "INFO",
-  "event": "user_connected",
-  "user": "admin",
-  "ip": "10.0.1.5",
-  "session_id": "abc-123"
-}
-```
-
-**Avantages** :
-- Facile à parser (Loki, ELK)
-- Query précises (field-based)
-- Corrélation via IDs
-
-### 2. Correlation IDs
-
-**Propager ID unique à travers système** :
-
-```
-Request ID: req-abc-123
-
-API Gateway
-  └─> Set request_id: req-abc-123
-      └─> App logs: {"request_id": "req-abc-123", "message": "Processing order"}
-          └─> MariaDB audit log: {"request_id": "req-abc-123", "query": "INSERT..."}
-              └─> Trace: trace_id = req-abc-123
-```
-
-**Permet** :
-```logql
-# Voir TOUS les logs d'une requête spécifique
-{job=~".*"} |= "req-abc-123"
-```
-
-### 3. Sampling intelligent
-
-**Problème** : Tracer 100% requêtes = overhead énorme
-
-**Solution** : Sampling adaptatif
-
-```yaml
-# OpenTelemetry Collector
-processors:
-  probabilistic_sampler:
-    # 10% des requêtes normales
-    sampling_percentage: 10
-  
-  tail_sampling:
-    policies:
-    # 100% des requêtes avec erreurs
-    - name: errors
-      type: status_code
-      status_code:
-        status_codes: [ERROR]
-    
-    # 100% des requêtes lentes (>1s)
-    - name: slow
-      type: latency
-      latency:
-        threshold_ms: 1000
-    
-    # 50% des requêtes de l'endpoint checkout
-    - name: checkout
-      type: string_attribute
-      string_attribute:
-        key: http.url
-        values: ["/checkout"]
-        enabled_regex_matching: true
-      sampling_percentage: 50
-```
-
-### 4. Rétention différenciée
-
-```yaml
-# Loki
-limits_config:
-  retention_period: 30d  # Par défaut
-  
-  # Rétention personnalisée par tenant
-  per_tenant_override_config: /etc/loki/overrides.yaml
-
-# overrides.yaml
-overrides:
-  "production":
-    retention_period: 90d  # Compliance
-  "dev":
-    retention_period: 7d   # Économies
-```
-
-### 5. Alerting sur logs
-
-**PrometheusRule basée sur logs** :
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: mariadb-log-alerts
-spec:
-  groups:
-  - name: mariadb-logs
-    interval: 1m
-    rules:
-    # Alert sur rate d'erreurs dans logs
-    - alert: HighErrorRate
-      expr: |
-        sum(rate({job="mariadb", level="ERROR"}[5m])) > 10
-      for: 5m
-      labels:
-        severity: warning
-      annotations:
-        summary: "High error rate in MariaDB logs"
-    
-    # Alert sur pattern spécifique
-    - alert: TableDoesNotExist
-      expr: |
-        sum(count_over_time({job="mariadb"} |= "doesn't exist" [5m])) > 0
-      labels:
-        severity: critical
-      annotations:
-        summary: "Table doesn't exist errors detected"
-```
-
----
-
-## ✅ Points clés à retenir
-
-- **3 piliers complémentaires** : Metrics (what), Logs (why), Traces (how)
-- **Loki vs ELK** : Loki pour Kubernetes/Grafana, ELK pour full-text search
-- **Logs MariaDB** : Error, Slow query, Audit (compliance), Binary (replication)
-- **Promtail** : Agent pour scraper logs et push vers Loki
-- **OpenTelemetry** : Standard pour instrumentation (auto + manual)
-- **Jaeger/Tempo** : Backend pour distributed tracing
-- **Corrélation** : Request ID partout, trace ID → logs, metrics → logs
-- **Sampling** : 100% erreurs/slow, 10% normal (réduire overhead)
-- **Structured logs** : JSON pour parsing facile
-- **Unified dashboard** : Metrics + Logs + Traces dans même vue
-
-💡 **Golden rule** : L'observabilité n'est pas un but, c'est un moyen. But = Réduire MTTR (Mean Time To Repair).
-
----
-
-## 🔗 Ressources et références
-
-### Documentation officielle
-- [📖 Grafana Loki](https://grafana.com/docs/loki/latest/)
-- [📖 OpenTelemetry](https://opentelemetry.io/docs/)
-- [📖 Jaeger](https://www.jaegertracing.io/docs/)
-- [📖 Tempo](https://grafana.com/docs/tempo/latest/)
-
-### Guides
-- [📝 Observability Engineering (O'Reilly)](https://www.oreilly.com/library/view/observability-engineering/9781492076438/)
-- [📝 Distributed Tracing in Practice](https://www.oreilly.com/library/view/distributed-tracing-in/9781492056621/)
-
-### Outils
-- [🔧 LogQL Cheat Sheet](https://grafana.com/docs/loki/latest/logql/)
-- [🔧 OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo)
-
----
-
-## ➡️ Prochaines sections
-
-**16.11 Alerting et Incident Response** : Stratégies d'alerting, on-call, post-mortems, SLOs/SLIs.
-
-**16.12 GitOps pour bases de données** : ArgoCD, FluxCD, declarative database management.
-
----
-
-**MariaDB** : Version 11.8 LTS
-**Loki** : v2.9+
-**OpenTelemetry** : v1.21+
-**Jaeger** : v1.51+
+↩️ [Section précédente : 16.9 — Monitoring avec Prometheus/Grafana](09-monitoring-prometheus-grafana.md)  
+➡️ **Section suivante :** [16.11 — Alerting et incident response](11-alerting-incident-response.md)
 
 ⏭️ [Alerting et incident response](/16-devops-automatisation/11-alerting-incident-response.md)
