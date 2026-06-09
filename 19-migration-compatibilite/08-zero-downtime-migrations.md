@@ -2,1626 +2,187 @@
 
 # 19.8 Zero-downtime migrations
 
-> **Niveau** : Expert  
-> **Durée estimée** : 4-5 heures  
-> **Prérequis** : Maîtrise de la réplication MariaDB (chapitre 14), expérience avec les load balancers et proxies, connaissance des stratégies de rollback (section 19.7)
+Pour de nombreux systèmes — commerce en ligne, services financiers, plateformes SaaS — une fenêtre de maintenance avec interruption de service n'est plus acceptable. Migrer doit alors se faire *pendant que la base sert le trafic de production*, sans que l'utilisateur final ne perçoive de coupure. C'est l'objet des **migrations sans interruption** (*zero-downtime migrations*).
 
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- Concevoir et implémenter des migrations sans interruption de service
-- Maîtriser les architectures blue-green et canary pour les migrations de bases de données
-- Orchestrer un cutover avec un temps d'indisponibilité minimal (secondes)
-- Utiliser la réplication comme vecteur de migration zero-downtime
-- Prévenir et gérer les situations de split-brain
-- Choisir les outils adaptés (pt-online-schema-change, gh-ost, ProxySQL)
-- Appliquer ces techniques à des scénarios réels de migration MariaDB 11.8
+Cette section décrit les techniques qui rendent cet objectif atteignable, en s'appuyant sur les briques déjà présentées : les méthodes de mise à niveau (§19.4), la réplication (chapitre 13), la haute disponibilité (chapitre 14) et les changements de schéma en ligne (§18.11). Elle prolonge directement la §19.7 : l'architecture de migration par réplication qui permet un rollback à faible perte est la *même* qui permet une bascule sans interruption — ce sont deux facettes d'un seul dispositif.
 
 ---
 
-## Introduction
+## 19.8.1 Ce que « zéro interruption » signifie réellement
 
-Dans l'économie numérique actuelle, chaque seconde d'indisponibilité a un coût. Pour un site e-commerce générant 100 000 € par heure, une migration de 4 heures représente potentiellement 400 000 € de pertes. Au-delà de l'aspect financier, l'indisponibilité érode la confiance des utilisateurs et peut avoir des répercussions durables sur la réputation.
+Le terme « zéro interruption » est en partie un idéal. En pratique, une migration de version comporte presque toujours une **fenêtre de bascule** (*cutover*) très brève — de l'ordre de quelques secondes — pendant laquelle les écritures sont suspendues ou re-routées. L'objectif réaliste n'est donc pas l'absence physique de toute transition, mais une **interruption imperceptible pour l'utilisateur** : une reconfiguration de connexions plutôt qu'une panne, une latence ponctuelle plutôt qu'une page d'erreur.
 
-Les migrations zero-downtime répondent à cette exigence en permettant de faire évoluer l'infrastructure de base de données tout en maintenant le service opérationnel. Ces techniques, longtemps réservées aux géants du web, sont aujourd'hui accessibles grâce à des outils matures et des architectures bien documentées.
+Il est utile de distinguer deux problèmes que la migration sans interruption doit résoudre, car ils relèvent de techniques différentes :
 
-Cette section présente les patterns, outils et méthodologies pour réaliser des migrations MariaDB sans interruption de service perceptible par les utilisateurs.
+- les **changements de schéma** (`ALTER TABLE`) sur une instance en service, sans verrouiller les tables ;
+- la **migration de version ou de plateforme** (passage à une nouvelle instance 12.3), sans arrêter le service — le problème de la bascule.
 
----
-
-## Définition et objectifs
-
-### Qu'est-ce qu'une migration zero-downtime ?
-
-```
-Spectrum du downtime de migration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-MIGRATION TRADITIONNELLE
-┌─────────────────────────────────────────────────────────────────┐
-│                        SERVICE INDISPONIBLE                     │
-│  ████████████████████████████████████████████████████████████   │
-│  │◀─────────────── 2-8 heures ────────────────▶│                │
-└─────────────────────────────────────────────────────────────────┘
-
-MIGRATION LOW-DOWNTIME
-┌─────────────────────────────────────────────────────────────────┐
-│  Service OK     │ DOWN │           Service OK                   │
-│  ██████████████ │ ░░░░ │ ████████████████████████████████████   │
-│                 │◀────▶│                                        │
-│                  5-30 min                                       │
-└─────────────────────────────────────────────────────────────────┘
-
-MIGRATION ZERO-DOWNTIME
-┌─────────────────────────────────────────────────────────────────┐
-│  Service OK (source)  │ Cutover │   Service OK (cible)          │
-│  █████████████████████│░░│██████████████████████████████████    │
-│                       │◀▶│                                      │
-│                      < 30 sec (souvent < 5 sec)                 │
-└─────────────────────────────────────────────────────────────────┘
-
-MIGRATION TRUE ZERO-DOWNTIME (avec dual-write)
-┌─────────────────────────────────────────────────────────────────┐
-│              SERVICE TOUJOURS DISPONIBLE                        │
-│  ████████████████████████████████████████████████████████████   │
-│  Aucune interruption perceptible par les utilisateurs           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Niveaux de zero-downtime
-
-| Niveau | Downtime | Perception utilisateur | Complexité |
-|--------|----------|------------------------|------------|
-| **Near-zero** | < 30 secondes | Brève interruption | Modérée |
-| **Zero-downtime** | < 5 secondes | Requêtes en cours échouent | Élevée |
-| **True zero** | 0 seconde | Aucune interruption | Très élevée |
-| **Transparent** | 0 seconde + retry | Transparent total | Maximale |
+Les deux sont traités séparément ci-dessous, puis réunis par la couche de routage qui réduit la fenêtre perçue à néant.
 
 ---
 
-## Architectures de migration zero-downtime
+## 19.8.2 Changements de schéma en ligne
 
-### Pattern 1 : Blue-Green Database
+Un `ALTER TABLE` naïf sur une grande table peut la verrouiller pendant toute la durée de sa reconstruction — de quelques minutes à plusieurs heures — bloquant l'application. La migration sans interruption suppose donc des modifications de schéma **non bloquantes**.
 
-L'architecture blue-green maintient deux environnements complets et bascule le trafic instantanément.
-
-```
-Architecture Blue-Green
-━━━━━━━━━━━━━━━━━━━━━━━
-
-PHASE 1: État initial
-                    ┌───────────────────┐
-                    │   Load Balancer   │
-                    │    (HAProxy)      │
-                    └─────────┬─────────┘
-                              │ 100%
-                              ▼
-                    ┌───────────────────┐
-                    │      BLUE         │
-                    │   MySQL 5.7       │
-                    │    (Active)       │
-                    └───────────────────┘
-                    
-                    ┌───────────────────┐
-                    │      GREEN        │
-                    │  MariaDB 11.8     │
-                    │   (Standby)       │
-                    └───────────────────┘
-
-
-PHASE 2: Synchronisation
-                    ┌───────────────────┐
-                    │   Load Balancer   │
-                    └─────────┬─────────┘
-                              │ 100%
-                              ▼
-                    ┌───────────────────┐
-                    │      BLUE         │──────────┐
-                    │   MySQL 5.7       │ Réplication
-                    │    (Active)       │          │
-                    └───────────────────┘          │
-                                                   ▼
-                    ┌───────────────────┐
-                    │      GREEN        │
-                    │  MariaDB 11.8     │
-                    │   (Replica)       │
-                    └───────────────────┘
-
-
-PHASE 3: Cutover
-                    ┌───────────────────┐
-                    │   Load Balancer   │
-                    └─────────┬─────────┘
-                              │ 100%
-                              ▼
-                    ┌───────────────────┐
-                    │      GREEN        │
-                    │  MariaDB 11.8     │
-                    │    (Active)       │
-                    └───────────────────┘
-                              │
-                              │ Réplication inverse
-                              ▼              (optionnel)
-                    ┌───────────────────┐
-                    │      BLUE         │
-                    │   MySQL 5.7       │
-                    │   (Standby)       │
-                    └───────────────────┘
-```
-
-**Avantages :**
-- Rollback instantané (rebascule)
-- Test complet avant cutover
-- Isolation des environnements
-
-**Inconvénients :**
-- Double infrastructure
-- Synchronisation des données complexe
-- Coût élevé
-
-### Pattern 2 : Migration par réplication chaînée
-
-La réplication permet une migration progressive avec synchronisation continue.
-
-```
-Migration par Réplication
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-                    ┌─────────────────────────────────────────┐
-                    │              Applications               │
-                    └───────────────────┬─────────────────────┘
-                                        │
-                    ┌───────────────────┴─────────────────────┐
-                    │              ProxySQL                   │
-                    │         (Routage intelligent)           │
-                    └───────────────────┬─────────────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-              ▼                         ▼                         ▼
-    ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-    │  MySQL Primary  │──────▶│ MariaDB Replica │──────▶│ MariaDB Replica │
-    │    (Source)     │ Binlog│    (Target 1)   │ Binlog│    (Target 2)   │
-    └─────────────────┘       └─────────────────┘       └─────────────────┘
-              │                         │                         │
-              │ Writes                  │ Reads (progressive)     │
-              │                         │                         │
-              └─────────────────────────┴─────────────────────────┘
-                         Traffic progressif vers MariaDB
-```
-
-### Pattern 3 : Strangler Fig (Migration progressive)
-
-Inspiré du pattern applicatif, cette approche migre les données table par table ou service par service.
-
-```
-Pattern Strangler Fig
-━━━━━━━━━━━━━━━━━━━━━
-
-PHASE 1: Quelques tables migrées
-┌─────────────────────────────────────────────────────────────┐
-│                      Application Layer                      │
-├─────────────────────────────────────────────────────────────┤
-│                     Data Access Layer                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │  users_dao  │  │ orders_dao  │  │products_dao │          │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘          │
-└─────────┼────────────────┼────────────────┼─────────────────┘
-          │                │                │
-          ▼                ▼                ▼
-    ┌───────────┐    ┌───────────┐    ┌───────────┐
-    │  MariaDB  │    │   MySQL   │    │   MySQL   │
-    │  (migré)  │    │ (legacy)  │    │ (legacy)  │
-    └───────────┘    └───────────┘    └───────────┘
-
-PHASE 2: Plus de tables migrées
-          │                │                │
-          ▼                ▼                ▼
-    ┌───────────┐    ┌───────────┐    ┌───────────┐
-    │  MariaDB  │    │  MariaDB  │    │   MySQL   │
-    │  (migré)  │    │  (migré)  │    │ (legacy)  │
-    └───────────┘    └───────────┘    └───────────┘
-
-PHASE FINALE: Migration complète
-          │                │                │
-          ▼                ▼                ▼
-    ┌─────────────────────────────────────────────┐
-    │              MariaDB 11.8 (complet)         │
-    └─────────────────────────────────────────────┘
-```
-
----
-
-## Mise en place de la réplication cross-version
-
-### Configuration MySQL → MariaDB
+MariaDB propose nativement des algorithmes d'`ALTER TABLE` en ligne (§18.11), contrôlés par les clauses `ALGORITHM` et `LOCK` :
 
 ```sql
--- ═══════════════════════════════════════════════════════════
--- CONFIGURATION RÉPLICATION MySQL 5.7/8.0 → MariaDB 11.8
--- ═══════════════════════════════════════════════════════════
+-- Ajout de colonne quasi instantané : modification des seules métadonnées
+ALTER TABLE commandes ADD COLUMN statut VARCHAR(20) DEFAULT 'en_attente',
+  ALGORITHM=INSTANT;
 
--- SUR MYSQL (SOURCE)
--- -------------------
-
--- 1. Vérifier que le binlog est activé
-SHOW VARIABLES LIKE 'log_bin';
-SHOW VARIABLES LIKE 'binlog_format';  -- Doit être ROW ou MIXED
-
--- 2. Créer l'utilisateur de réplication
-CREATE USER 'repl_mariadb'@'%' IDENTIFIED BY 'SecureRepl!Pass123';
-GRANT REPLICATION SLAVE ON *.* TO 'repl_mariadb'@'%';
-FLUSH PRIVILEGES;
-
--- 3. Obtenir la position du binlog
-FLUSH TABLES WITH READ LOCK;
-SHOW MASTER STATUS;
--- Noter: File et Position
--- Exemple: mysql-bin.000042, 12345678
-
--- 4. Faire le dump initial (dans un autre terminal)
--- mysqldump --all-databases --single-transaction --master-data=2 \
---   --routines --triggers --events > full_dump.sql
-
--- 5. Libérer le lock
-UNLOCK TABLES;
+-- Reconstruction en place autorisant les écritures concurrentes
+ALTER TABLE commandes ADD INDEX idx_client (client_id),
+  ALGORITHM=INPLACE, LOCK=NONE;
 ```
 
-```sql
--- SUR MARIADB (CIBLE)
--- --------------------
+`ALGORITHM=INSTANT` traite certaines opérations (ajout de colonne, par exemple) en modifiant uniquement les métadonnées, sans toucher aux données — l'opération est quasi immédiate. `ALGORITHM=INPLACE` reconstruit l'objet sans copie complète de la table et, avec `LOCK=NONE`, autorise les lectures *et* les écritures pendant l'opération.
 
--- 1. Importer le dump initial
--- mariadb < full_dump.sql
-
--- 2. Configurer la réplication
-CHANGE MASTER TO
-    MASTER_HOST = 'mysql-source.example.com',
-    MASTER_PORT = 3306,
-    MASTER_USER = 'repl_mariadb',
-    MASTER_PASSWORD = 'SecureRepl!Pass123',
-    MASTER_LOG_FILE = 'mysql-bin.000042',
-    MASTER_LOG_POS = 12345678,
-    MASTER_SSL = 1;  -- TLS recommandé
-
--- 3. Démarrer la réplication
-START SLAVE;
-
--- 4. Vérifier le statut
-SHOW SLAVE STATUS\G
-
--- Points à vérifier :
--- Slave_IO_Running: Yes
--- Slave_SQL_Running: Yes
--- Seconds_Behind_Master: 0 (ou proche de 0)
-```
-
-### Script de monitoring de la réplication
+Lorsque l'algorithme natif ne suffit pas — opération non prise en charge en ligne, besoin d'un contrôle fin du débit, ou volonté de pouvoir interrompre l'opération — on recourt à des **outils externes** (§16.8.3) :
 
 ```bash
-#!/bin/bash
-# monitor_replication.sh
-# Monitoring de la réplication pendant la migration
+# pt-online-schema-change : table fantôme, triggers de synchronisation, copie par lots
+pt-online-schema-change --alter "ADD INDEX idx_client (client_id)" \
+  D=boutique,t=commandes --execute
 
-MARIADB_HOST="${1:-localhost}"
-MARIADB_USER="${2:-root}"
-MARIADB_PASS="${3:-}"
-ALERT_LAG_SECONDS=60
-CHECK_INTERVAL=5
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
-
-check_replication() {
-    local status=$(mariadb -h $MARIADB_HOST -u $MARIADB_USER -p$MARIADB_PASS -N -e "
-        SHOW SLAVE STATUS\G" 2>/dev/null)
-    
-    local io_running=$(echo "$status" | grep "Slave_IO_Running:" | awk '{print $2}')
-    local sql_running=$(echo "$status" | grep "Slave_SQL_Running:" | awk '{print $2}')
-    local lag=$(echo "$status" | grep "Seconds_Behind_Master:" | awk '{print $2}')
-    local last_error=$(echo "$status" | grep "Last_Error:" | cut -d: -f2-)
-    
-    # Statut
-    if [ "$io_running" != "Yes" ] || [ "$sql_running" != "Yes" ]; then
-        log "🔴 CRITICAL: Réplication arrêtée!"
-        log "   IO Running: $io_running"
-        log "   SQL Running: $sql_running"
-        log "   Erreur: $last_error"
-        return 2
-    fi
-    
-    # Lag
-    if [ "$lag" == "NULL" ]; then
-        log "⚠️ WARNING: Lag indéterminé"
-        return 1
-    elif [ "$lag" -gt "$ALERT_LAG_SECONDS" ]; then
-        log "⚠️ WARNING: Lag élevé: ${lag}s"
-        return 1
-    else
-        log "✅ OK: Lag: ${lag}s"
-        return 0
-    fi
-}
-
-# Boucle de monitoring
-log "═══════════════════════════════════════════════════════════"
-log "   MONITORING RÉPLICATION"
-log "═══════════════════════════════════════════════════════════"
-log "Host: $MARIADB_HOST"
-log "Seuil d'alerte: ${ALERT_LAG_SECONDS}s"
-log "Intervalle: ${CHECK_INTERVAL}s"
-log "───────────────────────────────────────────────────────────"
-
-while true; do
-    check_replication
-    sleep $CHECK_INTERVAL
-done
+# gh-ost : approche sans triggers, pilotée par la lecture du binlog
+gh-ost --database="boutique" --table="commandes" \
+  --alter="ADD INDEX idx_client (client_id)" --execute
 ```
+
+Ces outils créent une table fantôme, y recopient les données par lots tout en répercutant les écritures concurrentes (par triggers pour `pt-online-schema-change`, par lecture du binlog pour `gh-ost`), puis effectuent un renommage atomique en fin de course. La copie progressive et régulée évite tout verrou long.
+
+> 🔗 Côté réplication, l'**Optimistic ALTER TABLE** (§13.10) réduit le retard induit par une modification de schéma sur les réplicas, et `innodb_alter_copy_bulk` (§15.6) accélère la construction d'index lors d'une copie de table.
 
 ---
 
-## Outils de migration online
+## 19.8.3 Découpler le schéma du déploiement : le motif expand/contract
 
-### pt-online-schema-change (Percona Toolkit)
+Certains changements de schéma ne sont sans interruption que s'ils sont **découplés du déploiement applicatif**. Modifier simultanément la base et le code suppose en effet que les deux versions soient compatibles à l'instant précis de la bascule — condition rarement tenable sans coupure.
 
-`pt-online-schema-change` permet de modifier le schéma sans bloquer les écritures.
+Le motif **expand/contract** (ou *parallel change*) résout cela en décomposant un changement en étapes rétrocompatibles, chacune déployable indépendamment :
 
-```bash
-#!/bin/bash
-# Utilisation de pt-online-schema-change
+1. **Expand** — ajouter le nouvel élément (colonne, table) sans retirer l'ancien. L'application existante continue de fonctionner, ignorant le nouvel élément.
+2. **Migrate** — déployer une version de l'application qui écrit à la fois dans l'ancien et le nouveau format, puis remplir rétroactivement (*backfill*) les données existantes.
+3. **Contract** — une fois les lectures basculées sur le nouveau format et l'ancien devenu inutilisé, le supprimer.
 
-# Installation
-# apt install percona-toolkit  # Debian/Ubuntu
-# dnf install percona-toolkit  # RHEL/CentOS
-
-# Exemple : Ajouter une colonne sans downtime
-pt-online-schema-change \
-    --alter "ADD COLUMN status VARCHAR(50) DEFAULT 'active'" \
-    --host=localhost \
-    --user=root \
-    --password=secret \
-    --execute \
-    --progress=time,30 \
-    --max-lag=10 \
-    --check-slave-lag=mariadb-replica \
-    --chunk-size=1000 \
-    --critical-load="Threads_running=100" \
-    D=mydb,t=large_table
-
-# Options importantes :
-# --execute          : Exécuter (sans = dry-run)
-# --max-lag          : Pause si lag réplication > N secondes
-# --chunk-size       : Nombre de lignes par batch
-# --critical-load    : Arrêt si charge critique atteinte
-# --progress         : Affichage progression
-```
-
-**Fonctionnement interne :**
-
-```
-Fonctionnement pt-online-schema-change
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Création table temporaire avec nouveau schéma
-   original_table ──▶ _original_table_new (avec ALTER)
-
-2. Création des triggers pour synchronisation
-   INSERT → INSERT dans _new
-   UPDATE → UPDATE dans _new  
-   DELETE → DELETE dans _new
-
-3. Copie des données par chunks
-   ┌─────────────────────────────────────────────────────┐
-   │ SELECT * FROM original_table                        │
-   │ WHERE id BETWEEN 1 AND 1000                         │
-   │ INSERT INTO _original_table_new ...                 │
-   │                                                     │
-   │ ... répété par chunks jusqu'à la fin                │
-   └─────────────────────────────────────────────────────┘
-
-4. Échange atomique des tables
-   RENAME TABLE original_table TO _original_table_old,
-                _original_table_new TO original_table;
-
-5. Suppression de l'ancienne table
-   DROP TABLE _original_table_old;
-```
-
-### gh-ost (GitHub Online Schema Transformation)
-
-`gh-ost` est une alternative à pt-osc, sans triggers, utilisant le binlog.
-
-```bash
-#!/bin/bash
-# Utilisation de gh-ost
-
-# Installation
-# wget https://github.com/github/gh-ost/releases/latest/download/gh-ost-binary-linux-amd64.tar.gz
-# tar xzf gh-ost-binary-linux-amd64.tar.gz
-# mv gh-ost /usr/local/bin/
-
-# Exemple : Migration de colonne
-gh-ost \
-    --host=localhost \
-    --port=3306 \
-    --user=root \
-    --password=secret \
-    --database=mydb \
-    --table=large_table \
-    --alter="ADD COLUMN new_field INT DEFAULT 0" \
-    --execute \
-    --allow-on-master \
-    --chunk-size=1000 \
-    --max-lag-millis=1500 \
-    --throttle-control-replicas="mariadb-replica:3306" \
-    --panic-flag-file=/tmp/gh-ost-panic \
-    --postpone-cut-over-flag-file=/tmp/gh-ost-postpone
-
-# Options clés :
-# --execute              : Exécuter (sinon dry-run)
-# --allow-on-master      : Exécuter sur le master directement
-# --max-lag-millis       : Seuil de lag en ms
-# --panic-flag-file      : Créer ce fichier pour arrêter immédiatement
-# --postpone-cut-over-flag-file : Bloquer le cutover tant que le fichier existe
-```
-
-**Avantages de gh-ost vs pt-osc :**
-
-| Aspect | pt-online-schema-change | gh-ost |
-|--------|------------------------|--------|
-| **Méthode** | Triggers | Binlog |
-| **Impact sur source** | Modéré (triggers) | Faible |
-| **Contrôle cutover** | Automatique | Manuel possible |
-| **Pause/Reprise** | Limitée | Complète |
-| **Rollback** | Difficile | Plus facile |
-| **Complexité** | Modérée | Plus élevée |
-
-### Script de migration online avec gh-ost
-
-```bash
-#!/bin/bash
-# zero_downtime_alter.sh
-# Migration de schéma zero-downtime avec gh-ost
-
-set -e
-
-# Configuration
-DB_HOST="localhost"
-DB_PORT="3306"
-DB_USER="root"
-DB_PASS="secret"
-DATABASE="mydb"
-TABLE="$1"
-ALTER="$2"
-
-PANIC_FILE="/tmp/gh-ost-panic-${TABLE}"
-POSTPONE_FILE="/tmp/gh-ost-postpone-${TABLE}"
-LOG_DIR="/var/log/gh-ost"
-
-# Validation
-if [ -z "$TABLE" ] || [ -z "$ALTER" ]; then
-    echo "Usage: $0 <table> <alter_statement>"
-    echo "Example: $0 users 'ADD COLUMN email_verified BOOLEAN DEFAULT FALSE'"
-    exit 1
-fi
-
-mkdir -p $LOG_DIR
-
-echo "═══════════════════════════════════════════════════════════"
-echo "   MIGRATION ZERO-DOWNTIME AVEC GH-OST"
-echo "═══════════════════════════════════════════════════════════"
-echo "Table: ${DATABASE}.${TABLE}"
-echo "Alter: $ALTER"
-echo ""
-
-# Nettoyage des fichiers de contrôle précédents
-rm -f $PANIC_FILE $POSTPONE_FILE
-
-# Création du fichier de postpone pour contrôle manuel du cutover
-touch $POSTPONE_FILE
-echo "📌 Fichier de postpone créé: $POSTPONE_FILE"
-echo "   Supprimer ce fichier pour déclencher le cutover"
-echo ""
-
-# Dry-run d'abord
-echo "[1/3] Dry-run..."
-gh-ost \
-    --host=$DB_HOST \
-    --port=$DB_PORT \
-    --user=$DB_USER \
-    --password=$DB_PASS \
-    --database=$DATABASE \
-    --table=$TABLE \
-    --alter="$ALTER" \
-    --chunk-size=1000 \
-    --max-lag-millis=1500 \
-    --verbose 2>&1 | tee $LOG_DIR/gh-ost-dryrun-${TABLE}.log
-
-echo ""
-read -p "Dry-run OK. Lancer la migration réelle? (yes/no): " confirm
-if [ "$confirm" != "yes" ]; then
-    echo "Migration annulée"
-    rm -f $POSTPONE_FILE
-    exit 0
-fi
-
-# Exécution réelle
-echo ""
-echo "[2/3] Migration en cours..."
-echo "      Pour arrêter d'urgence: touch $PANIC_FILE"
-echo "      Pour déclencher le cutover: rm $POSTPONE_FILE"
-echo ""
-
-gh-ost \
-    --host=$DB_HOST \
-    --port=$DB_PORT \
-    --user=$DB_USER \
-    --password=$DB_PASS \
-    --database=$DATABASE \
-    --table=$TABLE \
-    --alter="$ALTER" \
-    --execute \
-    --allow-on-master \
-    --chunk-size=1000 \
-    --max-lag-millis=1500 \
-    --panic-flag-file=$PANIC_FILE \
-    --postpone-cut-over-flag-file=$POSTPONE_FILE \
-    --initially-drop-ghost-table \
-    --initially-drop-old-table \
-    --verbose 2>&1 | tee $LOG_DIR/gh-ost-exec-${TABLE}.log &
-
-GHOST_PID=$!
-
-echo "gh-ost PID: $GHOST_PID"
-echo ""
-
-# Attendre que la copie soit terminée
-echo "En attente de la fin de la copie des données..."
-echo "Supprimez $POSTPONE_FILE quand prêt pour le cutover"
-echo ""
-
-wait $GHOST_PID
-EXIT_CODE=$?
-
-echo ""
-echo "[3/3] Migration terminée"
-
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "✅ Migration réussie!"
-else
-    echo "❌ Migration échouée (code: $EXIT_CODE)"
-    echo "Consulter les logs: $LOG_DIR/gh-ost-exec-${TABLE}.log"
-fi
-
-# Nettoyage
-rm -f $PANIC_FILE $POSTPONE_FILE
-
-exit $EXIT_CODE
-```
+À chaque étape, l'ancienne et la nouvelle version de l'application coexistent sans conflit. Ce découplage est ce qui rend possible une évolution de schéma continue, sans qu'aucune des étapes n'exige l'arrêt du service.
 
 ---
 
-## Orchestration du cutover
+## 19.8.4 Migration de version par réplication : le motif de référence
 
-### Procédure de cutover avec ProxySQL
+Pour migrer vers une nouvelle version (11.8 → 12.3) sans interruption, le motif canonique est la **migration par réplication**. Plutôt que de mettre à niveau l'instance en place — ce qui impose un arrêt et interdit le downgrade (§19.7.4) —, on construit une instance neuve et on l'amène à l'état de la production par réplication.
 
-```sql
--- ═══════════════════════════════════════════════════════════
--- ORCHESTRATION CUTOVER ZERO-DOWNTIME AVEC PROXYSQL
--- ═══════════════════════════════════════════════════════════
+La séquence d'ensemble est la suivante :
 
--- ÉTAT INITIAL
--- MySQL Source : hostgroup 10 (writer), hostgroup 20 (reader)
--- MariaDB Target : hostgroup 30 (replica, reader facultatif)
+1. **Provisionner une instance 12.3 neuve**, configurée comme cible de production (en tenant compte des variables retirées, §11.2.3, et du packaging Galera séparé le cas échéant, §14.2.5).
+2. **Établir une réplication 11.8 → 12.3** : la 12.3 devient un réplica de la production 11.8 et applique ses écritures en continu, jusqu'à rattraper son retard.
+3. **Valider** la nouvelle instance pendant qu'elle réplique, à l'aide de la campagne de tests de la §19.6 (comparaison des résultats, des plans, de la cohérence).
+4. **Basculer** (cutover) : voir §19.8.5.
 
--- Phase 1: Vérification pré-cutover
--- ---------------------------------
+Un point technique important éclaire pourquoi cette direction est sûre. La réplication s'effectue ici du **plus ancien vers le plus récent** : la 12.3, en tant que réplica, consomme le flux de binlog produit par la 11.8 (format classique). C'est la direction prise en charge et sans difficulté. La direction inverse — 12.3 → 11.8 — est celle qui pose problème (§19.7.5), car la 12.3 émet alors son nouveau binlog intégré à InnoDB (§11.5.4) et peut produire des événements que la 11.8 ne sait pas interpréter. Autrement dit, **la bascule sans interruption emprunte la direction facile ; le filet de rollback emprunte la direction fragile** — d'où l'attention particulière qu'exige ce dernier.
 
--- Vérifier la santé des serveurs
-SELECT * FROM mysql_servers;
-
--- Vérifier le lag de réplication (doit être 0)
-SELECT hostgroup_id, hostname, port, status, 
-       (SELECT variable_value FROM stats_mysql_global WHERE variable_name='Queries') as queries
-FROM mysql_servers WHERE hostgroup_id IN (10, 30);
-
-
--- Phase 2: Préparer le cutover
--- ----------------------------
-
--- Réduire le max_connections temporairement pour drainer
-UPDATE mysql_servers SET max_connections = 1 WHERE hostname = 'mysql-source' AND hostgroup_id = 10;
-LOAD MYSQL SERVERS TO RUNTIME;
-
--- Attendre que les connexions se drainent (quelques secondes)
-SELECT * FROM stats_mysql_connection_pool WHERE hostgroup IN (10);
-
-
--- Phase 3: Cutover (< 5 secondes)
--- -------------------------------
-
--- 3.1 Mettre MySQL source offline
-UPDATE mysql_servers SET status = 'OFFLINE_SOFT' WHERE hostname = 'mysql-source';
-LOAD MYSQL SERVERS TO RUNTIME;
-
--- 3.2 Attendre la synchronisation finale (lag = 0)
--- (vérifier manuellement ou via script)
-
--- 3.3 Promouvoir MariaDB
-UPDATE mysql_servers SET hostgroup_id = 10, status = 'ONLINE', max_connections = 100 
-WHERE hostname = 'mariadb-target' AND hostgroup_id = 30;
-LOAD MYSQL SERVERS TO RUNTIME;
-
--- 3.4 Vérification immédiate
-SELECT * FROM mysql_servers WHERE hostgroup_id IN (10, 20);
-
-
--- Phase 4: Post-cutover
--- ---------------------
-
--- Vérifier que le trafic passe bien
-SELECT hostgroup, srv_host, Queries, Bytes_data_sent
-FROM stats_mysql_connection_pool;
-
--- Ajuster les connexions
-UPDATE mysql_servers SET max_connections = 200 WHERE hostname = 'mariadb-target';
-LOAD MYSQL SERVERS TO RUNTIME;
-
--- Sauvegarder la configuration
-SAVE MYSQL SERVERS TO DISK;
-```
-
-### Script d'orchestration automatique
-
-```python
-#!/usr/bin/env python3
-# cutover_orchestrator.py
-# Orchestration automatique du cutover zero-downtime
-
-import time
-import sys
-from datetime import datetime
-from typing import Dict, Optional
-import mysql.connector
-
-class CutoverOrchestrator:
-    """Orchestre le cutover zero-downtime"""
-    
-    def __init__(self, config: Dict):
-        self.source_config = config['source']
-        self.target_config = config['target']
-        self.proxy_config = config['proxy']
-        self.max_lag_seconds = config.get('max_lag_seconds', 5)
-        self.drain_timeout_seconds = config.get('drain_timeout', 30)
-    
-    def log(self, message: str, level: str = "INFO"):
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{timestamp}] [{level}] {message}")
-    
-    def get_replication_lag(self) -> Optional[int]:
-        """Obtient le lag de réplication sur la cible"""
-        conn = mysql.connector.connect(**self.target_config)
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SHOW SLAVE STATUS")
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if result:
-            lag = result.get('Seconds_Behind_Master')
-            return int(lag) if lag is not None else None
-        return None
-    
-    def wait_for_sync(self, timeout: int = 300) -> bool:
-        """Attend que la réplication soit synchronisée"""
-        self.log(f"Attente synchronisation (timeout: {timeout}s)...")
-        start = time.time()
-        
-        while time.time() - start < timeout:
-            lag = self.get_replication_lag()
-            
-            if lag is None:
-                self.log("Lag indéterminé, réplication peut-être arrêtée", "WARNING")
-                return False
-            
-            if lag <= self.max_lag_seconds:
-                self.log(f"✓ Synchronisé (lag: {lag}s)")
-                return True
-            
-            self.log(f"Lag actuel: {lag}s, attente...")
-            time.sleep(1)
-        
-        self.log(f"Timeout synchronisation après {timeout}s", "ERROR")
-        return False
-    
-    def execute_proxy_command(self, command: str):
-        """Exécute une commande sur ProxySQL"""
-        conn = mysql.connector.connect(**self.proxy_config)
-        cursor = conn.cursor()
-        cursor.execute(command)
-        conn.commit()
-        cursor.close()
-        conn.close()
-    
-    def drain_source(self) -> bool:
-        """Draine les connexions de la source"""
-        self.log("Drainage des connexions source...")
-        
-        # Réduire les connexions max
-        self.execute_proxy_command("""
-            UPDATE mysql_servers 
-            SET max_connections = 1 
-            WHERE hostname = '{}' AND hostgroup_id = 10
-        """.format(self.source_config['host']))
-        self.execute_proxy_command("LOAD MYSQL SERVERS TO RUNTIME")
-        
-        # Attendre le drainage
-        start = time.time()
-        while time.time() - start < self.drain_timeout_seconds:
-            # Vérifier les connexions actives
-            conn = mysql.connector.connect(**self.proxy_config)
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT ConnUsed FROM stats_mysql_connection_pool 
-                WHERE srv_host = '{}'
-            """.format(self.source_config['host']))
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            
-            if result and result['ConnUsed'] <= 1:
-                self.log("✓ Connexions drainées")
-                return True
-            
-            time.sleep(1)
-        
-        self.log("Timeout drainage", "WARNING")
-        return True  # Continuer quand même
-    
-    def stop_source_writes(self):
-        """Arrête les écritures sur la source"""
-        self.log("Arrêt des écritures sur la source...")
-        
-        # Mettre la source offline dans ProxySQL
-        self.execute_proxy_command("""
-            UPDATE mysql_servers 
-            SET status = 'OFFLINE_SOFT' 
-            WHERE hostname = '{}'
-        """.format(self.source_config['host']))
-        self.execute_proxy_command("LOAD MYSQL SERVERS TO RUNTIME")
-        
-        self.log("✓ Source offline")
-    
-    def stop_target_replication(self):
-        """Arrête la réplication sur la cible"""
-        self.log("Arrêt de la réplication sur la cible...")
-        
-        conn = mysql.connector.connect(**self.target_config)
-        cursor = conn.cursor()
-        cursor.execute("STOP SLAVE")
-        cursor.close()
-        conn.close()
-        
-        self.log("✓ Réplication arrêtée")
-    
-    def promote_target(self):
-        """Promeut la cible en primary"""
-        self.log("Promotion de la cible en primary...")
-        
-        # Activer la cible comme writer dans ProxySQL
-        self.execute_proxy_command("""
-            UPDATE mysql_servers 
-            SET hostgroup_id = 10, status = 'ONLINE', max_connections = 200 
-            WHERE hostname = '{}'
-        """.format(self.target_config['host']))
-        self.execute_proxy_command("LOAD MYSQL SERVERS TO RUNTIME")
-        self.execute_proxy_command("SAVE MYSQL SERVERS TO DISK")
-        
-        self.log("✓ Cible promue")
-    
-    def verify_cutover(self) -> bool:
-        """Vérifie que le cutover est effectif"""
-        self.log("Vérification du cutover...")
-        
-        conn = mysql.connector.connect(**self.proxy_config)
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT srv_host, status, hostgroup 
-            FROM stats_mysql_connection_pool 
-            WHERE hostgroup = 10
-        """)
-        results = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        for row in results:
-            if row['srv_host'] == self.target_config['host']:
-                self.log(f"✓ Trafic routé vers {row['srv_host']}")
-                return True
-        
-        self.log("Cutover non vérifié", "ERROR")
-        return False
-    
-    def execute_cutover(self) -> bool:
-        """Exécute le cutover complet"""
-        self.log("═" * 60)
-        self.log("   DÉBUT DU CUTOVER ZERO-DOWNTIME")
-        self.log("═" * 60)
-        
-        cutover_start = time.time()
-        
-        try:
-            # Phase 1: Pré-cutover
-            self.log("\n[Phase 1] Pré-cutover")
-            if not self.wait_for_sync(timeout=60):
-                raise Exception("Synchronisation impossible")
-            
-            # Phase 2: Drainage
-            self.log("\n[Phase 2] Drainage")
-            self.drain_source()
-            
-            # Phase 3: Cutover (critique - mesurer le temps)
-            self.log("\n[Phase 3] CUTOVER")
-            cutover_moment = time.time()
-            
-            self.stop_source_writes()
-            
-            # Attente synchronisation finale
-            time.sleep(2)  # Petit délai pour les dernières transactions
-            
-            if not self.wait_for_sync(timeout=30):
-                raise Exception("Synchronisation finale échouée")
-            
-            self.stop_target_replication()
-            self.promote_target()
-            
-            cutover_duration = time.time() - cutover_moment
-            self.log(f"⏱️ Durée du cutover: {cutover_duration:.2f}s")
-            
-            # Phase 4: Vérification
-            self.log("\n[Phase 4] Vérification")
-            if not self.verify_cutover():
-                raise Exception("Vérification échouée")
-            
-            total_duration = time.time() - cutover_start
-            
-            self.log("\n" + "═" * 60)
-            self.log(f"   ✅ CUTOVER RÉUSSI EN {total_duration:.2f}s")
-            self.log(f"   ⏱️ Downtime effectif: {cutover_duration:.2f}s")
-            self.log("═" * 60)
-            
-            return True
-            
-        except Exception as e:
-            self.log(f"\n❌ ERREUR: {e}", "ERROR")
-            self.log("Rollback peut être nécessaire", "ERROR")
-            return False
-
-
-# Utilisation
-if __name__ == '__main__':
-    config = {
-        'source': {
-            'host': 'mysql-source',
-            'port': 3306,
-            'user': 'admin',
-            'password': 'password'
-        },
-        'target': {
-            'host': 'mariadb-target',
-            'port': 3306,
-            'user': 'admin',
-            'password': 'password'
-        },
-        'proxy': {
-            'host': 'proxysql',
-            'port': 6032,
-            'user': 'admin',
-            'password': 'admin'
-        },
-        'max_lag_seconds': 5,
-        'drain_timeout': 30
-    }
-    
-    orchestrator = CutoverOrchestrator(config)
-    success = orchestrator.execute_cutover()
-    sys.exit(0 if success else 1)
-```
+L'usage de GTID (§13.4) tout au long facilite le suivi des positions, la promotion et l'éventuelle mise en place de la réplication inverse pour le rollback.
 
 ---
 
-## Gestion du split-brain
+## 19.8.5 La séquence de bascule (cutover)
 
-### Comprendre le split-brain
+La bascule est le moment critique : c'est la seule fenêtre où une interruption, même brève, peut survenir. L'objectif est de la réduire à quelques secondes en suivant une séquence rigoureuse :
 
-```
-Situation de Split-Brain
-━━━━━━━━━━━━━━━━━━━━━━━━
+1. **Réduire le retard de réplication à un niveau proche de zéro** en amont, en s'assurant que la 12.3 suit la 11.8 sans accumulation (réplication parallèle, optimistic ALTER §13.10).
+2. **Figer les écritures sur l'ancienne source** en la passant en lecture seule :
 
-ÉTAT NORMAL
-                    ┌─────────────────────┐
-                    │    Load Balancer    │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │    Primary (seul)   │
-                    │    Accepte writes   │
-                    └─────────────────────┘
+   ```sql
+   -- Sur l'ancienne source 11.8
+   SET GLOBAL read_only = ON;
+   ```
 
-SPLIT-BRAIN (DANGER!)
-                    ┌─────────────────────┐
-                    │    Applications     │
-                    └───────┬─────┬───────┘
-                            │     │
-                    ┌───────┘     └───────┐
-                    │                     │
-                    ▼                     ▼
-         ┌─────────────────┐   ┌─────────────────┐
-         │   Primary A     │   │   Primary B     │
-         │ (se croit seul) │   │ (se croit seul) │
-         │                 │   │                 │
-         │ Write: id=1     │   │ Write: id=1     │
-         │ data='AAA'      │   │ data='BBB'      │
-         └─────────────────┘   └─────────────────┘
-         
-         ⚠️ CONFLIT! Même ID, données différentes
-         ⚠️ Données divergentes, réconciliation complexe
-```
+   Toute écriture privilégiée résiduelle doit également être quiescée, afin qu'aucune transaction n'échappe à la réplication.
+3. **Attendre que le réplica 12.3 applique les derniers événements** et vérifier l'alignement des positions :
 
-### Prévention du split-brain
+   ```sql
+   -- Sur le réplica 12.3
+   SHOW REPLICA STATUS\G   -- Seconds_Behind_Source = 0, positions/GTID alignés
+   ```
 
-```sql
--- ═══════════════════════════════════════════════════════════
--- MÉCANISMES DE PRÉVENTION DU SPLIT-BRAIN
--- ═══════════════════════════════════════════════════════════
+   La confirmation que la 12.3 a tout rattrapé (§13.7.2) est la condition d'une bascule sans perte.
+4. **Promouvoir la 12.3** comme nouvelle source : arrêter la réplication entrante et la rendre accessible en écriture.
+5. **Repointer les applications** vers la 12.3 — directement ou, mieux, via la couche de routage (§19.8.6) qui rend ce changement transparent.
+6. **Mettre en place la réplication inverse 12.3 → 11.8** comme filet de rollback (§19.7.5), avant de rouvrir les écritures :
 
--- 1. FENCING : Garantir qu'un seul primary peut écrire
--- --------------------------------------------------
+   ```sql
+   -- Sur l'ancienne 11.8, pour la maintenir synchronisée (fenêtre de rollback)
+   CHANGE MASTER TO MASTER_HOST='nouvelle-12.3', MASTER_USE_GTID=slave_pos;
+   START SLAVE;
+   ```
+7. **Rouvrir les écritures** sur la 12.3, désormais source de production.
 
--- Utiliser super_read_only sur tous les serveurs par défaut
--- Seul le primary actif a super_read_only = OFF
-
--- Sur tous les serveurs (configuration par défaut)
-SET GLOBAL super_read_only = ON;
-SET GLOBAL read_only = ON;
-
--- Sur le primary uniquement (après élection)
-SET GLOBAL super_read_only = OFF;
-SET GLOBAL read_only = OFF;
-
-
--- 2. QUORUM : Décision basée sur la majorité
--- -----------------------------------------
--- Utiliser Galera Cluster ou Group Replication pour
--- garantir qu'un primary n'est élu que s'il a la majorité
-
-
--- 3. STONITH (Shoot The Other Node In The Head)
--- ---------------------------------------------
--- Si deux primaries sont détectés, un mécanisme externe
--- (Pacemaker, script) force l'arrêt de l'un d'eux
-```
-
-### Script de détection et résolution
-
-```python
-#!/usr/bin/env python3
-# splitbrain_detector.py
-# Détection et résolution des situations de split-brain
-
-import mysql.connector
-from typing import Dict, List, Optional
-from datetime import datetime
-import subprocess
-import sys
-
-class SplitBrainDetector:
-    """Détecte et résout les situations de split-brain"""
-    
-    def __init__(self, servers: List[Dict]):
-        self.servers = servers
-        self.alerts = []
-    
-    def log(self, message: str, level: str = "INFO"):
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{timestamp}] [{level}] {message}")
-    
-    def check_server_mode(self, server: Dict) -> Dict:
-        """Vérifie le mode d'un serveur (read_only, super_read_only)"""
-        try:
-            conn = mysql.connector.connect(
-                host=server['host'],
-                port=server.get('port', 3306),
-                user=server['user'],
-                password=server['password']
-            )
-            cursor = conn.cursor(dictionary=True)
-            
-            cursor.execute("SELECT @@read_only as ro, @@super_read_only as sro, @@server_id as id")
-            result = cursor.fetchone()
-            
-            cursor.close()
-            conn.close()
-            
-            return {
-                'host': server['host'],
-                'reachable': True,
-                'read_only': bool(result['ro']),
-                'super_read_only': bool(result['sro']),
-                'server_id': result['id'],
-                'is_writable': not bool(result['ro']) and not bool(result['sro'])
-            }
-            
-        except Exception as e:
-            return {
-                'host': server['host'],
-                'reachable': False,
-                'error': str(e)
-            }
-    
-    def detect_split_brain(self) -> bool:
-        """Détecte une situation de split-brain"""
-        self.log("Vérification des serveurs...")
-        
-        writable_servers = []
-        
-        for server in self.servers:
-            status = self.check_server_mode(server)
-            
-            if not status['reachable']:
-                self.log(f"⚠️ {status['host']}: Non joignable - {status.get('error', 'Unknown')}", "WARNING")
-                continue
-            
-            mode = "WRITABLE" if status['is_writable'] else "READ-ONLY"
-            self.log(f"  {status['host']}: {mode}")
-            
-            if status['is_writable']:
-                writable_servers.append(status)
-        
-        if len(writable_servers) > 1:
-            self.log("", "")
-            self.log("🚨 SPLIT-BRAIN DÉTECTÉ!", "CRITICAL")
-            self.log(f"   {len(writable_servers)} serveurs en mode WRITABLE:", "CRITICAL")
-            for srv in writable_servers:
-                self.log(f"   - {srv['host']} (server_id: {srv['server_id']})", "CRITICAL")
-            return True
-        
-        if len(writable_servers) == 0:
-            self.log("⚠️ Aucun serveur writable détecté!", "WARNING")
-        
-        return False
-    
-    def resolve_split_brain(self, keep_server: str):
-        """Résout le split-brain en gardant un seul primary"""
-        self.log(f"Résolution: Conservation de {keep_server} comme primary")
-        
-        for server in self.servers:
-            status = self.check_server_mode(server)
-            
-            if not status['reachable']:
-                continue
-            
-            if server['host'] == keep_server:
-                # Ce serveur reste le primary
-                if not status['is_writable']:
-                    self.log(f"Activation des écritures sur {server['host']}")
-                    self._set_writable(server, True)
-            else:
-                # Les autres passent en read-only
-                if status['is_writable']:
-                    self.log(f"Passage en read-only de {server['host']}")
-                    self._set_writable(server, False)
-        
-        self.log("✓ Split-brain résolu")
-    
-    def _set_writable(self, server: Dict, writable: bool):
-        """Configure le mode writable d'un serveur"""
-        conn = mysql.connector.connect(
-            host=server['host'],
-            port=server.get('port', 3306),
-            user=server['user'],
-            password=server['password']
-        )
-        cursor = conn.cursor()
-        
-        if writable:
-            cursor.execute("SET GLOBAL super_read_only = OFF")
-            cursor.execute("SET GLOBAL read_only = OFF")
-        else:
-            cursor.execute("SET GLOBAL read_only = ON")
-            cursor.execute("SET GLOBAL super_read_only = ON")
-        
-        cursor.close()
-        conn.close()
-    
-    def fence_server(self, server: Dict):
-        """STONITH - Arrêt forcé d'un serveur"""
-        self.log(f"🔫 STONITH: Arrêt forcé de {server['host']}", "WARNING")
-        
-        # Option 1: Arrêt via SSH
-        try:
-            subprocess.run(
-                ["ssh", server['host'], "systemctl", "stop", "mariadb"],
-                timeout=10,
-                check=True
-            )
-            self.log(f"✓ {server['host']} arrêté via SSH")
-        except Exception as e:
-            self.log(f"Échec SSH: {e}", "ERROR")
-            
-            # Option 2: Arrêt via IPMI/iLO
-            # subprocess.run(["ipmitool", "-H", server['ipmi'], "power", "off"])
-            
-            # Option 3: Désactivation réseau
-            # self._disable_network(server)
-    
-    def monitor_loop(self, interval: int = 10):
-        """Boucle de monitoring continu"""
-        self.log("Démarrage du monitoring split-brain")
-        
-        import time
-        while True:
-            if self.detect_split_brain():
-                # Alerte et attente d'intervention
-                self.log("Intervention manuelle requise!", "CRITICAL")
-                # En production: envoyer alerte PagerDuty, etc.
-            
-            time.sleep(interval)
-
-
-# Utilisation
-if __name__ == '__main__':
-    servers = [
-        {'host': 'mariadb-1', 'port': 3306, 'user': 'admin', 'password': 'password'},
-        {'host': 'mariadb-2', 'port': 3306, 'user': 'admin', 'password': 'password'},
-        {'host': 'mariadb-3', 'port': 3306, 'user': 'admin', 'password': 'password'},
-    ]
-    
-    detector = SplitBrainDetector(servers)
-    
-    if len(sys.argv) > 1 and sys.argv[1] == '--monitor':
-        detector.monitor_loop()
-    else:
-        if detector.detect_split_brain():
-            print("\nPour résoudre, exécuter:")
-            print(f"  python {sys.argv[0]} --resolve <hostname_a_garder>")
-        
-        if len(sys.argv) > 2 and sys.argv[1] == '--resolve':
-            detector.resolve_split_brain(sys.argv[2])
-```
+La durée perçue de l'interruption se résume aux étapes 2 à 5 — quelques secondes si le retard de réplication était maîtrisé.
 
 ---
 
-## Spécificités MariaDB 11.8 🆕
+## 19.8.6 La couche de routage : réduire la fenêtre perçue à néant
 
-### Migration des System-Versioned Tables
+Même une bascule de quelques secondes peut être rendue **imperceptible** par une couche de routage placée entre les applications et la base. C'est elle qui transforme un « repointage » manuel et visible en une transition transparente.
 
-MariaDB 11.8 modifie le format de stockage des timestamps dans les tables temporelles. Une migration zero-downtime de ces tables nécessite une attention particulière.
+**MaxScale** (§14.4) joue ce rôle nativement : il achemine les requêtes (read/write split, §14.4.2) et masque l'identité physique de la source aux applications, qui se connectent toujours au même point d'entrée. Lors de la bascule, c'est MaxScale qui redirige le trafic vers la nouvelle source, sans reconfiguration côté application.
 
-```sql
--- ═══════════════════════════════════════════════════════════
--- MIGRATION ZERO-DOWNTIME DES SYSTEM-VERSIONED TABLES
--- ═══════════════════════════════════════════════════════════
+Surtout, les fonctionnalités de **Transaction Replay et Connection Migration** (§14.10) permettent aux connexions et même aux transactions en cours de **survivre au changement de backend** : une transaction interrompue par la bascule peut être rejouée transparemment sur la nouvelle source, et les sessions migrées sans rupture. C'est ce mécanisme qui rapproche le plus la migration d'un véritable « zéro interruption » du point de vue de l'utilisateur.
 
--- Identification des tables system-versioned
-SELECT 
-    table_schema,
-    table_name,
-    create_options
-FROM information_schema.tables
-WHERE create_options LIKE '%VERSIONED%'
-ORDER BY table_schema, table_name;
+Les alternatives **ProxySQL** et **HAProxy** (§14.9) offrent des capacités comparables de repointage transparent et de routage, ProxySQL ajoutant un pooling de connexions et un routage par règles.
 
--- Exemple de sortie:
--- | app_db | contracts    | row_format=DYNAMIC with system versioning |
--- | app_db | audit_events | row_format=DYNAMIC with system versioning |
-
--- APPROCHE 1: Migration pendant la réplication
--- --------------------------------------------
--- Les tables sont automatiquement converties lors de la réplication
--- si la cible est en 11.8. Vérifier après migration:
-
-SHOW CREATE TABLE contracts\G
--- Vérifier que ROW_START et ROW_END utilisent le nouveau format
-
--- APPROCHE 2: Rebuild explicite post-migration
--- --------------------------------------------
--- Si nécessaire, reconstruire les tables pour le nouveau format
-
--- Option A: ALTER TABLE simple (prend un lock)
-ALTER TABLE contracts ENGINE=InnoDB;
-
--- Option B: pt-online-schema-change (zero-downtime)
--- pt-online-schema-change --alter "ENGINE=InnoDB" D=app_db,t=contracts --execute
-
--- Option C: gh-ost
--- gh-ost --alter "ENGINE=InnoDB" --database=app_db --table=contracts --execute
-```
-
-### Gestion du TLS par défaut
-
-```bash
-#!/bin/bash
-# prepare_tls_migration.sh
-# Prépare la migration vers MariaDB 11.8 avec TLS par défaut
-
-# Vérifier les connexions actuelles sans TLS
-mariadb -e "
-SELECT 
-    user, 
-    host, 
-    ssl_type,
-    CASE WHEN ssl_type = '' THEN 'NO TLS' ELSE 'TLS' END as connection_security
-FROM mysql.user 
-WHERE user NOT IN ('mariadb.sys', 'mysql')
-ORDER BY ssl_type, user;
-"
-
-# Générer des certificats si nécessaire
-if [ ! -f /etc/mysql/ssl/server-cert.pem ]; then
-    echo "Génération des certificats TLS..."
-    
-    mkdir -p /etc/mysql/ssl
-    cd /etc/mysql/ssl
-    
-    # CA
-    openssl genrsa 2048 > ca-key.pem
-    openssl req -new -x509 -nodes -days 3650 -key ca-key.pem -out ca-cert.pem \
-        -subj "/CN=MariaDB CA"
-    
-    # Server
-    openssl req -newkey rsa:2048 -nodes -keyout server-key.pem -out server-req.pem \
-        -subj "/CN=MariaDB Server"
-    openssl x509 -req -in server-req.pem -days 3650 -CA ca-cert.pem -CAkey ca-key.pem \
-        -set_serial 01 -out server-cert.pem
-    
-    # Client
-    openssl req -newkey rsa:2048 -nodes -keyout client-key.pem -out client-req.pem \
-        -subj "/CN=MariaDB Client"
-    openssl x509 -req -in client-req.pem -days 3650 -CA ca-cert.pem -CAkey ca-key.pem \
-        -set_serial 02 -out client-cert.pem
-    
-    chown mysql:mysql *.pem
-    chmod 600 *-key.pem
-    
-    echo "✓ Certificats générés"
-fi
-
-# Configuration MariaDB pour TLS
-cat >> /etc/mysql/mariadb.conf.d/99-tls.cnf << 'EOF'
-[mariadbd]
-ssl_cert = /etc/mysql/ssl/server-cert.pem
-ssl_key = /etc/mysql/ssl/server-key.pem
-ssl_ca = /etc/mysql/ssl/ca-cert.pem
-
-# Pour 11.8, TLS est activé par défaut
-# Désactiver temporairement si nécessaire pendant la migration:
-# require_secure_transport = OFF
-EOF
-
-echo "Configuration TLS ajoutée"
-```
+L'orchestration de la promotion elle-même peut s'appuyer sur les solutions de failover automatique (§14.6), qui automatisent la détection, la promotion et le repointage selon une procédure éprouvée.
 
 ---
 
-## Scénarios réels
+## 19.8.7 Cas particulier des clusters Galera
 
-### Scénario 1 : E-commerce haute disponibilité
+Pour un cluster Galera (§14.2), la situation appelle une nuance importante. Une mise à niveau **de version mineure ou de correctif** peut souvent se faire en **rolling upgrade**, nœud par nœud : on retire un nœud du cluster, on le met à niveau, on le réintègre, et l'on répète — le service restant assuré par les autres nœuds.
 
-**Contexte :** Site e-commerce avec 50 000 utilisateurs actifs, 500 transactions/minute, SLA 99.95%.
+En revanche, **faire cohabiter des versions majeures différentes au sein d'un même cluster Galera n'est pas pris en charge**. Un saut 11.8 → 12.3 ne peut donc pas se faire par simple rolling upgrade in-place du cluster. Le motif adapté consiste alors à **construire un nouveau cluster 12.3 distinct** et à le synchroniser depuis l'ancien par réplication asynchrone entre clusters, éventuellement parallélisée (§13.11), avant de basculer le trafic — c'est-à-dire une transposition, à l'échelle d'un cluster, du motif de migration par réplication décrit plus haut.
 
-```
-Architecture E-commerce
-━━━━━━━━━━━━━━━━━━━━━━
-
-┌─────────────────────────────────────────────────────────────┐
-│                     CDN + WAF                               │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────┴─────────────────────────────────┐
-│                   Load Balancer (HAProxy)                   │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              │                           │
-       ┌──────┴──────┐             ┌──────┴──────┐
-       │   App x3    │             │   App x3    │
-       │  (Zone A)   │             │  (Zone B)   │
-       └──────┬──────┘             └──────┬──────┘
-              │                           │
-              └─────────────┬─────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              │         ProxySQL          │
-              └─────────────┬─────────────┘
-                            │
-         ┌──────────────────┼──────────────────┐
-         │                  │                  │
-         ▼                  ▼                  ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  MySQL Primary  │ │ MySQL Replica 1 │ │ MySQL Replica 2 │
-│   (Zone A)      │ │   (Zone B)      │ │   (Zone B)      │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
-```
-
-**Stratégie de migration :**
-
-```yaml
-# Plan de migration E-commerce
-phases:
-  1_preparation:
-    duration: "2 semaines"
-    tasks:
-      - Déployer MariaDB 11.8 en replica
-      - Configurer la réplication depuis MySQL
-      - Tests de charge sur replica
-      - Formation équipes
-  
-  2_canary:
-    duration: "1 semaine"
-    tasks:
-      - Router 5% du trafic lecture vers MariaDB
-      - Monitoring intensif
-      - Validation métriques (latence, erreurs)
-  
-  3_progressive:
-    duration: "1 semaine"
-    tasks:
-      - Augmenter progressivement: 10%, 25%, 50%
-      - Validation à chaque étape
-  
-  4_cutover:
-    duration: "30 minutes (fenêtre)"
-    tasks:
-      - Cutover des écritures vers MariaDB
-      - Downtime cible: < 10 secondes
-    
-    cutover_procedure:
-      - "00:00 - Annonce maintenance"
-      - "00:05 - Drainage connexions MySQL"
-      - "00:06 - SET read_only=ON sur MySQL"
-      - "00:07 - Attente sync (lag=0)"
-      - "00:08 - STOP SLAVE sur MariaDB"
-      - "00:08 - Promotion MariaDB via ProxySQL"
-      - "00:09 - Vérification trafic"
-      - "00:10 - Fin cutover"
-  
-  5_validation:
-    duration: "24 heures"
-    tasks:
-      - Monitoring 24/7
-      - MySQL en standby pour rollback
-      - Validation business
-
-rollback_trigger:
-  - "Erreur rate > 1%"
-  - "Latence P95 > 500ms"
-  - "Transactions échouées > 10/min"
-```
-
-**Résultat obtenu :**
-- Downtime effectif : 7 secondes
-- Aucune transaction perdue
-- Performance améliorée de 15% (optimizer MariaDB)
-
-### Scénario 2 : SaaS multi-tenant
-
-**Contexte :** Application SaaS B2B, 200 tenants, base de 2 TB, migrations de schéma fréquentes.
-
-```python
-#!/usr/bin/env python3
-# saas_migration_orchestrator.py
-# Migration tenant par tenant pour SaaS
-
-from typing import List, Dict
-import time
-
-class SaaSMigrationOrchestrator:
-    """Orchestre la migration tenant par tenant"""
-    
-    def __init__(self, tenants: List[Dict], source_config: Dict, target_config: Dict):
-        self.tenants = tenants
-        self.source = source_config
-        self.target = target_config
-        self.migrated = []
-        self.failed = []
-    
-    def migrate_tenant(self, tenant: Dict) -> bool:
-        """Migre un tenant individuel"""
-        tenant_id = tenant['id']
-        database = tenant['database']
-        
-        print(f"\n[Tenant {tenant_id}] Début migration de {database}")
-        
-        try:
-            # 1. Créer la réplication pour ce tenant
-            self._setup_tenant_replication(tenant)
-            
-            # 2. Attendre synchronisation
-            self._wait_tenant_sync(tenant)
-            
-            # 3. Cutover du tenant (< 5s)
-            self._cutover_tenant(tenant)
-            
-            # 4. Vérification
-            if self._verify_tenant(tenant):
-                self.migrated.append(tenant)
-                print(f"[Tenant {tenant_id}] ✓ Migration réussie")
-                return True
-            else:
-                raise Exception("Vérification échouée")
-                
-        except Exception as e:
-            print(f"[Tenant {tenant_id}] ✗ Erreur: {e}")
-            self._rollback_tenant(tenant)
-            self.failed.append({'tenant': tenant, 'error': str(e)})
-            return False
-    
-    def migrate_all(self, batch_size: int = 5, pause_between_batches: int = 60):
-        """Migre tous les tenants par batches"""
-        
-        print("=" * 60)
-        print(f"Migration de {len(self.tenants)} tenants")
-        print(f"Batch size: {batch_size}")
-        print("=" * 60)
-        
-        for i in range(0, len(self.tenants), batch_size):
-            batch = self.tenants[i:i+batch_size]
-            print(f"\n--- Batch {i//batch_size + 1} ({len(batch)} tenants) ---")
-            
-            for tenant in batch:
-                self.migrate_tenant(tenant)
-            
-            # Pause entre batches pour observation
-            if i + batch_size < len(self.tenants):
-                print(f"\nPause de {pause_between_batches}s avant prochain batch...")
-                time.sleep(pause_between_batches)
-        
-        # Rapport final
-        print("\n" + "=" * 60)
-        print("RAPPORT DE MIGRATION")
-        print("=" * 60)
-        print(f"Total tenants: {len(self.tenants)}")
-        print(f"Migrés avec succès: {len(self.migrated)}")
-        print(f"Échecs: {len(self.failed)}")
-        
-        if self.failed:
-            print("\nTenants en échec:")
-            for f in self.failed:
-                print(f"  - {f['tenant']['id']}: {f['error']}")
-    
-    def _setup_tenant_replication(self, tenant: Dict):
-        """Configure la réplication pour un tenant"""
-        # Implémentation spécifique à l'architecture
-        pass
-    
-    def _wait_tenant_sync(self, tenant: Dict):
-        """Attend la synchronisation du tenant"""
-        pass
-    
-    def _cutover_tenant(self, tenant: Dict):
-        """Cutover du tenant vers MariaDB"""
-        pass
-    
-    def _verify_tenant(self, tenant: Dict) -> bool:
-        """Vérifie la migration du tenant"""
-        return True
-    
-    def _rollback_tenant(self, tenant: Dict):
-        """Rollback d'un tenant en cas d'erreur"""
-        pass
-
-
-# Utilisation
-if __name__ == '__main__':
-    tenants = [
-        {'id': 'tenant_001', 'database': 'saas_tenant_001', 'tier': 'enterprise'},
-        {'id': 'tenant_002', 'database': 'saas_tenant_002', 'tier': 'standard'},
-        # ... 200 tenants
-    ]
-    
-    # Trier par importance (enterprise en dernier pour plus de tests)
-    tenants.sort(key=lambda t: 0 if t['tier'] == 'standard' else 1)
-    
-    orchestrator = SaaSMigrationOrchestrator(
-        tenants=tenants,
-        source_config={'host': 'mysql-primary'},
-        target_config={'host': 'mariadb-primary'}
-    )
-    
-    orchestrator.migrate_all(batch_size=10, pause_between_batches=120)
-```
+Le packaging séparé `mariadb-server-galera` introduit en 12.3 (§14.2.5) est par ailleurs à intégrer dans le provisionnement du nouveau cluster, notamment dans les images conteneurisées et les déploiements via operator (§16.5.2).
 
 ---
 
-## Checklist migration zero-downtime
+## 19.8.8 Le rôle de l'application et le déploiement progressif
 
-```markdown
-## CHECKLIST MIGRATION ZERO-DOWNTIME
+Une migration sans interruption n'est jamais purement une affaire d'infrastructure : l'application doit y participer.
 
-### Pré-requis
-- [ ] Architecture compatible (proxy, réplication)
-- [ ] MariaDB 11.8 installé et configuré sur cible
-- [ ] Réplication source → cible fonctionnelle
-- [ ] Tests de performance validés sur cible
-- [ ] Plan de rollback documenté et testé
-- [ ] Équipe formée et disponible
-- [ ] Communication planifiée
+Elle doit d'abord **tolérer la brève fenêtre de bascule** — idéalement par une logique de reconnexion et de réessai des requêtes, à défaut en s'appuyant sur la couche de routage (§19.8.6) qui absorbe l'interruption. Une application qui échoue brutalement à la première erreur de connexion réintroduit une coupure visible que toute l'architecture cherchait à éviter.
 
-### J-1
-- [ ] Vérification finale de la réplication (lag = 0)
-- [ ] Test du script de cutover en staging
-- [ ] Backup complet de la source
-- [ ] Notification aux équipes
-- [ ] Vérification des alertes et monitoring
+Elle doit ensuite, pendant la transition, **se comporter correctement avec la version cible**. Les changements de comportement de la version cible doivent être gérés *avant* la bascule, sous peine de transformer une migration réussie au niveau base en incident applicatif. Pour un passage depuis la 11.8, l'isolation par instantané (§6.9) n'est pas un de ces changements — elle est déjà active des deux côtés (depuis la 11.6.2) ; en revanche, si l'on migre depuis un socle plus ancien ou depuis MySQL, l'application doit désormais capter les erreurs de conflit d'instantané et rejouer la transaction.
 
-### Jour J - Pré-cutover
-- [ ] Réunion kick-off avec toutes les équipes
-- [ ] Vérification santé source et cible
-- [ ] Lag de réplication < 1 seconde
-- [ ] Connexions ProxySQL nominales
-- [ ] War room ouvert
-
-### Cutover
-- [ ] Annonce début cutover
-- [ ] Drainage des connexions source
-- [ ] Activation read_only sur source
-- [ ] Attente synchronisation finale
-- [ ] STOP SLAVE sur cible
-- [ ] Promotion cible via proxy
-- [ ] Vérification trafic routé
-- [ ] Chrono du downtime effectif
-
-### Post-cutover immédiat
-- [ ] Vérification applications connectées
-- [ ] Métriques nominales (latence, erreurs)
-- [ ] Test transactions critiques
-- [ ] Communication "cutover réussi"
-
-### H+1 à H+24
-- [ ] Monitoring renforcé
-- [ ] Source disponible pour rollback
-- [ ] Analyse des logs d'erreur
-- [ ] Validation équipes métier
-
-### Post-migration
-- [ ] Documentation mise à jour
-- [ ] Désactivation source (après période de sécurité)
-- [ ] Retour d'expérience (post-mortem)
-- [ ] Mise à jour des runbooks
-```
+Enfin, le **déploiement progressif** (*canary*) réduit le risque : router d'abord une fraction du trafic vers la 12.3, observer son comportement réel, puis augmenter graduellement la part jusqu'à la bascule complète. Cette montée en charge progressive limite l'exposition en cas de problème non détecté par les tests, et s'articule naturellement avec le plan de contingence (§19.7).
 
 ---
 
-## ✅ Points clés à retenir
+## 19.8.9 Spécificités 12.3 pour les migrations sans interruption
 
-- **Zero-downtime** signifie généralement < 30 secondes d'interruption, pas zéro absolu
-- La **réplication** est le fondement de toute migration zero-downtime vers MariaDB
-- **ProxySQL** ou équivalent est essentiel pour orchestrer le cutover instantanément
-- **pt-online-schema-change** et **gh-ost** permettent les modifications de schéma sans lock
-- Le **split-brain** est le risque majeur à prévenir avec des mécanismes de fencing
-- MariaDB 11.8 nécessite une attention particulière pour les **System-Versioned Tables** et le **TLS par défaut**
-- Toujours avoir un **plan de rollback testé** même pour les migrations zero-downtime
-- Le **monitoring continu** pendant et après la migration est critique
+Plusieurs caractéristiques de la 12.3 conditionnent la conduite d'une migration sans interruption :
 
----
-
-## 🔗 Ressources et références
-
-- [📖 ProxySQL Documentation](https://proxysql.com/documentation/)
-- [📖 pt-online-schema-change](https://docs.percona.com/percona-toolkit/pt-online-schema-change.html)
-- [📖 gh-ost Documentation](https://github.com/github/gh-ost)
-- [📖 MariaDB Replication](https://mariadb.com/kb/en/replication/)
-- [📖 MariaDB Galera Cluster](https://mariadb.com/kb/en/galera-cluster/)
-- [📖 Blue-Green Deployments](https://martinfowler.com/bliki/BlueGreenDeployment.html)
+- **Direction de réplication** (§11.5.4). La réplication 11.8 → 12.3, base de la bascule sans interruption, est la direction sûre (la 12.3 consomme un binlog classique). Le nouveau binlog intégré à InnoDB ne devient une contrainte que pour la réplication inverse servant au rollback (§19.7).
+- **Réplication parallèle entre clusters Galera** (§13.11). Elle accélère la synchronisation d'un nouveau cluster 12.3 depuis un ancien cluster, rendant praticable la migration de cluster à cluster décrite en §19.8.7.
+- **Optimistic ALTER TABLE** (§13.10) et **`innodb_alter_copy_bulk`** (§15.6). Ces optimisations réduisent le retard de réplication induit par les modifications de schéma et accélèrent les reconstructions, deux facteurs qui rétrécissent la fenêtre de bascule.
+- **Packaging Galera séparé** (§14.2.5). À prendre en compte dans le provisionnement de la nouvelle infrastructure, en particulier conteneurisée (§16.3.1) et via operator (§16.5.2).
+- **Comportement transactionnel** (§6.9). L'isolation par instantané est déjà active par défaut en 11.8 comme en 12.3 (depuis la 11.6.2) : un passage `11.8 → 12.3` n'y change rien. La vigilance s'impose surtout si la source précède la 11.6.2 ou provient de MySQL — l'application doit alors gérer les erreurs de conflit *avant* la bascule, faute de quoi la migration réussit côté base mais échoue côté service.
 
 ---
 
-## ➡️ Section suivante
+## Points clés à retenir
 
-**[19.9 Migration des System-Versioned Tables](./09-migration-system-versioned-tables.md)** : Nous approfondirons la migration des tables temporelles vers MariaDB 11.8, incluant le nouveau format de timestamp, les stratégies de conversion, et la préservation de l'historique.
+- « Zéro interruption » désigne en pratique une **bascule de quelques secondes rendue imperceptible**, et non l'absence physique de toute transition ; la couche de routage est ce qui en réduit la perception à néant.
+- Deux problèmes distincts à résoudre : les **changements de schéma en ligne** (Online DDL natif §18.11, ou outils `gh-ost`/`pt-online-schema-change` §16.8.3) et la **bascule de version**, réunis par le proxy.
+- Le motif **expand/contract** découple l'évolution de schéma du déploiement applicatif, permettant à l'ancienne et à la nouvelle version de coexister à chaque étape.
+- La **migration par réplication** (11.8 → 12.3) est le motif de référence : c'est la direction *sûre* de réplication, et c'est la même architecture qui sert le rollback (§19.7).
+- La **séquence de bascule** — lecture seule sur la source, attente du rattrapage, promotion, repointage — concentre toute l'interruption dans une fenêtre de quelques secondes.
+- **MaxScale** avec **Transaction Replay et Connection Migration** (§14.10) rapproche le plus la migration d'une transparence totale ; ProxySQL et HAProxy (§14.9) sont des alternatives.
+- Pour Galera, **les versions majeures ne cohabitent pas dans un même cluster** : un saut 11.8 → 12.3 se fait de cluster à cluster par réplication (§13.11), non par rolling upgrade in-place.
+- L'**application** doit participer : réessais, tolérance à la lecture seule, gestion de l'isolation par instantané (§6.9), et déploiement progressif.
 
-⏭️ [Migration System-Versioned Tables (changement format timestamp 11.8)](/19-migration-compatibilite/09-migration-system-versioned-tables.md)
+> 🔗 **Pour aller plus loin** : §19.4 *Stratégies de mise à jour et upgrade paths*, §19.6 *Tests de compatibilité* (validation avant bascule), §19.7 *Rollback et contingence* (le filet de sécurité indissociable de la bascule), §18.11 *Online Schema Change*, §16.8.3 *gh-ost et pt-online-schema-change*, chapitre 13 *Réplication* (§13.4 GTID, §13.8 failover/switchover, §13.10 Optimistic ALTER, §13.11 réplication parallèle entre clusters Galera), et chapitre 14 *Haute Disponibilité* (§14.4 MaxScale, §14.9 ProxySQL/HAProxy, §14.10 Transaction Replay/Connection Migration).
+
+⏭️ [Migration System-Versioned Tables (format timestamp, héritage 11.8)](/19-migration-compatibilite/09-migration-system-versioned-tables.md)

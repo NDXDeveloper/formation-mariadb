@@ -2,717 +2,96 @@
 
 # 19.2 Migration depuis d'autres SGBD
 
-> **Niveau** : Avancé / Expert  
-> **Durée estimée** : 4-5 heures  
-> **Prérequis** : Expérience avec au moins un SGBD entreprise (Oracle, SQL Server, PostgreSQL), maîtrise des concepts SQL avancés, connaissance de l'architecture MariaDB
-
-## 🎯 Objectifs d'apprentissage
-
-À l'issue de cette section, vous serez capable de :
-
-- Évaluer la complexité d'une migration hétérogène selon le SGBD source
-- Identifier les incompatibilités majeures entre dialectes SQL et planifier les adaptations
-- Choisir les outils appropriés pour chaque type de migration (Oracle, SQL Server, PostgreSQL)
-- Concevoir une stratégie de conversion des procédures stockées et du code PL/SQL ou T-SQL
-- Anticiper les différences de comportement et de performance post-migration
-- Estimer les efforts et délais réalistes pour un projet de migration hétérogène
+> **Chapitre 19 — Migration et Compatibilité** · Section 19.2  
+> Niveau : DBA / Architecte
 
 ---
 
-## Introduction
+## D'une migration homogène à une migration hétérogène
 
-Migrer depuis MySQL vers MariaDB relève de la chirurgie esthétique : même famille, mêmes organes, ajustements cosmétiques. Migrer depuis Oracle, SQL Server ou PostgreSQL vers MariaDB s'apparente davantage à une transplantation : chaque organe doit être adapté, chaque connexion nerveuse recâblée.
+La section précédente traitait la migration depuis MySQL, un cas **homogène** : grâce à l'origine commune des deux moteurs, l'essentiel du travail se résumait à un transfert de données et à la vérification d'un nombre limité d'écarts. Migrer depuis **Oracle, SQL Server ou PostgreSQL** relève d'une tout autre nature. Il s'agit d'une migration **hétérogène**, où le système source et MariaDB ne partagent ni le même dialecte SQL, ni le même langage procédural, ni les mêmes types de données ou comportements transactionnels.
 
-Les migrations hétérogènes représentent des projets d'envergure, souvent motivés par des considérations économiques (coût des licences Oracle ou SQL Server), stratégiques (indépendance vis-à-vis d'un éditeur), ou techniques (modernisation d'une stack legacy). Ces projets s'étendent typiquement sur 6 à 24 mois et mobilisent des équipes pluridisciplinaires : DBA, développeurs, architectes, et souvent des consultants spécialisés.
-
-Cette section établit le cadre général des migrations hétérogènes vers MariaDB. Les sous-sections suivantes détailleront les spécificités de chaque SGBD source.
+La conséquence est qu'une migration hétérogène est un véritable **projet de portage**, et non un simple déplacement de données. L'effort se concentre rarement sur le transfert lui-même — relativement mécanique — mais sur la **conversion du schéma et du code procédural**, qui constitue le cœur de la difficulté.
 
 ---
 
-## Taxonomie des migrations hétérogènes
+## Ce qui rend une migration hétérogène difficile
 
-### Axes de complexité
+Plusieurs sources de divergence se cumulent :
 
-Une migration hétérogène se caractérise selon plusieurs dimensions qui déterminent sa complexité globale :
+- **Le dialecte SQL.** Chaque système a ses particularités syntaxiques : Oracle emploie des identifiants entre guillemets doubles et des types comme `VARCHAR2` ou `NUMBER`, que MariaDB ne reconnaît pas par défaut. SQL Server et PostgreSQL ont leurs propres conventions.
+- **Le langage procédural.** Oracle utilise **PL/SQL**, SQL Server **T-SQL**, PostgreSQL **PL/pgSQL**, tandis que MariaDB repose nativement sur **SQL/PSM** (le langage procédural du standard SQL). Procédures stockées, fonctions, déclencheurs et — côté Oracle — paquets (*packages*) doivent être convertis. C'est le poste de travail le plus lourd.
+- **Les types de données.** Chaque type source doit être transposé vers un équivalent MariaDB (par exemple `NUMBER` vers `DECIMAL` ou un type entier, `VARCHAR2` vers `VARCHAR`).
+- **Les comportements et la sémantique.** Gestion des transactions et de l'isolation, traitement des valeurs `NULL`, sensibilité à la casse des identifiants, séquences, fonctions intégrées : autant de différences qui peuvent modifier le comportement d'une application.
 
-```
-                         COMPLEXITÉ CROISSANTE
-                              ────────────▶
-
-    ┌─────────────────────────────────────────────────────────┐
-    │                      DONNÉES                            │
-    │  Types simples ──▶ Types propriétaires ──▶ LOB/Spatial  │
-    └─────────────────────────────────────────────────────────┘
-    
-    ┌─────────────────────────────────────────────────────────┐
-    │                      SCHÉMA                             │
-    │  Tables basiques ──▶ Contraintes ──▶ Partitionnement    │
-    └─────────────────────────────────────────────────────────┘
-    
-    ┌─────────────────────────────────────────────────────────┐
-    │                   CODE PROCÉDURAL                       │
-    │  Fonctions simples ──▶ Packages ──▶ Logique métier      │
-    └─────────────────────────────────────────────────────────┘
-    
-    ┌─────────────────────────────────────────────────────────┐
-    │                   FONCTIONNALITÉS                       │
-    │  SQL standard ──▶ Extensions ──▶ Features propriétaires │
-    └─────────────────────────────────────────────────────────┘
-```
-
-### Matrice de difficulté par source
-
-| SGBD Source | Difficulté globale | Données | Schéma | Code procédural | SQL |
-|-------------|-------------------|---------|--------|-----------------|-----|
-| **PostgreSQL** | ⭐⭐⭐ Moyenne | 🟡 | 🟢 | 🟡 | 🟡 |
-| **SQL Server** | ⭐⭐⭐ Moyenne | 🟢 | 🟡 | 🔴 | 🟡 |
-| **Oracle** | ⭐⭐⭐⭐ Élevée | 🟡 | 🟡 | 🔴 | 🔴 |
-| **DB2** | ⭐⭐⭐⭐ Élevée | 🟡 | 🟡 | 🔴 | 🟡 |
-| **Sybase** | ⭐⭐⭐ Moyenne | 🟢 | 🟢 | 🟡 | 🟢 |
-
-🟢 Faible effort | 🟡 Effort modéré | 🔴 Effort significatif
+On distingue donc en pratique **deux chantiers** : la conversion du schéma et du code (la partie difficile, spécifique à chaque SGBD), et le transfert des données (plus mécanique, mais à fiabiliser).
 
 ---
 
-## Défis communs aux migrations hétérogènes
+## Les atouts de compatibilité de MariaDB
 
-Quel que soit le SGBD source, certains défis sont universels.
+MariaDB a investi dans des fonctionnalités destinées à réduire l'effort de migration hétérogène.
 
-### 1. Mapping des types de données
+### Le mode Oracle : `SQL_MODE=ORACLE`
 
-Chaque SGBD possède ses propres types de données, parfois sans équivalent direct.
+C'est l'atout phare. Depuis **MariaDB 10.3**, le réglage `SQL_MODE=ORACLE` active une **compatibilité étendue avec le dialecte SQL et le PL/SQL d'Oracle** : syntaxe Oracle, types de données, séquences et constructions procédurales sont reconnus dans une large mesure, ce qui réduit nettement la quantité de code à réécrire manuellement.
 
-| Concept | Oracle | SQL Server | PostgreSQL | MariaDB |
-|---------|--------|------------|------------|---------|
-| **Entier auto** | SEQUENCE | IDENTITY | SERIAL | AUTO_INCREMENT |
-| **GUID** | RAW(16) | UNIQUEIDENTIFIER | UUID | CHAR(36) ou UUID() |
-| **Booléen** | NUMBER(1) | BIT | BOOLEAN | TINYINT(1) ou BOOLEAN |
-| **Texte long** | CLOB | NVARCHAR(MAX) | TEXT | LONGTEXT |
-| **Binaire long** | BLOB | VARBINARY(MAX) | BYTEA | LONGBLOB |
-| **Date seule** | DATE (avec heure!) | DATE | DATE | DATE |
-| **Timestamp** | TIMESTAMP | DATETIME2 | TIMESTAMP | DATETIME/TIMESTAMP |
-| **Intervalle** | INTERVAL | - | INTERVAL | - (calculé) |
-| **JSON** | JSON (12c+) | NVARCHAR + JSON | JSONB | JSON |
-| **Array** | VARRAY/Nested Table | - | ARRAY[] | JSON (simulation) |
-| **Géospatial** | SDO_GEOMETRY | GEOMETRY | PostGIS | GEOMETRY |
-
-⚠️ **Attention aux DATE Oracle** : En Oracle, le type DATE inclut l'heure (jusqu'à la seconde). En MariaDB, DATE est une date pure. Utilisez DATETIME pour une conversion correcte.
-
-### 2. Différences de comportement SQL
-
-Des requêtes syntaxiquement valides peuvent produire des résultats différents selon le SGBD.
-
-**Gestion des NULL dans les comparaisons :**
+Ce mode est **optionnel** et s'active simplement, pour la session courante, globalement, ou de façon permanente dans un fichier de configuration :
 
 ```sql
--- Oracle : NULL = NULL → NULL (ni vrai ni faux)
--- Mais dans les index UNIQUE, deux NULL sont distincts
-
--- SQL Server : Similaire, mais configurable via ANSI_NULLS
-
--- PostgreSQL : NULL = NULL → NULL
--- NULLS DISTINCT/NULLS NOT DISTINCT pour les contraintes UNIQUE (v15+)
-
--- MariaDB : NULL = NULL → NULL
--- Deux NULL sont distincts dans les contraintes UNIQUE
+SET SESSION sql_mode = 'ORACLE';
 ```
 
-**Division par zéro :**
+Deux nuances importantes : d'une part, le mode Oracle ne couvre pas **toutes** les fonctionnalités d'Oracle — certaines constructions doivent encore être converties vers le SQL natif de MariaDB ; d'autre part, MariaDB **enrichit régulièrement** cette compatibilité au fil des versions. La série **12.x** y a apporté de nouveaux éléments (fonctions de conversion, syntaxes de jointure et constructions procédurales supplémentaires), détaillés dans la sous-section 19.2.1.
 
-```sql
--- Oracle : Erreur ORA-01476
-SELECT 10/0 FROM dual;
+### Des modes pour SQL Server et PostgreSQL
 
--- SQL Server : Erreur par défaut, NULL si ANSI_WARNINGS OFF
-SELECT 10/0;
+MariaDB propose également des valeurs de `sql_mode` pour **SQL Server** et **PostgreSQL** (ainsi que pour d'anciennes versions de MySQL). Il faut toutefois en mesurer la portée : ces modes sont **nettement plus limités** que le mode Oracle. Ils agissent surtout sur la syntaxe et le traitement des identifiants, et n'offrent pas une émulation de dialecte aussi poussée. La migration depuis SQL Server ou PostgreSQL repose donc davantage sur l'outillage de conversion et la réécriture manuelle.
 
--- PostgreSQL : Erreur "division by zero"
-SELECT 10/0;
+À noter : le PL/pgSQL de PostgreSQL étant proche du PL/SQL d'Oracle, il peut être avantageux d'essayer une migration PostgreSQL avec `SQL_MODE=ORACLE` activé.
 
--- MariaDB : Retourne NULL (mode SQL par défaut)
--- Avec ERROR_FOR_DIVISION_BY_ZERO : warning ou erreur selon STRICT_*
-SELECT 10/0;  -- Retourne NULL
-```
+### Le moteur CONNECT pour le transfert de données
 
-**Concaténation de chaînes :**
-
-```sql
--- Oracle : ||
-SELECT 'Hello' || ' ' || 'World' FROM dual;
-
--- SQL Server : +
-SELECT 'Hello' + ' ' + 'World';
-
--- PostgreSQL : || ou CONCAT()
-SELECT 'Hello' || ' ' || 'World';
-
--- MariaDB : CONCAT() ou || (si PIPES_AS_CONCAT activé)
-SELECT CONCAT('Hello', ' ', 'World');
--- Ou avec sql_mode incluant PIPES_AS_CONCAT :
-SELECT 'Hello' || ' ' || 'World';
-```
-
-### 3. Conversion du code procédural
-
-C'est généralement le défi le plus chronophage des migrations hétérogènes.
-
-**Comparaison des langages procéduraux :**
-
-| Aspect | PL/SQL (Oracle) | T-SQL (SQL Server) | PL/pgSQL | MariaDB SQL/PSM |
-|--------|-----------------|--------------------|-----------| ----------------|
-| **Packages** | ✅ Natif | ❌ Non | ❌ Non | ❌ Non |
-| **Curseurs** | Riches | Basiques | Riches | Basiques |
-| **Exceptions** | EXCEPTION block | TRY...CATCH | EXCEPTION block | HANDLER |
-| **Collections** | Nombreuses | TABLE variables | ARRAY | ❌ Limitées |
-| **Bulk operations** | FORALL, BULK COLLECT | Table-valued params | UNNEST | ❌ Boucles |
-| **Triggers INSTEAD OF** | ✅ | ✅ | ✅ | ❌ |
-| **Autonomous transactions** | ✅ PRAGMA | ✅ | ❌ | ❌ |
-
-💡 **Conseil** : MariaDB 10.3+ supporte un mode de compatibilité PL/SQL (sql_mode='ORACLE') qui facilite la migration du code Oracle simple, mais les packages et fonctionnalités avancées nécessitent une réécriture.
-
-### 4. Fonctionnalités sans équivalent direct
-
-Certaines fonctionnalités n'existent tout simplement pas dans MariaDB et nécessitent des approches alternatives.
-
-| Fonctionnalité source | Alternative MariaDB |
-|-----------------------|---------------------|
-| **Oracle : Materialized Views** | Vues + tables + triggers/events |
-| **Oracle : Database Links** | CONNECT engine ou FEDERATED |
-| **Oracle : Flashback** | System-Versioned Tables |
-| **Oracle : Advanced Queuing** | Kafka/RabbitMQ externe |
-| **SQL Server : Always Encrypted** | Encryption at rest + applicatif |
-| **SQL Server : Change Tracking** | Triggers + table d'audit |
-| **SQL Server : In-Memory OLTP** | Memory engine (limité) |
-| **PostgreSQL : LISTEN/NOTIFY** | Polling ou message queue externe |
-| **PostgreSQL : Extensions** | Plugins MariaDB ou alternatives |
-| **PostgreSQL : Row-Level Security** | Vues avec filtrage |
+Pour le transfert des données proprement dit, le **moteur de stockage CONNECT** (voir §7.10.4) offre une voie élégante. Il permet de créer dans MariaDB des tables qui pointent vers des tables **externes** via **ODBC ou JDBC**, puis de rapatrier les données directement par une instruction `INSERT ... SELECT` vers une table native InnoDB. On peut ainsi lire une source Oracle, SQL Server ou PostgreSQL et alimenter MariaDB sans passer par des fichiers intermédiaires.
 
 ---
 
-## Méthodologie de migration hétérogène
+## Outils et ressources
 
-### Phase 1 : Évaluation et découverte (2-4 semaines)
+Au-delà des fonctionnalités intégrées, plusieurs ressources facilitent la migration :
 
-L'évaluation initiale détermine la faisabilité et le coût du projet.
+- **La documentation officielle de MariaDB** propose des guides dédiés à la migration depuis Oracle, SQL Server et PostgreSQL : ce sont les points de départ recommandés.
+- **Les outils de conversion** automatisent une partie du travail de schéma et de code : convertisseurs de DDL, de vues, de procédures et de scripts (par exemple la famille d'outils SQLines), ou encore l'assistant de migration de MySQL Workbench utilisé avec des pilotes ODBC.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    PHASE D'ÉVALUATION                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. INVENTAIRE TECHNIQUE                                    │
-│     • Schémas, tables, vues, index                          │
-│     • Procédures, fonctions, packages, triggers             │
-│     • Taille des données et volumétrie                      │
-│     • Dépendances inter-schémas                             │
-│                                                             │
-│  2. ANALYSE DE COMPATIBILITÉ                                │
-│     • Types de données à mapper                             │
-│     • Fonctions SQL propriétaires utilisées                 │
-│     • Features sans équivalent                              │
-│     • Code procédural à convertir                           │
-│                                                             │
-│  3. ESTIMATION DES EFFORTS                                  │
-│     • Conversion automatisable vs manuelle                  │
-│     • Tests de régression requis                            │
-│     • Formation des équipes                                 │
-│     • Refactoring applicatif                                │
-│                                                             │
-│  4. DÉCISION GO/NO-GO                                       │
-│     • ROI de la migration                                   │
-│     • Risques identifiés                                    │
-│     • Planning et ressources                                │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Script d'évaluation générique :**
-
-```sql
--- Requête adaptable à chaque SGBD source
--- Inventaire des objets à migrer
-
--- Pour Oracle :
-SELECT object_type, COUNT(*) as count
-FROM all_objects
-WHERE owner = 'MON_SCHEMA'
-GROUP BY object_type
-ORDER BY count DESC;
-
--- Pour SQL Server :
-SELECT type_desc, COUNT(*) as count
-FROM sys.objects
-WHERE schema_id = SCHEMA_ID('dbo')
-GROUP BY type_desc
-ORDER BY count DESC;
-
--- Pour PostgreSQL :
-SELECT 
-    CASE 
-        WHEN relkind = 'r' THEN 'TABLE'
-        WHEN relkind = 'v' THEN 'VIEW'
-        WHEN relkind = 'i' THEN 'INDEX'
-        WHEN relkind = 'S' THEN 'SEQUENCE'
-    END as object_type,
-    COUNT(*) as count
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public'
-GROUP BY relkind;
-```
-
-### Phase 2 : Conception et prototypage (4-8 semaines)
-
-Cette phase définit l'architecture cible et valide les choix techniques.
-
-**Livrables clés :**
-
-1. **Document de mapping des types** : Correspondance exhaustive source → MariaDB
-2. **Catalogue des conversions SQL** : Fonctions propriétaires et leurs équivalents
-3. **Stratégie de conversion du code** : Automatisée vs manuelle, outils utilisés
-4. **Architecture cible** : Schéma MariaDB, partitionnement, indexation
-5. **Prototype fonctionnel** : Migration d'un sous-ensemble représentatif
-
-**Exemple de document de mapping (Oracle → MariaDB) :**
-
-```yaml
-# mapping_types_oracle_mariadb.yaml
-
-numeric_types:
-  NUMBER:
-    default: DECIMAL(38,10)
-    NUMBER(p): DECIMAL(p,0)
-    NUMBER(p,s): DECIMAL(p,s)
-    NUMBER(1): TINYINT  # Pour booléens
-  BINARY_FLOAT: FLOAT
-  BINARY_DOUBLE: DOUBLE
-
-string_types:
-  VARCHAR2(n): VARCHAR(n)
-  CHAR(n): CHAR(n)
-  NVARCHAR2(n): VARCHAR(n) CHARACTER SET utf8mb4
-  CLOB: LONGTEXT
-
-date_types:
-  DATE: DATETIME  # Attention : DATE Oracle inclut l'heure !
-  TIMESTAMP: DATETIME(6)
-  TIMESTAMP WITH TIME ZONE: DATETIME(6)  # + gestion TZ applicative
-  INTERVAL YEAR TO MONTH: VARCHAR(50)  # Conversion manuelle
-  INTERVAL DAY TO SECOND: VARCHAR(50)  # Conversion manuelle
-
-lob_types:
-  BLOB: LONGBLOB
-  CLOB: LONGTEXT
-  NCLOB: LONGTEXT CHARACTER SET utf8mb4
-  BFILE: LONGBLOB  # Contenu externalisé à migrer
-
-special_types:
-  RAW(16): BINARY(16)  # Pour UUID
-  ROWID: Pas d'équivalent direct
-  XMLType: LONGTEXT  # Ou JSON avec conversion
-  SDO_GEOMETRY: GEOMETRY  # Avec conversion format
-```
-
-### Phase 3 : Développement et conversion (8-16 semaines)
-
-La phase de développement transforme le schéma, le code et prépare la migration des données.
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  CONVERSION      │     │  CONVERSION      │     │  CONVERSION      │
-│  SCHÉMA          │────▶│  CODE            │────▶│  DONNÉES         │
-│                  │     │                  │     │                  │
-│ • DDL            │     │ • Procédures     │     │ • ETL pipeline   │
-│ • Constraints    │     │ • Fonctions      │     │ • Validation     │
-│ • Index          │     │ • Triggers       │     │ • Checksums      │
-│ • Partitions     │     │ • Views          │     │                  │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-         │                        │                        │
-         └────────────────────────┼────────────────────────┘
-                                  │
-                                  ▼
-                    ┌──────────────────────────┐
-                    │   TESTS DE RÉGRESSION    │
-                    │                          │
-                    │ • Fonctionnels           │
-                    │ • Performance            │
-                    │ • Intégration            │
-                    └──────────────────────────┘
-```
-
-### Phase 4 : Tests et validation (4-8 semaines)
-
-Les tests sont critiques pour une migration hétérogène. Le comportement peut différer subtilement même avec une conversion "réussie".
-
-**Niveaux de tests :**
-
-| Niveau | Objectif | Méthode |
-|--------|----------|---------|
-| **Unitaire** | Chaque objet converti | Jeux de tests par procédure |
-| **Intégration** | Interactions entre objets | Scénarios métier |
-| **Données** | Intégrité post-migration | Checksums, comptages, échantillons |
-| **Performance** | SLA respectés | Benchmarks, profiling |
-| **Charge** | Comportement sous stress | Tests de charge réalistes |
-| **Régression** | Pas de régression fonctionnelle | Suite de tests applicatifs |
-
-### Phase 5 : Migration et bascule (1-4 semaines)
-
-La migration effective suit généralement ce schéma :
-
-```
-J-7     J-3     J-1     J-Day   J+1     J+7     J+30
- │       │       │        │       │       │        │
- ▼       ▼       ▼        ▼       ▼       ▼        ▼
-┌───┐   ┌───┐   ┌───┐   ┌────┐  ┌───┐   ┌───┐   ┌────┐
-│Dry│   │Dry│   │Gel │  │CUT-│  │Mon│   │Sta│   │Déc-│
-│run│   │run│   │Code│  │OVER│  │ito│   │bil│   │omm.│
-│ 1 │   │ 2 │   │    │  │    │  │r  │   │   │   │    │
-└───┘   └───┘   └───┘   └────┘  └───┘   └───┘   └────┘
-```
+Ces outils accélèrent la conversion mais ne la garantissent pas à 100 % : le mode Oracle comme les convertisseurs ne couvrent pas l'intégralité des fonctionnalités sources. Une **relecture et une validation** restent indispensables.
 
 ---
 
-## Outils de migration hétérogène
+## Pourquoi migrer vers MariaDB
 
-### Outils commerciaux
-
-| Outil | Éditeur | Sources supportées | Points forts |
-|-------|---------|-------------------|--------------|
-| **AWS SCT** | Amazon | Oracle, SQL Server, PostgreSQL, DB2 | Gratuit, intégré AWS DMS |
-| **SQLines** | SQLines | Oracle, SQL Server, DB2, Sybase | Conversion SQL automatisée |
-| **Ispirer MnMTK** | Ispirer | 20+ SGBD | Très complet, conversion code |
-| **dbForge Studio** | Devart | Multi-SGBD | IDE complet, comparaison |
-| **Full Convert** | Spectral Core | 40+ sources | Simple, rapide |
-
-### Outils open source
-
-| Outil | Spécialité | Licence |
-|-------|------------|---------|
-| **ora2pg** | Oracle → PostgreSQL/MariaDB | GPL |
-| **pgloader** | Multi-source → PostgreSQL/MariaDB | PostgreSQL |
-| **SQLFairy** | Conversion DDL multi-SGBD | GPL |
-| **Apache DolphinScheduler** | ETL/orchestration | Apache 2.0 |
-| **Pentaho Data Integration** | ETL visuel | Apache 2.0 |
-
-### AWS Database Migration Service (DMS)
-
-AWS DMS est particulièrement efficace pour les migrations vers MariaDB, avec support natif de nombreuses sources.
-
-```
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│   Source DB     │         │   AWS DMS       │         │   MariaDB       │
-│                 │         │                 │         │                 │
-│ • Oracle        │────────▶│ • Full Load     │────────▶│ • RDS MariaDB   │
-│ • SQL Server    │         │ • CDC (ongoing) │         │ • EC2 MariaDB   │
-│ • PostgreSQL    │         │ • Validation    │         │ • On-premise    │
-│ • MySQL         │         │                 │         │                 │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
-```
-
-**Avantages AWS DMS :**
-- Migration continue avec Change Data Capture (CDC)
-- Validation automatique des données
-- Support des transformations basiques
-- Intégration avec AWS Schema Conversion Tool (SCT)
-
-**Limitations :**
-- Conversion du code procédural limitée (utiliser SCT séparément)
-- Certains types de données nécessitent des transformations manuelles
-- Coût potentiellement élevé pour gros volumes
+Les motivations varient selon le système d'origine, mais certaines reviennent fréquemment — particulièrement dans le cas d'Oracle, où la **réduction des coûts et la simplification du modèle de licence** constituent souvent le premier moteur de décision. S'y ajoutent la **flexibilité de déploiement** (du matériel dédié au cloud, en conteneurs ou sur Kubernetes), la **gouvernance ouverte** et les performances. Ces éléments sont présentés ici à titre de contexte ; le choix relève toujours d'une analyse propre à chaque organisation.
 
 ---
 
-## Considérations spécifiques MariaDB 11.8 🆕
+## Démarche générale
 
-MariaDB 11.8 LTS apporte des fonctionnalités facilitant certaines migrations hétérogènes.
+Une migration hétérogène suit une trame structurée, précisée pour chaque SGBD dans les sous-sections suivantes :
 
-### MariaDB Vector pour les migrations de bases analytiques
-
-Si votre base source contient des données vectorielles ou si vous prévoyez d'ajouter des capacités de recherche sémantique, MariaDB 11.8 offre désormais le type VECTOR natif.
-
-```sql
--- Création d'une table avec colonne vectorielle
-CREATE TABLE documents (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255),
-    content TEXT,
-    embedding VECTOR(1536) NOT NULL,  -- Dimension OpenAI ada-002
-    VECTOR INDEX idx_embedding (embedding) 
-        DISTANCE_FUNCTION=COSINE
-);
-
--- Recherche par similarité
-SELECT title, VEC_DISTANCE_COSINE(embedding, @query_vector) AS distance
-FROM documents
-ORDER BY distance
-LIMIT 10;
-```
-
-### utf8mb4 par défaut : simplification des migrations
-
-Avec utf8mb4 comme charset par défaut, les migrations depuis des sources Unicode (PostgreSQL, Oracle AL32UTF8, SQL Server avec NVARCHAR) sont simplifiées.
-
-```sql
--- MariaDB 11.8 : Plus besoin de spécifier explicitement
-CREATE TABLE imported_data (
-    name VARCHAR(255),  -- Automatiquement utf8mb4
-    description TEXT    -- Automatiquement utf8mb4
-);
-
--- Vérification
-SHOW CREATE TABLE imported_data\G
-```
-
-### Collations UCA 14.0.0 : meilleure compatibilité Unicode
-
-Les nouvelles collations `utf8mb4_uca1400_*` offrent un tri Unicode plus conforme aux standards actuels, facilitant la compatibilité avec les comportements de tri d'Oracle et PostgreSQL.
-
-```sql
--- Utilisation des nouvelles collations
-CREATE TABLE contacts (
-    name VARCHAR(100) COLLATE utf8mb4_uca1400_ai_ci
-);
-
--- Comparaison des tris
-SELECT name FROM contacts ORDER BY name COLLATE utf8mb4_uca1400_as_cs;
-```
+1. **Audit** : inventaire du schéma, du code procédural, des types utilisés et des fonctionnalités propres au système source.
+2. **Conversion du schéma** : transposition des définitions d'objets et des types, en s'appuyant sur le `sql_mode` adapté et les outils de conversion.
+3. **Conversion du code procédural** : portage des procédures, fonctions et déclencheurs (PL/SQL, T-SQL ou PL/pgSQL) vers le mode Oracle ou le SQL/PSM natif — le poste le plus exigeant.
+4. **Transfert des données** : via le moteur CONNECT, un outil d'ETL ou un export/import.
+5. **Adaptation applicative et tests** : validation fonctionnelle et de non-régression (voir 19.6).
+6. **Bascule et plan de repli** : exécution de la migration, avec retour arrière (voir 19.7) et, le cas échéant, sans interruption (voir 19.8).
 
 ---
 
-## Estimation des efforts
+## Organisation de la section
 
-### Facteurs de complexité
+Les sous-sections suivantes traitent chaque système d'origine selon son niveau de compatibilité et ses spécificités :
 
-L'effort de migration dépend de nombreux facteurs. Voici une grille d'estimation :
+- **19.2.1 — Depuis Oracle** : le cas le mieux pris en charge, grâce à `SQL_MODE=ORACLE` et aux apports de la série 12.x (fonctions `TO_DATE`/`TO_NUMBER`/`TRUNC`, syntaxe de jointure externe `( + )`, tableaux associatifs, `SYS_REFCURSOR`, `SET PATH`).
+- **19.2.2 — Depuis SQL Server** : conversion du T-SQL, mode dédié plus limité, et donc une part de réécriture manuelle plus importante.
+- **19.2.3 — Depuis PostgreSQL** : portage du PL/pgSQL, recours au moteur CONNECT, et possibilité d'exploiter le mode Oracle en raison de la proximité des langages procéduraux.
 
-| Facteur | Impact faible | Impact moyen | Impact élevé |
-|---------|---------------|--------------|--------------|
-| **Volume de données** | < 100 GB | 100 GB - 1 TB | > 1 TB |
-| **Nombre de tables** | < 100 | 100 - 500 | > 500 |
-| **Procédures stockées** | < 20 | 20 - 100 | > 100 |
-| **Complexité SQL** | SQL standard | Extensions modérées | Heavily proprietary |
-| **Intégrations** | Standalone | Quelques interfaces | Écosystème complexe |
-| **Criticité** | Dev/Test | Production non critique | Mission critical |
-
-### Formule d'estimation (ordre de grandeur)
-
-```
-Effort (jours-homme) = 
-    Base × Facteur_Source × Facteur_Volume × Facteur_Code × Facteur_Risque
-
-Où :
-- Base = 20 jours (minimum incompressible)
-- Facteur_Source : Oracle=2.5, SQL Server=1.8, PostgreSQL=1.3
-- Facteur_Volume : <100GB=1, 100GB-1TB=1.5, >1TB=2.5
-- Facteur_Code : <20 procédures=1, 20-100=2, >100=3
-- Facteur_Risque : Dev=1, Prod non critique=1.5, Mission critical=2
-```
-
-**Exemple : Migration Oracle 500GB, 80 procédures, production critique**
-
-```
-Effort = 20 × 2.5 × 1.5 × 2 × 2 = 300 jours-homme
-Soit environ 15 mois avec une équipe de 2 personnes
-```
-
----
-
-## Risques et mitigations
-
-### Risques techniques
-
-| Risque | Probabilité | Impact | Mitigation |
-|--------|-------------|--------|------------|
-| Incompatibilité SQL non détectée | Moyenne | Élevé | Tests exhaustifs, sandbox |
-| Dégradation performance | Élevée | Moyen | Benchmarks précoces, tuning |
-| Perte de données migration | Faible | Critique | Checksums, validation |
-| Code procédural incorrect | Moyenne | Élevé | Tests unitaires, revue code |
-| Intégrations cassées | Moyenne | Élevé | Tests d'intégration E2E |
-
-### Risques projet
-
-| Risque | Probabilité | Impact | Mitigation |
-|--------|-------------|--------|------------|
-| Dépassement délais | Élevée | Moyen | Buffer 30%, jalons intermédiaires |
-| Dépassement budget | Moyenne | Moyen | Estimation conservatrice, suivi |
-| Résistance au changement | Moyenne | Moyen | Communication, formation |
-| Perte de compétences | Faible | Élevé | Documentation, knowledge transfer |
-| Rollback impossible | Faible | Critique | Tests rollback, période parallèle |
-
----
-
-## Patterns d'architecture post-migration
-
-### Pattern 1 : Migration complète (Rip and Replace)
-
-```
-AVANT                           APRÈS
-┌─────────────────┐            ┌─────────────────┐
-│   Oracle/       │            │    MariaDB      │
-│   SQL Server    │  ────────▶ │                 │
-│                 │            │                 │
-└─────────────────┘            └─────────────────┘
-        │                              │
-        ▼                              ▼
-┌─────────────────┐            ┌─────────────────┐
-│  Applications   │            │  Applications   │
-│  (modifiées)    │            │  (adaptées)     │
-└─────────────────┘            └─────────────────┘
-```
-
-**Avantages** : Architecture simple, pas de dette technique  
-**Inconvénients** : Risque élevé, big bang
-
-### Pattern 2 : Strangler Fig (Migration progressive)
-
-```
-PHASE 1                    PHASE 2                    PHASE 3
-┌─────────┐               ┌─────────┐               ┌─────────┐
-│ Source  │               │ Source  │               │ MariaDB │
-│  100%   │               │  40%    │               │  100%   │
-└─────────┘               └────┬────┘               └─────────┘
-                               │                         
-                          ┌────┴────┐                    
-                          │ MariaDB │                    
-                          │  60%    │                    
-                          └─────────┘                    
-
-Nouvelles fonctionnalités sur MariaDB
-Migration progressive des existantes
-```
-
-**Avantages** : Risque dilué, rollback partiel possible  
-**Inconvénients** : Complexité opérationnelle, double maintenance
-
-### Pattern 3 : Coexistence avec synchronisation
-
-```
-┌─────────────────┐         ┌─────────────────┐
-│   Source DB     │◀───────▶│    MariaDB      │
-│   (Legacy)      │  Sync   │   (Moderne)     │
-└────────┬────────┘ bidirec └────────┬────────┘
-         │          tionnel          │
-         ▼                           ▼
-┌─────────────────┐         ┌─────────────────┐
-│  Apps Legacy    │         │  Apps Modernes  │
-└─────────────────┘         └─────────────────┘
-```
-
-**Avantages** : Transition douce, rollback facile  
-**Inconvénients** : Synchronisation complexe, coût double infra
-
----
-
-## Scénarios de migration réels
-
-### Scénario 1 : Éditeur SaaS — Oracle → MariaDB
-
-**Contexte :**
-- Application ERP SaaS multi-tenant
-- Oracle 19c, 2 TB de données, 450 tables
-- 280 procédures PL/SQL, 50 packages
-- Motivation : réduction coûts licences (500k€/an → 0)
-
-**Approche :**
-1. Audit avec ora2pg : 4 semaines
-2. Conversion schéma : 3 semaines
-3. Conversion code PL/SQL : 16 semaines (mode ORACLE MariaDB + réécriture)
-4. Migration données avec AWS DMS : 2 semaines
-5. Tests : 8 semaines
-6. Bascule progressive par tenant : 4 semaines
-
-**Résultat :** 
-- Durée totale : 14 mois
-- Effort : 420 jours-homme
-- ROI atteint en 18 mois
-
-### Scénario 2 : Banque régionale — SQL Server → MariaDB Galera
-
-**Contexte :**
-- Application core banking
-- SQL Server 2019, 800 GB, 320 tables
-- 150 procédures T-SQL, 40 triggers
-- Exigence : HA multi-datacenter
-
-**Approche :**
-1. Audit et POC : 6 semaines
-2. Architecture Galera 3 nœuds : 2 semaines
-3. Conversion avec SQLines : 8 semaines
-4. Adaptation T-SQL manuelle : 10 semaines
-5. Migration avec réplication SQL Server → MariaDB : 3 semaines
-6. Validation réglementaire : 4 semaines
-7. Bascule avec fallback : 1 semaine
-
-**Résultat :**
-- Durée totale : 10 mois
-- Disponibilité améliorée (99.99% vs 99.9%)
-- Coût TCO réduit de 40%
-
-### Scénario 3 : Startup data — PostgreSQL → MariaDB + Vector 🆕
-
-**Contexte :**
-- Application de recommandation e-commerce
-- PostgreSQL 15 + pgvector
-- 50 GB données, 5M embeddings vectoriels
-- Motivation : unification stack sur MariaDB existant
-
-**Approche :**
-1. Évaluation compatibilité : 2 semaines
-2. Migration schéma avec pgloader : 1 semaine
-3. Adaptation requêtes pgvector → MariaDB Vector : 3 semaines
-4. Migration données : 1 semaine
-5. Tuning index HNSW : 2 semaines
-6. Tests performance : 2 semaines
-
-**Résultat :**
-- Durée totale : 3 mois
-- Performance recherche vectorielle : comparable
-- Simplification opérationnelle (1 SGBD au lieu de 2)
-
----
-
-## ✅ Points clés à retenir
-
-- Les migrations hétérogènes sont des **projets d'envergure** nécessitant 6-24 mois selon la complexité
-- Le **mapping des types de données** et la **conversion du code procédural** représentent les défis majeurs
-- Chaque SGBD source a ses spécificités : **Oracle** (PL/SQL, packages), **SQL Server** (T-SQL), **PostgreSQL** (extensions, PL/pgSQL)
-- L'**évaluation préalable** est critique : inventaire exhaustif, estimation réaliste, décision go/no-go éclairée
-- Les **outils automatisés** (ora2pg, AWS SCT/DMS, pgloader) accélèrent significativement les migrations
-- MariaDB 11.8 LTS facilite certaines migrations avec **utf8mb4 par défaut**, **UCA 14.0.0**, et **MariaDB Vector** 🆕
-- Prévoyez toujours une **période de coexistence** et un **plan de rollback testé**
-- Le **ROI** des migrations hétérogènes se calcule sur 3-5 ans (économies licences, maintenance)
-
----
-
-## 🔗 Ressources et références
-
-- [📖 MariaDB KB : Migrating from Other Database Systems](https://mariadb.com/kb/en/migrating-to-mariadb/)
-- [📖 ora2pg Documentation](https://ora2pg.darold.net/documentation.html)
-- [📖 pgloader Documentation](https://pgloader.io/)
-- [📖 AWS Database Migration Service Guide](https://docs.aws.amazon.com/dms/)
-- [📖 AWS Schema Conversion Tool](https://docs.aws.amazon.com/SchemaConversionTool/)
-- [🔧 SQLines Tools](https://www.sqlines.com/)
-- [📖 MariaDB Oracle Compatibility Mode](https://mariadb.com/kb/en/sql_modeoracle/)
-
----
-
-## 📚 Sections suivantes
-
-Ce chapitre se poursuit avec des guides détaillés pour chaque SGBD source :
-
-### 19.2.1 Depuis Oracle
-Conversion PL/SQL, mapping des types Oracle, gestion des packages, ora2pg en détail, mode de compatibilité Oracle MariaDB.
-
-### 19.2.2 Depuis SQL Server
-Conversion T-SQL, types SQL Server spécifiques, Always On vs Galera, intégration écosystème Microsoft.
-
-### 19.2.3 Depuis PostgreSQL
-Différences PostgreSQL/MariaDB, conversion PL/pgSQL, pgloader, migration des extensions, PostGIS vers MariaDB Spatial.
-
----
-
-## ➡️ Section suivante
-
-**[19.2.1 Depuis Oracle](./02.1-depuis-oracle.md)** : Nous détaillerons la migration depuis Oracle, le cas le plus complexe mais aussi le plus fréquent des migrations hétérogènes. Vous découvrirez comment convertir du PL/SQL, gérer les packages, et exploiter le mode de compatibilité Oracle de MariaDB.
-
-⏭️ [Depuis Oracle](/19-migration-compatibilite/02.1-depuis-oracle.md)
+⏭️ [Depuis Oracle (TO_DATE/TO_NUMBER/TRUNC, ( + ), tableaux associatifs, SYS_REFCURSOR, SET PATH)](/19-migration-compatibilite/02.1-depuis-oracle.md)

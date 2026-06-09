@@ -12,7 +12,7 @@
 
 Cette dixième et dernière partie de la formation aborde les **décisions les plus stratégiques et les plus impactantes** dans la vie d'un système d'information : la migration vers MariaDB, les choix de compatibilité, et la conception d'architectures résilientes et évolutives. Ces décisions ne se prennent pas à la légère — elles engagent l'entreprise pour des années et peuvent représenter des investissements de dizaines de milliers à plusieurs millions d'euros.
 
-La migration d'une base de données n'est jamais "juste technique". Elle implique des **enjeux business, financiers, organisationnels, et de compétences**. Migrer depuis Oracle peut économiser $100k-$1M/an en licensing, mais requiert expertise MariaDB, refactorisation applicative potentielle, et gestion du risque. Migrer depuis MySQL 5.7 EOL vers MariaDB 11.8 LTS offre 3 ans de support additionnel et des fonctionnalités révolutionnaires (Vector, TLS par défaut), mais nécessite validation de compatibilité et tests exhaustifs.
+La migration d'une base de données n'est jamais "juste technique". Elle implique des **enjeux business, financiers, organisationnels, et de compétences**. Migrer depuis Oracle peut économiser $100k-$1M/an en licensing, mais requiert expertise MariaDB, refactorisation applicative potentielle, et gestion du risque. Migrer depuis MySQL 5.7 EOL vers MariaDB 12.3 LTS offre 3 ans de support (jusqu'en 2029) et des fonctionnalités modernes (recherche vectorielle, isolation par instantané, TLS automatique), mais nécessite validation de compatibilité et tests exhaustifs.
 
 Les choix architecturaux sont tout aussi critiques. Une architecture **monolithique** est simple mais ne scale pas. Une architecture **microservices** scale horizontalement mais introduit complexité distribuée. Une architecture **multi-tenant** mutualise coûts mais exige isolation rigoureuse. Une architecture **event-driven** découple les systèmes mais complexifie debugging. Il n'y a pas de "meilleure architecture" — seulement des **compromis éclairés** basés sur contraintes spécifiques, charge anticipée, compétences d'équipe, et évolution future.
 
@@ -25,13 +25,13 @@ Ces compétences distinguent les **tech leads et architectes confirmés** des pr
 ## 📚 Les deux modules de cette partie
 
 ### Module 19 : Migration et Compatibilité
-**9 sections | Durée : ~2 jours**
+**10 sections | Durée : ~2 jours**
 
 Ce module couvre l'ensemble du spectre de la migration vers MariaDB et de la compatibilité multi-SGBD :
 
 #### 🔄 Migration depuis MySQL
 - **Évaluation de compatibilité** : MySQL vs MariaDB 🔄
-  - Versions MySQL (5.7, 8.0, 8.4) vs MariaDB 11.8
+  - Versions MySQL (5.7, 8.0, 8.4) vs MariaDB 12.3
   - Features communes et divergences
   - Deprecated features et alternatives
 - **Points d'attention critiques** : Incompatibilités potentielles 🔄
@@ -63,10 +63,10 @@ Ce module couvre l'ensemble du spectre de la migration vers MariaDB et de la com
   - Full-text search differences
 
 #### 📊 Gestion des versions : LTS vs Rolling
-- **Stratégie LTS (11.4, 11.8)** : Support 3 ans, stabilité 🔄
+- **Stratégie LTS (11.8, 12.3)** : Support 3 ans, stabilité 🔄
   - Use cases : Production critique, entreprises
   - Cycle de vie : Maintenance prédictible
-  - Planning upgrades : 3 ans entre LTS
+  - Planning upgrades : saut de LTS en LTS (ex. 11.8 → 12.3)
 - **Stratégie Rolling** : Nouvelles features trimestrielles 🔄
   - Use cases : Innovation rapide, startups
   - Trade-offs : Tests plus fréquents
@@ -109,10 +109,17 @@ Ce module couvre l'ensemble du spectre de la migration vers MariaDB et de la com
 - **Database proxies** : ProxySQL, MaxScale
 
 #### 🆕 Migration System-Versioned Tables
-- **Changement format timestamp 11.8** : Y2038 extension 🔄
-  - Impact sur tables temporelles existantes
-  - Migration path recommandé
+- **Changement format timestamp 11.8** : extension TIMESTAMP 2038 → 2106 🔄
+  - Impact sur tables temporelles existantes (marqueur d'infini `row_end`)
+  - « Héritage 11.8 » : la conversion n'est PAS redéclenchée en 11.8 → 12.3 (déjà au format 2106)
   - Validation data integrity
+
+#### 🆕 Migration 11.8 → 12.3 : changements de comportement
+- **Le chemin de migration central de la formation** (LTS → LTS) 🆕
+  - Trois changements de comportement à anticiper : variables système retirées (`big_tables`, `large_page_size`, `storage_engine`), noms de contraintes FK uniques **par table**, packaging Galera séparé (`mariadb-server-galera`)
+  - Second rang : binlog intégré à InnoDB (optionnel), plans d'exécution potentiellement différents
+  - Idée reçue dissipée : `innodb_snapshot_isolation` est **déjà actif par défaut en 11.8** (depuis 11.6.2) — ce n'est PAS un changement propre au passage 11.8 → 12.3
+  - Démarche et checklist consolidées
 
 💡 **Impact business** : Une migration bien planifiée économise $50k-$1M+/an (licensing), réduit le risque à <5% d'incidents, et s'exécute en quelques heures avec zero-downtime au lieu de jours de maintenance.
 
@@ -168,8 +175,8 @@ Ce module explore les patterns architecturaux et cas d'usage modernes avec Maria
 #### 🌍 Géo-distribution
 - **Multi-region replication** : Latence réduite
 - **Galera multi-DC** : Synchronous replication
-- **Conflict resolution** : Last-write-wins, CRDTs
-- **Data residency** : GDPR, data sovereignty
+- **Résolution de conflits** : certification Galera (intra-cluster), partitionnement des écritures par région (inter-clusters)
+- **Data residency** : GDPR, souveraineté des données
 
 #### ☁️ Hybrid cloud et multi-cloud
 - **Cloud bursting** : On-premise + cloud
@@ -306,7 +313,7 @@ Migration Oracle → MariaDB (exemple entreprise moyenne)
 #### 2️⃣ Nouvelles capacités
 
 ```plaintext
-MariaDB 11.8 apporte :
+MariaDB 12.3 apporte :
 - MariaDB Vector → Éliminer vectorDB ($200-2000/mois)
 - Galera Cluster → HA sans coûts Oracle RAC ($50k+/an)
 - ColumnStore → Analytics sans Exadata ($100k+/an)
@@ -457,7 +464,7 @@ Region US-EAST                     Region EU-WEST                    Region ASIA
 **Contexte** : CRM SaaS, 5000 tenants, croissance 100% YoY
 
 ```plaintext
-Architecture shared-schema avec row-level security
+Architecture shared-schema avec discriminateur tenant_id (isolation applicative)
 
 ┌──────────────────────────────────────────┐
 │         Application Layer                │
@@ -482,7 +489,7 @@ Architecture shared-schema avec row-level security
 **Caractéristiques** :
 - ✅ **Scalability** : 10k+ tenants supportés
 - ✅ **Cost per tenant** : <$5/mois (economies of scale)
-- ✅ **Isolation** : Row-level security + app-level
+- ✅ **Isolation** : applicative (MariaDB n'a pas de *row-level security* native — filtrage systématique par `tenant_id`)
 - ✅ **Performance** : <100ms p95 même avec 5000 tenants
 
 **Défis résolus** :
@@ -653,7 +660,7 @@ Architecture RAG (Retrieval-Augmented Generation)
 - ✅ **Justifier** choix MariaDB vs alternatives (business case)
 - ✅ **Comparer** LTS vs rolling (selon contexte)
 - ✅ **Sélectionner** moteurs de stockage (InnoDB, ColumnStore, S3)
-- ✅ **Arbitrer** multi-tenant patterns (database, schema, row-level)
+- ✅ **Arbitrer** multi-tenant patterns (base par locataire, schéma par locataire, schéma partagé à discriminateur)
 - ✅ **Intégrer** IA moderne (Vector, RAG, MCP Server)
 
 ### Leadership technique
@@ -703,7 +710,7 @@ Cette partie finale est **critique** pour architectes et DBA senior, très utile
 
 ## 📖 Synthèse de la formation complète
 
-### Votre parcours de maîtrise MariaDB 11.8 LTS
+### Votre parcours de maîtrise MariaDB 12.3 LTS
 
 Après **10 parties et 20 modules**, vous avez acquis une expertise complète de MariaDB :
 
@@ -758,24 +765,17 @@ Après **10 parties et 20 modules**, vous avez acquis une expertise complète de
 
 ## 🔮 Perspectives d'évolution
 
-### MariaDB Roadmap 2025-2027
+### Le modèle de versions de MariaDB
 
-#### Série 12.x (2025-2026)
-- **12.0 - 12.2** : Rolling releases trimestrielles
-- **12.3 LTS** : Prévu Q2 2026, support 3 ans jusqu'à 2029
+#### Série 12.x (LTS actuelle)
+- **12.0 – 12.2** : versions Rolling (nouvelles fonctionnalités au fil de l'eau)
+- **12.3 LTS** : version de référence de cette formation — GA mi-2026, **support 3 ans jusqu'en 2029**
 
-**Features anticipées** :
-- 🤖 **Vector enhancements** : Support dimensions 4096+, quantization
-- 📊 **ColumnStore 2.0** : Performance 2-3x, cloud-native storage
-- 🔐 **Security** : Zero-trust architecture, HSM integration
-- ☁️ **Cloud** : Managed services AWS/GCP/Azure officiels
-- 🔄 **Replication** : Multi-source GTID improvements
+#### Série 13.x (cycle suivant)
+- **13.0** : ouvre la série suivante — en **préversion puis version candidate (RC)** à la date de rédaction, sa GA n'étant pas encore parue
+- Le rythme habituel se poursuit : versions Rolling trimestrielles, puis une nouvelle LTS (`13.3`) clôturant la série
 
-#### Au-delà de 12.x (2027+)
-- **Serverless** : Auto-scaling, pay-per-query
-- **Multi-model** : Graph database capabilities
-- **AI-native** : Built-in ML models, AutoML
-- **Blockchain** : Immutable audit logs, smart contracts
+> ⚠️ Au-delà, toute « feuille de route » détaillée relèverait de la spéculation : on s'en tient aux **tendances de fond** ci-dessous plutôt qu'à des fonctionnalités précises non annoncées.
 
 ### L'écosystème MariaDB en 2025-2027
 
@@ -839,6 +839,6 @@ Cette dernière partie vous a donné la **vision stratégique et l'expertise pra
 
 ---
 
-**MariaDB** : Version 11.8 LTS
+**MariaDB** : Version 12.3 LTS
 
 ⏭️ [Migration et Compatibilité](/19-migration-compatibilite/README.md)

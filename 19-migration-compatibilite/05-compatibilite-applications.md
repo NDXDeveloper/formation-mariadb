@@ -2,1202 +2,199 @@
 
 # 19.5 Compatibilité des applications
 
-> **Niveau** : Avancé / Expert  
-> **Durée estimée** : 3-4 heures  
-> **Prérequis** : Connaissance des connecteurs de bases de données, expérience avec au moins un framework applicatif, compréhension des différences MySQL/MariaDB (section 19.1)
+Réussir une migration vers MariaDB 12.3 ne se résume pas à transférer les données et à démarrer le serveur. Une fois la base en ligne, c'est l'**application** — son code, ses pilotes, son ORM, ses requêtes — qui doit continuer à fonctionner *correctement*. Or une application repose sur des dizaines de contrats implicites avec le moteur : le protocole réseau, le dialecte SQL accepté, la sémantique d'exécution des requêtes, le mécanisme d'authentification, les jeux de caractères. Chacun de ces contrats peut se rompre lors d'une migration, parfois silencieusement.
 
-## 🎯 Objectifs d'apprentissage
+La distinction essentielle à garder en tête est celle entre **incompatibilité bloquante** (la requête échoue avec une erreur — facile à détecter) et **incompatibilité silencieuse** (la requête s'exécute sans erreur mais produit un résultat ou un comportement différent — beaucoup plus dangereuse). Cette section recense les couches concernées, puis détaille les changements de comportement propres à la 12.3 qui peuvent affecter une application migrée depuis la 11.8 ou depuis MySQL.
 
-À l'issue de cette section, vous serez capable de :
-
-- Évaluer la compatibilité des connecteurs et drivers avec MariaDB 11.8
-- Identifier les différences de comportement SQL impactant les applications
-- Adapter la configuration des ORM pour MariaDB
-- Détecter et résoudre les incompatibilités applicatives avant la production
-- Mettre en place des tests de régression efficaces
-- Gérer les cas particuliers des applications legacy
+> 🔗 La validation concrète de cette compatibilité (jeux de tests, environnements, capture/rejeu) est traitée dans la section suivante, §19.6 *Tests de compatibilité*. La présente section décrit *quoi* vérifier ; la §19.6 décrit *comment* le vérifier.
 
 ---
 
-## Introduction
+## 19.5.1 Les couches de la compatibilité applicative
 
-Une migration de base de données ne se limite pas au transfert des données et du schéma. L'application qui consomme ces données doit également fonctionner correctement avec le nouveau SGBD. Cette dimension applicative est souvent sous-estimée et représente pourtant une source majeure de problèmes post-migration.
+La compatibilité d'une application avec MariaDB se joue sur plusieurs couches superposées. Une migration peut être parfaitement transparente sur certaines et problématique sur d'autres :
 
-La compatibilité applicative couvre plusieurs niveaux : les connecteurs et drivers, les frameworks et ORM, les requêtes SQL générées ou écrites manuellement, et le comportement attendu par l'application. Chaque niveau peut introduire des incompatibilités subtiles qui ne se manifestent parfois qu'en production, sous certaines conditions spécifiques.
+| Couche | Question posée | Risque typique |
+|--------|----------------|----------------|
+| **Protocole réseau** | Le client sait-il dialoguer avec le serveur ? | Très faible (protocole MySQL compatible) |
+| **Pilote / connecteur** | La version du connecteur gère-t-elle les fonctionnalités du serveur ? | Modéré (versions anciennes, plugins d'auth) |
+| **Dialecte SQL** | Les requêtes sont-elles syntaxiquement acceptées ? | Modéré (mots réservés, fonctions, `sql_mode`) |
+| **Sémantique d'exécution** | Les requêtes produisent-elles le *même résultat* ? | Élevé et silencieux (isolation, collations, NULL) |
+| **Authentification** | Le client parvient-il à se connecter ? | Bloquant (plugins d'auth incompatibles) |
+| **Jeu de caractères / collation** | Les comparaisons et tris sont-ils identiques ? | Élevé et silencieux (utf8mb4, UCA 14.0.0) |
 
-Cette section vous guide dans l'analyse systématique de la compatibilité applicative et les stratégies pour garantir une transition transparente vers MariaDB.
-
----
-
-## Niveaux de compatibilité applicative
-
-### Architecture des couches de compatibilité
-
-```
-Compatibilité applicative - Couches
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-┌─────────────────────────────────────────────────────────┐
-│                    APPLICATION                          │
-│              (Code métier, logique)                     │
-├─────────────────────────────────────────────────────────┤
-│                    ORM / Framework                      │
-│         (Hibernate, SQLAlchemy, Prisma...)              │
-├─────────────────────────────────────────────────────────┤
-│                 SQL généré / manuel                     │
-│           (Requêtes, procédures stockées)               │
-├─────────────────────────────────────────────────────────┤
-│               Connecteur / Driver                       │
-│      (JDBC, PDO, mysql2, MariaDB Connector...)          │
-├─────────────────────────────────────────────────────────┤
-│                Protocole MySQL/MariaDB                  │
-│              (Wire protocol compatible)                 │
-├─────────────────────────────────────────────────────────┤
-│                    MariaDB Server                       │
-└─────────────────────────────────────────────────────────┘
-
-Chaque couche peut introduire des incompatibilités.
-La compatibilité doit être validée à TOUS les niveaux.
-```
-
-### Matrice de risque par couche
-
-| Couche | Risque MySQL→MariaDB | Risque Oracle→MariaDB | Risque version upgrade |
-|--------|----------------------|----------------------|------------------------|
-| **Protocole** | 🟢 Très faible | N/A | 🟢 Très faible |
-| **Connecteur** | 🟢 Faible | 🟢 Faible | 🟡 Modéré |
-| **SQL basique** | 🟢 Faible | 🔴 Élevé | 🟡 Modéré |
-| **SQL avancé** | 🟡 Modéré | 🔴 Très élevé | 🟡 Modéré |
-| **ORM** | 🟢 Faible | 🟡 Modéré | 🟢 Faible |
-| **Application** | 🟡 Variable | 🔴 Variable | 🟡 Variable |
+L'ordre n'est pas anodin : les couches du haut produisent des erreurs franches et immédiates, faciles à corriger ; les couches du bas produisent des écarts de comportement qui ne se révèlent qu'en production, sur des cas particuliers.
 
 ---
 
-## Connecteurs et drivers
+## 19.5.2 Compatibilité du protocole et des pilotes
 
-### Compatibilité des connecteurs MySQL avec MariaDB
+MariaDB implémente le **protocole client/serveur MySQL**, ce qui garantit qu'au niveau le plus bas, la quasi-totalité des clients MySQL peuvent se connecter à MariaDB. C'est cette compatibilité historique qui rend les migrations « techniquement » indolores dans la plupart des cas.
 
-MariaDB utilise le protocole MySQL, ce qui permet aux connecteurs MySQL de fonctionner avec MariaDB. Cependant, des nuances existent.
+Toutefois, les deux projets ont divergé depuis plusieurs années, et MariaDB maintient désormais ses **propres connecteurs officiels**, distincts de ceux de MySQL :
 
-```
-Compatibilité des connecteurs
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+| Langage / techno | Connecteur recommandé (MariaDB) | Connecteur MySQL utilisable ? |
+|------------------|----------------------------------|-------------------------------|
+| Java | MariaDB Connector/J (`jdbc:mariadb://`) | Oui, avec réserves |
+| Python | MariaDB Connector/Python, ou PyMySQL | Oui (mysql-connector-python) |
+| Node.js | `mariadb` (Connector/Node.js) | Oui (`mysql2`) |
+| C / C++ | MariaDB Connector/C | Oui (libmysqlclient) |
+| ODBC | MariaDB Connector/ODBC | Oui |
+| .NET | MySqlConnector (recommandé) | MySql.Data possible |
 
-Connecteur MySQL ──────────────────▶ MariaDB Server
-                                         │
-    ┌────────────────────────────────────┤
-    │                                    │
-    ▼                                    ▼
-Fonctionne                        Fonctionnalités
-(protocole                        MariaDB-spécifiques
- compatible)                      non accessibles
+> 🔗 Le détail des connecteurs par langage est couvert au chapitre 17, *Intégration et Développement* (§17.1).
 
-Connecteur MariaDB ────────────────▶ MariaDB Server
-                                         │
-    ┌────────────────────────────────────┤
-    │                                    │
-    ▼                                    ▼
-Fonctionne                        Toutes les
-pleinement                        fonctionnalités
-                                  accessibles
-```
+Trois points d'attention pratiques au niveau pilote :
 
-### Tableau des connecteurs par langage
+**La chaîne de connexion.** Le passage à Connector/J impose le schéma d'URL `jdbc:mariadb://` en lieu et place de `jdbc:mysql://`. Une application qui code en dur l'URL MySQL devra être ajustée, ou conserver le pilote MySQL (qui sait se connecter à MariaDB).
 
-| Langage | Connecteur MySQL | Connecteur MariaDB | Recommandation |
-|---------|------------------|-------------------|----------------|
-| **Java** | MySQL Connector/J | MariaDB Connector/J | MariaDB Connector/J |
-| **Python** | mysql-connector-python, PyMySQL | mariadb | mariadb ou PyMySQL |
-| **PHP** | mysqli, PDO_MySQL | mysqli, PDO_MySQL | PDO_MySQL |
-| **Node.js** | mysql, mysql2 | mariadb | mariadb ou mysql2 |
-| **Go** | go-sql-driver/mysql | go-sql-driver/mysql | go-sql-driver/mysql |
-| **.NET** | MySql.Data | MySqlConnector, MariaDB.Data | MySqlConnector |
-| **Ruby** | mysql2 | mysql2 | mysql2 |
-| **Rust** | mysql | mysql | mysql |
+**La détection de version (*version sniffing*).** Certaines bibliothèques et certains ORM inspectent la chaîne de version retournée par le serveur (`SELECT VERSION()`) pour adapter leur comportement. MariaDB retourne une chaîne contenant `MariaDB` (par ex. `12.3.2-MariaDB`), parfois précédée d'un préfixe de compatibilité hérité. Un code qui suppose un format de version MySQL strict peut prendre de mauvaises décisions. Il faut s'assurer que la couche d'abstraction reconnaît bien MariaDB comme un moteur distinct.
 
-### Configuration des connecteurs
+**La gestion des plugins d'authentification**, traitée plus bas (§19.5.5) : un connecteur trop ancien peut ne pas savoir négocier un plugin moderne.
 
-#### Java - MariaDB Connector/J
-
-```java
-// Configuration JDBC pour MariaDB 11.8
-String url = "jdbc:mariadb://localhost:3306/mydb?" +
-    "useSSL=true&" +                          // TLS activé (défaut 11.8)
-    "serverTimezone=UTC&" +                   // Timezone explicite
-    "characterEncoding=UTF-8&" +              // UTF-8 explicite
-    "useServerPrepStmts=true&" +              // Prepared statements serveur
-    "cachePrepStmts=true&" +                  // Cache des PS
-    "prepStmtCacheSize=250&" +                // Taille du cache
-    "prepStmtCacheSqlLimit=2048&" +           // Limite SQL
-    "allowMultiQueries=false";                // Sécurité
-
-// Création de la connexion
-Connection conn = DriverManager.getConnection(url, "user", "password");
-
-// Vérification de la version
-DatabaseMetaData meta = conn.getMetaData();
-System.out.println("Database: " + meta.getDatabaseProductName());
-System.out.println("Version: " + meta.getDatabaseProductVersion());
-```
-
-```xml
-<!-- Maven dependency -->
-<dependency>
-    <groupId>org.mariadb.jdbc</groupId>
-    <artifactId>mariadb-java-client</artifactId>
-    <version>3.3.0</version> <!-- Version compatible 11.8 -->
-</dependency>
-```
-
-#### Python - Connecteur mariadb
-
-```python
-# Installation : pip install mariadb
-
-import mariadb
-import sys
-
-# Configuration de connexion pour MariaDB 11.8
-config = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'app_user',
-    'password': 'secure_password',
-    'database': 'mydb',
-    'ssl': True,                    # TLS activé (défaut 11.8)
-    'ssl_verify_cert': True,        # Vérification certificat
-    'autocommit': False,            # Transactions explicites
-    'connect_timeout': 10,
-    'read_timeout': 30,
-    'write_timeout': 30,
-}
-
-try:
-    conn = mariadb.connect(**config)
-    cursor = conn.cursor()
-    
-    # Vérification de la version
-    cursor.execute("SELECT VERSION()")
-    version = cursor.fetchone()[0]
-    print(f"Connected to MariaDB {version}")
-    
-    # Vérification du charset
-    cursor.execute("SHOW VARIABLES LIKE 'character_set_server'")
-    charset = cursor.fetchone()
-    print(f"Server charset: {charset[1]}")
-    
-except mariadb.Error as e:
-    print(f"Error connecting to MariaDB: {e}")
-    sys.exit(1)
-finally:
-    if conn:
-        conn.close()
-```
-
-#### Node.js - Connecteur mariadb
-
-```javascript
-// Installation : npm install mariadb
-
-const mariadb = require('mariadb');
-
-// Configuration du pool de connexions
-const pool = mariadb.createPool({
-    host: 'localhost',
-    port: 3306,
-    user: 'app_user',
-    password: 'secure_password',
-    database: 'mydb',
-    connectionLimit: 10,
-    ssl: {
-        rejectUnauthorized: true    // Vérification TLS (défaut 11.8)
-    },
-    connectTimeout: 10000,
-    acquireTimeout: 10000,
-    // Options spécifiques MariaDB
-    allowPublicKeyRetrieval: true,
-    trace: process.env.NODE_ENV === 'development'
-});
-
-// Utilisation
-async function queryDatabase() {
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        
-        // Vérification de la version
-        const version = await conn.query("SELECT VERSION() as version");
-        console.log(`Connected to MariaDB ${version[0].version}`);
-        
-        // Requête avec paramètres
-        const rows = await conn.query(
-            "SELECT * FROM users WHERE status = ? LIMIT ?",
-            ['active', 10]
-        );
-        return rows;
-        
-    } catch (err) {
-        console.error("Database error:", err);
-        throw err;
-    } finally {
-        if (conn) conn.release();
-    }
-}
-```
-
-#### PHP - PDO
-
-```php
-<?php
-// Configuration PDO pour MariaDB 11.8
-
-$dsn = 'mysql:host=localhost;port=3306;dbname=mydb;charset=utf8mb4';
-$options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    PDO::ATTR_EMULATE_PREPARES   => false,  // Prepared statements natifs
-    PDO::MYSQL_ATTR_SSL_CA       => '/path/to/ca-cert.pem',  // TLS
-    PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
-    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
-];
-
-try {
-    $pdo = new PDO($dsn, 'app_user', 'secure_password', $options);
-    
-    // Vérification de la version
-    $stmt = $pdo->query("SELECT VERSION()");
-    $version = $stmt->fetchColumn();
-    echo "Connected to MariaDB $version\n";
-    
-    // Vérification des paramètres
-    $stmt = $pdo->query("SHOW VARIABLES LIKE 'character_set%'");
-    while ($row = $stmt->fetch()) {
-        echo "{$row['Variable_name']}: {$row['Value']}\n";
-    }
-    
-} catch (PDOException $e) {
-    die("Connection failed: " . $e->getMessage());
-}
-```
-
-### Problèmes courants des connecteurs
-
-| Problème | Symptôme | Solution |
-|----------|----------|----------|
-| **TLS requis (11.8)** | `SSL connection error` | Configurer TLS ou `ssl=false` |
-| **Auth plugin** | `Authentication plugin not supported` | Mettre à jour le connecteur |
-| **Charset mismatch** | Caractères corrompus | Spécifier `charset=utf8mb4` |
-| **Timeout** | Connexions perdues | Configurer keepalive, reconnect |
-| **Pool exhaustion** | `Too many connections` | Ajuster pool size, timeouts |
+La recommandation générale est de **migrer le pilote en même temps que le serveur** et d'épingler une version testée, plutôt que de s'appuyer sur la rétrocompatibilité d'un connecteur ancien.
 
 ---
 
-## Compatibilité des ORM
+## 19.5.3 Compatibilité du dialecte SQL
 
-### Hibernate (Java)
+Au-delà du protocole, l'application envoie des requêtes SQL qui doivent être acceptées par le moteur. Plusieurs facteurs influencent cette acceptation.
 
-Hibernate détecte généralement MariaDB automatiquement, mais une configuration explicite est recommandée.
+### Le rôle de `sql_mode`
 
-```java
-// hibernate.cfg.xml ou application.properties
-// Configuration Hibernate pour MariaDB 11.8
-
-// Option 1 : Dialect automatique (Hibernate 6+)
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MariaDBDialect
-
-// Option 2 : Dialect spécifique version
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MariaDB106Dialect
-
-// Configuration complète
-spring.datasource.url=jdbc:mariadb://localhost:3306/mydb?useSSL=true
-spring.datasource.driver-class-name=org.mariadb.jdbc.Driver
-spring.jpa.hibernate.ddl-auto=validate
-spring.jpa.show-sql=true
-spring.jpa.properties.hibernate.format_sql=true
-spring.jpa.properties.hibernate.jdbc.time_zone=UTC
-```
-
-```java
-// Entité avec types MariaDB spécifiques
-@Entity
-@Table(name = "documents")
-public class Document {
-    
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    
-    @Column(columnDefinition = "JSON")  // Type JSON MariaDB
-    private String metadata;
-    
-    @Column(columnDefinition = "LONGTEXT")
-    private String content;
-    
-    // Pour MariaDB 11.8 Vector (si extension)
-    // @Column(columnDefinition = "VECTOR(1536)")
-    // private float[] embedding;
-    
-    @CreationTimestamp
-    @Column(name = "created_at", columnDefinition = "DATETIME(6)")
-    private LocalDateTime createdAt;
-}
-```
-
-**Points d'attention Hibernate :**
-
-| Aspect | MySQL | MariaDB | Action |
-|--------|-------|---------|--------|
-| **Dialect** | MySQLDialect | MariaDBDialect | Changer le dialect |
-| **IDENTITY** | AUTO_INCREMENT | AUTO_INCREMENT | ✅ Compatible |
-| **JSON** | Type natif | Type natif | ✅ Compatible |
-| **TIMESTAMP** | Jusqu'à 2038 | Jusqu'à 2106 (11.8) | ✅ Amélioré |
-| **Sequences** | Non | Oui | Disponible en plus |
-
-### SQLAlchemy (Python)
-
-```python
-# Configuration SQLAlchemy pour MariaDB 11.8
-
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-
-# URL de connexion MariaDB
-DATABASE_URL = (
-    "mariadb+mariadbconnector://user:password@localhost:3306/mydb"
-    "?charset=utf8mb4"
-)
-
-# Alternative avec PyMySQL
-# DATABASE_URL = "mysql+pymysql://user:password@localhost:3306/mydb?charset=utf8mb4"
-
-# Création du moteur
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,  # Vérifie la connexion avant utilisation
-    pool_recycle=3600,   # Recycle les connexions après 1h
-    echo=False,          # Logging SQL (True pour debug)
-    connect_args={
-        'ssl': {'ssl_mode': 'REQUIRED'}  # TLS pour 11.8
-    }
-)
-
-Base = declarative_base()
-
-# Modèle avec types MariaDB
-class Document(Base):
-    __tablename__ = 'documents'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    title = Column(String(255), nullable=False)
-    content = Column(String(65535))  # TEXT
-    metadata = Column(JSON)  # JSON natif MariaDB
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Index
-    __table_args__ = (
-        Index('idx_title', 'title'),
-        {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'}
-    )
-
-# Session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Vérification de la connexion
-def check_connection():
-    with engine.connect() as conn:
-        result = conn.execute("SELECT VERSION()").fetchone()
-        print(f"Connected to: {result[0]}")
-```
-
-### Prisma (Node.js/TypeScript)
-
-```prisma
-// schema.prisma pour MariaDB 11.8
-
-datasource db {
-  provider = "mysql"  // Prisma utilise le provider MySQL pour MariaDB
-  url      = env("DATABASE_URL")
-  // relationMode = "prisma"  // Si foreign keys désactivées
-}
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique @db.VarChar(255)
-  name      String?  @db.VarChar(100)
-  metadata  Json?    // Type JSON MariaDB
-  createdAt DateTime @default(now()) @db.DateTime(6)
-  updatedAt DateTime @updatedAt @db.DateTime(6)
-  posts     Post[]
-  
-  @@index([email])
-  @@map("users")
-}
-
-model Post {
-  id        Int      @id @default(autoincrement())
-  title     String   @db.VarChar(255)
-  content   String?  @db.LongText
-  published Boolean  @default(false)
-  authorId  Int
-  author    User     @relation(fields: [authorId], references: [id])
-  createdAt DateTime @default(now()) @db.DateTime(6)
-  
-  @@index([authorId])
-  @@map("posts")
-}
-```
-
-```typescript
-// Utilisation Prisma avec MariaDB
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient({
-  log: ['query', 'info', 'warn', 'error'],
-});
-
-async function main() {
-  // Vérification connexion
-  const result = await prisma.$queryRaw`SELECT VERSION() as version`;
-  console.log('MariaDB version:', result);
-  
-  // Création avec JSON
-  const user = await prisma.user.create({
-    data: {
-      email: 'user@example.com',
-      name: 'John Doe',
-      metadata: {
-        preferences: { theme: 'dark', language: 'fr' },
-        tags: ['developer', 'admin']
-      }
-    }
-  });
-  
-  // Requête JSON (MariaDB)
-  const users = await prisma.$queryRaw`
-    SELECT * FROM users 
-    WHERE JSON_EXTRACT(metadata, '$.preferences.theme') = 'dark'
-  `;
-}
-```
-
-### Entity Framework Core (.NET)
-
-```csharp
-// Configuration Entity Framework Core pour MariaDB 11.8
-
-// Installation : dotnet add package Pomelo.EntityFrameworkCore.MySql
-
-using Microsoft.EntityFrameworkCore;
-
-public class AppDbContext : DbContext
-{
-    public DbSet<User> Users { get; set; }
-    public DbSet<Document> Documents { get; set; }
-    
-    protected override void OnConfiguring(DbContextOptionsBuilder options)
-    {
-        var connectionString = "Server=localhost;Port=3306;Database=mydb;" +
-                              "User=app_user;Password=secure_password;" +
-                              "SslMode=Required;";  // TLS pour 11.8
-        
-        options.UseMySql(
-            connectionString,
-            new MariaDbServerVersion(new Version(11, 8, 0)),  // Version explicite
-            mySqlOptions => {
-                mySqlOptions.EnableRetryOnFailure(
-                    maxRetryCount: 3,
-                    maxRetryDelay: TimeSpan.FromSeconds(10),
-                    errorNumbersToAdd: null
-                );
-                mySqlOptions.CommandTimeout(60);
-            }
-        );
-    }
-    
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<User>(entity =>
-        {
-            entity.ToTable("users");
-            entity.Property(e => e.Metadata)
-                  .HasColumnType("json");  // JSON MariaDB
-            entity.Property(e => e.CreatedAt)
-                  .HasColumnType("datetime(6)");
-        });
-    }
-}
-
-public class User
-{
-    public int Id { get; set; }
-    public string Email { get; set; }
-    public string Name { get; set; }
-    public string Metadata { get; set; }  // JSON stocké comme string
-    public DateTime CreatedAt { get; set; }
-}
-```
-
----
-
-## Différences SQL impactant les applications
-
-### Fonctions et comportements divergents
-
-Certaines fonctions SQL ont des comportements légèrement différents entre MySQL et MariaDB, ou entre versions MariaDB.
-
-#### Fonctions de date et heure
+La variable `sql_mode` est le levier central de compatibilité du dialecte. Elle contrôle la rigueur de l'interprétation SQL et active des comportements de compatibilité avec d'autres SGBD. Un même corpus de requêtes peut passer ou échouer selon le `sql_mode` actif.
 
 ```sql
--- Comportement identique
-SELECT NOW(), CURDATE(), CURTIME();
-SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s');
-
--- MariaDB 11.8 : TIMESTAMP étendu jusqu'à 2106
--- Les applications manipulant des dates > 2038 bénéficient de cette extension
-CREATE TABLE future_events (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    event_date TIMESTAMP,  -- Supporte maintenant > 2038
-    description VARCHAR(255)
-);
-
-INSERT INTO future_events (event_date, description)
-VALUES ('2050-01-01 00:00:00', 'Future event');  -- OK en 11.8
-```
-
-#### Fonctions JSON
-
-```sql
--- Compatible MySQL 8.0 et MariaDB
-SELECT JSON_EXTRACT(data, '$.name') FROM users;
-SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.email')) FROM users;
-SELECT data->>'$.email' FROM users;  -- Raccourci
-
--- MariaDB uniquement
-SELECT JSON_DETAILED(data) FROM users;  -- Formatage lisible
-SELECT JSON_LOOSE(data) FROM users;     -- Format compact
-
--- MySQL 8.0 uniquement (NON compatible MariaDB)
--- SELECT * FROM JSON_TABLE(...);  -- À réécrire
--- SELECT 'value' MEMBER OF(json_array);  -- Utiliser JSON_CONTAINS
-```
-
-**Réécriture des fonctions incompatibles :**
-
-```sql
--- MySQL 8.0 : JSON_TABLE (non supporté MariaDB < 10.6)
--- Original MySQL :
-SELECT jt.* 
-FROM orders,
-     JSON_TABLE(items, '$[*]' COLUMNS (
-         item_id INT PATH '$.id',
-         quantity INT PATH '$.qty'
-     )) AS jt;
-
--- Alternative MariaDB :
-SELECT 
-    JSON_EXTRACT(items, CONCAT('$[', n.n, '].id')) AS item_id,
-    JSON_EXTRACT(items, CONCAT('$[', n.n, '].qty')) AS quantity
-FROM orders
-CROSS JOIN (
-    SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
-) AS n
-WHERE JSON_EXTRACT(items, CONCAT('$[', n.n, ']')) IS NOT NULL;
-
--- MySQL 8.0 : MEMBER OF
--- Original :
-SELECT * FROM products WHERE 'electronics' MEMBER OF(categories);
-
--- MariaDB :
-SELECT * FROM products WHERE JSON_CONTAINS(categories, '"electronics"');
-```
-
-#### Expressions régulières
-
-```sql
--- MariaDB utilise PCRE (Perl Compatible Regular Expressions)
--- MySQL 8.0 utilise ICU
-
--- Syntaxe compatible
-SELECT * FROM logs WHERE message REGEXP 'error|warning';
-
--- MariaDB : PCRE avancé
-SELECT REGEXP_REPLACE(text, '\\s+', ' ') FROM documents;  -- PCRE
-SELECT REGEXP_SUBSTR(email, '[^@]+') FROM users;
-
--- Différences subtiles de comportement possibles
--- Toujours tester les regex complexes après migration
-```
-
-#### Mode SQL et comportement strict
-
-```sql
--- Vérifier le sql_mode actuel
+-- Vérifier le mode actif
 SELECT @@sql_mode;
 
--- MariaDB 11.8 sql_mode par défaut
--- STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
-
--- Configuration recommandée pour compatibilité
-SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
-
--- Pour applications legacy nécessitant un mode permissif
--- (À éviter, mais parfois nécessaire en migration)
-SET SESSION sql_mode = '';
+-- Activer le mode de compatibilité Oracle pour une session
+SET SESSION sql_mode = 'ORACLE';
 ```
 
-### Tableau des différences SQL courantes
+> 🔗 Le détail des modes SQL est traité en §11.3. Le mode `ORACLE` débloque de nombreuses fonctionnalités de compatibilité (voir ci-dessous).
 
-| Fonctionnalité | MySQL 8.0 | MariaDB 11.8 | Action migration |
-|----------------|-----------|--------------|------------------|
-| `JSON_TABLE()` | ✅ | ✅ (10.6+) | Compatible |
-| `MEMBER OF()` | ✅ | ❌ | Réécrire avec JSON_CONTAINS |
-| `->>`  opérateur | ✅ | ✅ | Compatible |
-| `REGEXP_REPLACE()` | ICU | PCRE | Tester les regex |
-| `WITH RECURSIVE` | ✅ | ✅ | Compatible |
-| `LATERAL` | ✅ | ✅ (10.3+) | Compatible |
-| `EXPLAIN ANALYZE` | ✅ | ✅ | Compatible |
-| `INVISIBLE INDEX` | ✅ | ✅ | Compatible |
-| `SKIP LOCKED` | ✅ | ✅ (10.6+) | Compatible |
-| Collations `0900` | ✅ | ❌ | Convertir |
+Un piège fréquent lors d'une migration : le `sql_mode` de l'ancienne instance et celui de la nouvelle diffèrent. Une requête tolérée sous un mode permissif (par exemple une insertion avec valeur tronquée) peut échouer sous un mode strict. La première chose à comparer est donc le `sql_mode` source vs cible.
+
+### Mots réservés et fonctions
+
+MariaDB 12.3 introduit de nouveaux mots-clés (notamment liés aux Optimizer Hints, §15.15, et aux nouvelles fonctionnalités). Un identifiant de colonne ou de table qui coïncide avec un nouveau mot réservé devra être protégé par des accents graves (`` `colonne` ``). C'est un cas rare mais réel lors d'une montée de version.
+
+Côté fonctions, la 12.3 *ajoute* sans retirer dans la plupart des cas, ce qui limite le risque. Les fonctions de compatibilité Oracle (`TO_DATE`, `TO_NUMBER`, `TRUNC`, `TO_CHAR` avec format `FM`, §3.7.1) facilitent au contraire la migration des applications conçues pour Oracle.
+
+### Fonctionnalités de compatibilité héritées d'autres SGBD
+
+Pour les applications provenant d'Oracle, la 12.3 consolide un ensemble de fonctionnalités qui réduisent fortement la réécriture nécessaire : syntaxe `( + )` pour les jointures externes (§3.3.5), tableaux associatifs (§8.1.4), `SYS_REFCURSOR` (§8.5.2), type `XMLTYPE` basique (§2.2.6). Pour MySQL 8, l'ajout de `caching_sha2_password` (§10.5.5) et la prise en charge de certaines fonctions GIS récentes (§19.1.1) lissent la transition.
+
+> 🔗 La cartographie complète des fonctionnalités de compatibilité est détaillée en §19.2.1 (depuis Oracle) et §19.1 (depuis MySQL).
 
 ---
 
-## Gestion des collations et charsets
+## 19.5.4 Compatibilité sémantique : les pièges silencieux
 
-### Impact de utf8mb4 par défaut en 11.8 🆕
+C'est la couche la plus délicate. Les requêtes s'exécutent sans erreur, mais leur **résultat ou leur comportement transactionnel diffère**. Ces écarts ne sont détectés ni par un linter, ni par un test de connexion : ils n'apparaissent qu'à l'usage, souvent sur des cas limites.
 
-MariaDB 11.8 utilise `utf8mb4` comme charset par défaut. Cela impacte les applications.
+### Isolation transactionnelle : `innodb_snapshot_isolation`
 
-```sql
--- Vérification du charset par défaut
-SHOW VARIABLES LIKE 'character_set%';
-SHOW VARIABLES LIKE 'collation%';
+L'**isolation par instantané** (*snapshot isolation*) est l'un des points sémantiques les plus structurants. La variable `innodb_snapshot_isolation` est **activée par défaut** — non pas depuis la 12.3, mais **depuis la 11.6.2**, elle l'est donc déjà en 11.8 (§6.9). Sous le niveau `REPEATABLE READ` (le défaut d'InnoDB), une transaction qui tente de modifier une ligne ayant été modifiée *et validée* par une autre transaction après l'établissement de son instantané reçoit une **erreur** explicite :
 
--- MariaDB 11.8 valeurs par défaut
--- character_set_server = utf8mb4
--- collation_server = utf8mb4_uca1400_ai_ci  🆕
-
--- Impact sur les nouvelles tables
-CREATE TABLE test_default (
-    name VARCHAR(100)  -- Sera utf8mb4, jusqu'à 400 bytes
-);
-
--- Forcer un charset spécifique si nécessaire
-CREATE TABLE test_latin1 (
-    code VARCHAR(10) CHARACTER SET latin1
-);
+```
+ERROR 1020 (HY000): Record has changed since last read in table 't1'; try restarting transaction
 ```
 
-**Vérification de la compatibilité applicative :**
+Le code d'erreur est `1020` (`ER_CHECKREAD`), et le message invite explicitement à **rejouer la transaction** (*try restarting transaction*).
 
-```python
-# Script Python de vérification charset
-import mariadb
+⚠️ **Périmètre de migration.** Comme ce paramètre est **déjà à `ON` en 11.8**, une migration `11.8 → 12.3` n'introduit **aucun changement** de ce côté — les deux versions se comportent à l'identique. Le sujet concerne en revanche les migrations depuis une version **antérieure à 11.6.2** (MariaDB 10.6 / 10.11 / 11.4, où le défaut était `OFF`) ou depuis **MySQL** : là, le code passe d'une modification silencieuse contre la dernière version validée à une **erreur** explicite. Ce passage à un véritable *snapshot isolation* prévient certaines anomalies (mises à jour perdues, *write skew*), mais il **introduit une classe d'erreurs** absente auparavant.
 
-def check_charset_compatibility(conn):
-    cursor = conn.cursor()
-    
-    # Vérifier les tables avec charset non-utf8mb4
-    cursor.execute("""
-        SELECT 
-            table_schema,
-            table_name,
-            table_collation
-        FROM information_schema.tables
-        WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema')
-          AND table_collation NOT LIKE 'utf8mb4%'
-    """)
-    
-    non_utf8mb4_tables = cursor.fetchall()
-    
-    if non_utf8mb4_tables:
-        print("⚠️ Tables avec charset non-utf8mb4:")
-        for schema, table, collation in non_utf8mb4_tables:
-            print(f"  - {schema}.{table}: {collation}")
-    else:
-        print("✅ Toutes les tables utilisent utf8mb4")
-    
-    # Vérifier les colonnes avec collation incompatible
-    cursor.execute("""
-        SELECT 
-            table_schema,
-            table_name,
-            column_name,
-            collation_name
-        FROM information_schema.columns
-        WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema')
-          AND collation_name LIKE '%0900%'
-    """)
-    
-    incompatible_collations = cursor.fetchall()
-    
-    if incompatible_collations:
-        print("🔴 Colonnes avec collations incompatibles (0900):")
-        for schema, table, column, collation in incompatible_collations:
-            print(f"  - {schema}.{table}.{column}: {collation}")
-    
-    return len(non_utf8mb4_tables), len(incompatible_collations)
-```
+Conséquence pratique : une application transactionnelle venant d'un tel socle doit prévoir une logique de **capture de l'erreur et de rejeu de la transaction**. C'est l'archétype de l'incompatibilité silencieuse-devenue-bloquante : le code « fonctionnait » avant, il lève maintenant une exception qui, si elle n'est pas gérée, remonte jusqu'à l'utilisateur. Les applications peuvent, si nécessaire, restaurer l'ancien comportement en positionnant explicitement `innodb_snapshot_isolation = OFF`, le temps d'adapter le code.
 
-### Conversion des collations
+### Collations et comparaisons de chaînes
 
-```sql
--- Identifier les collations à convertir
-SELECT DISTINCT collation_name
-FROM information_schema.columns
-WHERE collation_name IS NOT NULL
-  AND table_schema = 'mydb';
+Depuis la 11.8, le jeu de caractères par défaut est `utf8mb4` avec des collations basées sur **UCA 14.0.0** (§11.11). Les règles de comparaison et de tri d'une collation UCA peuvent différer de celles d'une collation plus ancienne (`utf8mb4_general_ci`, par exemple). Cela a trois effets potentiellement silencieux :
 
--- Conversion d'une table
-ALTER TABLE users 
-CONVERT TO CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
+- Une clause `WHERE col = 'valeur'` peut désormais correspondre (ou ne plus correspondre) à des lignes selon la sensibilité à la casse et aux accents de la nouvelle collation.
+- Un `ORDER BY` peut produire un ordre différent — visible dans une pagination ou un export.
+- Une contrainte `UNIQUE` peut considérer comme identiques (ou distinctes) deux valeurs qui ne l'étaient pas auparavant, provoquant un échec d'insertion ou, à l'inverse, l'acceptation de doublons fonctionnels.
 
--- Conversion d'une colonne spécifique
-ALTER TABLE users
-MODIFY COLUMN name VARCHAR(255) 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
+La migration depuis `utf8` (3 octets) vers `utf8mb4` mérite aussi attention : longueur maximale des index, occupation disque, et émojis/caractères sur 4 octets qui étaient auparavant rejetés ou tronqués.
 
--- Script de conversion massive
-DELIMITER //
-CREATE PROCEDURE convert_to_utf8mb4()
-BEGIN
-    DECLARE done INT DEFAULT FALSE;
-    DECLARE tbl_name VARCHAR(255);
-    DECLARE cur CURSOR FOR 
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = DATABASE()
-          AND table_type = 'BASE TABLE';
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-    
-    OPEN cur;
-    
-    read_loop: LOOP
-        FETCH cur INTO tbl_name;
-        IF done THEN
-            LEAVE read_loop;
-        END IF;
-        
-        SET @sql = CONCAT('ALTER TABLE `', tbl_name, 
-            '` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        PREPARE stmt FROM @sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-        
-        SELECT CONCAT('Converted: ', tbl_name) AS status;
-    END LOOP;
-    
-    CLOSE cur;
-END //
-DELIMITER ;
-```
+### Logique ternaire et valeurs NULL
+
+Le traitement des `NULL` suit la logique ternaire SQL standard (§4.6). Une application migrée depuis un SGBD au comportement différent sur les `NULL` (comparaisons, concaténations, agrégats) peut observer des écarts. Ce point relève surtout des migrations *inter-SGBD* (Oracle, SQL Server) plus que d'une montée de version MariaDB.
+
+### Conversions implicites et `sql_mode` strict
+
+Sous un `sql_mode` strict, les conversions implicites tolérées ailleurs (chaîne vide vers `0`, date invalide vers `'0000-00-00'`) sont rejetées. Une application qui s'appuyait sur cette tolérance verra ses `INSERT`/`UPDATE` échouer. Là encore, la comparaison du `sql_mode` source/cible est le premier réflexe.
 
 ---
 
-## Tests de compatibilité applicative
+## 19.5.5 Compatibilité de l'authentification
 
-### Framework de tests
+L'échec de connexion lié à un plugin d'authentification incompatible est l'un des problèmes de migration les plus courants — et les plus déroutants, car il bloque l'application *avant* toute requête.
 
-```python
-# framework_test_compatibility.py
-# Framework de tests de compatibilité applicative
+| Plugin | Origine | Statut en MariaDB 12.3 | Cas d'usage migration |
+|--------|---------|------------------------|------------------------|
+| `mysql_native_password` | Historique MySQL/MariaDB | Disponible (déprécié côté MySQL 8) | Compatibilité maximale, anciens clients |
+| `ed25519` | Natif MariaDB | Recommandé | Authentification moderne sécurisée |
+| `caching_sha2_password` | MySQL 8 (défaut) | **Pris en charge (nouveauté 12.x)** | Migration d'apps configurées pour MySQL 8 |
+| `PARSEC` | MariaDB | Disponible | Authentification renforcée |
 
-import unittest
-import mariadb
-from datetime import datetime, timedelta
-import json
+L'ajout de **`caching_sha2_password`** (§10.5.5) est une avancée majeure pour la compatibilité : c'est le plugin par défaut de MySQL 8, et de nombreux connecteurs récents le négocient automatiquement. Avant cette prise en charge, une application configurée pour MySQL 8 pouvait échouer à se connecter à MariaDB. Désormais, la transition se fait sans modifier la méthode d'authentification de l'application.
 
-class MariaDBCompatibilityTests(unittest.TestCase):
-    """Suite de tests de compatibilité pour migration vers MariaDB 11.8"""
-    
-    @classmethod
-    def setUpClass(cls):
-        cls.conn = mariadb.connect(
-            host='localhost',
-            port=3306,
-            user='test_user',
-            password='test_password',
-            database='test_db'
-        )
-        cls.cursor = cls.conn.cursor()
-    
-    @classmethod
-    def tearDownClass(cls):
-        cls.cursor.close()
-        cls.conn.close()
-    
-    def test_connection(self):
-        """Test de connexion basique"""
-        self.cursor.execute("SELECT 1")
-        result = self.cursor.fetchone()
-        self.assertEqual(result[0], 1)
-    
-    def test_version(self):
-        """Vérification de la version MariaDB"""
-        self.cursor.execute("SELECT VERSION()")
-        version = self.cursor.fetchone()[0]
-        self.assertIn('11.8', version, f"Expected MariaDB 11.8, got {version}")
-    
-    def test_charset_utf8mb4(self):
-        """Vérification du charset par défaut"""
-        self.cursor.execute("SHOW VARIABLES LIKE 'character_set_server'")
-        charset = self.cursor.fetchone()[1]
-        self.assertEqual(charset, 'utf8mb4')
-    
-    def test_json_operations(self):
-        """Test des opérations JSON"""
-        # Création table de test
-        self.cursor.execute("""
-            CREATE TEMPORARY TABLE test_json (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                data JSON
-            )
-        """)
-        
-        # Insertion JSON
-        test_data = {'name': 'Test', 'values': [1, 2, 3], 'nested': {'key': 'value'}}
-        self.cursor.execute(
-            "INSERT INTO test_json (data) VALUES (?)",
-            (json.dumps(test_data),)
-        )
-        
-        # Extraction JSON
-        self.cursor.execute("SELECT data->>'$.name' FROM test_json")
-        result = self.cursor.fetchone()[0]
-        self.assertEqual(result, 'Test')
-        
-        # JSON_EXTRACT
-        self.cursor.execute("SELECT JSON_EXTRACT(data, '$.values[0]') FROM test_json")
-        result = self.cursor.fetchone()[0]
-        self.assertEqual(int(result), 1)
-    
-    def test_datetime_extended(self):
-        """Test des TIMESTAMP étendus (>2038) - Nouveauté 11.8"""
-        self.cursor.execute("""
-            CREATE TEMPORARY TABLE test_dates (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                future_date DATETIME
-            )
-        """)
-        
-        # Date au-delà de 2038
-        future_date = datetime(2050, 1, 1, 12, 0, 0)
-        self.cursor.execute(
-            "INSERT INTO test_dates (future_date) VALUES (?)",
-            (future_date,)
-        )
-        
-        self.cursor.execute("SELECT future_date FROM test_dates")
-        result = self.cursor.fetchone()[0]
-        self.assertEqual(result.year, 2050)
-    
-    def test_window_functions(self):
-        """Test des fonctions de fenêtrage"""
-        self.cursor.execute("""
-            CREATE TEMPORARY TABLE test_window (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                category VARCHAR(50),
-                value INT
-            )
-        """)
-        
-        # Insertion de données
-        self.cursor.executemany(
-            "INSERT INTO test_window (category, value) VALUES (?, ?)",
-            [('A', 10), ('A', 20), ('B', 15), ('B', 25)]
-        )
-        
-        # Test ROW_NUMBER
-        self.cursor.execute("""
-            SELECT category, value,
-                   ROW_NUMBER() OVER (PARTITION BY category ORDER BY value) as rn
-            FROM test_window
-        """)
-        results = self.cursor.fetchall()
-        self.assertEqual(len(results), 4)
-    
-    def test_cte_recursive(self):
-        """Test des CTE récursives"""
-        self.cursor.execute("""
-            WITH RECURSIVE numbers AS (
-                SELECT 1 AS n
-                UNION ALL
-                SELECT n + 1 FROM numbers WHERE n < 5
-            )
-            SELECT * FROM numbers
-        """)
-        results = self.cursor.fetchall()
-        self.assertEqual(len(results), 5)
-        self.assertEqual([r[0] for r in results], [1, 2, 3, 4, 5])
-    
-    def test_prepared_statements(self):
-        """Test des prepared statements"""
-        self.cursor.execute("""
-            CREATE TEMPORARY TABLE test_prep (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(100)
-            )
-        """)
-        
-        # Insertion avec prepared statement
-        stmt = "INSERT INTO test_prep (name) VALUES (?)"
-        self.cursor.execute(stmt, ('Test Name',))
-        
-        # Sélection avec prepared statement
-        self.cursor.execute("SELECT name FROM test_prep WHERE id = ?", (1,))
-        result = self.cursor.fetchone()[0]
-        self.assertEqual(result, 'Test Name')
-    
-    def test_transactions(self):
-        """Test du comportement transactionnel"""
-        self.cursor.execute("""
-            CREATE TEMPORARY TABLE test_tx (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                value INT
-            ) ENGINE=InnoDB
-        """)
-        
-        # Test ROLLBACK
-        self.conn.begin()
-        self.cursor.execute("INSERT INTO test_tx (value) VALUES (100)")
-        self.conn.rollback()
-        
-        self.cursor.execute("SELECT COUNT(*) FROM test_tx")
-        count = self.cursor.fetchone()[0]
-        self.assertEqual(count, 0, "Rollback should have removed the row")
-        
-        # Test COMMIT
-        self.conn.begin()
-        self.cursor.execute("INSERT INTO test_tx (value) VALUES (200)")
-        self.conn.commit()
-        
-        self.cursor.execute("SELECT COUNT(*) FROM test_tx")
-        count = self.cursor.fetchone()[0]
-        self.assertEqual(count, 1, "Commit should have persisted the row")
+Deux autres points liés à la connexion :
 
+**Connecteur trop ancien.** Un plugin moderne (`ed25519`, `caching_sha2_password`) exige un connecteur capable de le négocier. Un pilote vétuste peut échouer même si le serveur le propose — argument supplémentaire pour mettre à jour les connecteurs (§19.5.2).
 
-class QueryCompatibilityTests(unittest.TestCase):
-    """Tests de compatibilité des requêtes applicatives"""
-    
-    @classmethod
-    def setUpClass(cls):
-        cls.conn = mariadb.connect(
-            host='localhost',
-            port=3306,
-            user='test_user',
-            password='test_password',
-            database='test_db'
-        )
-        cls.cursor = cls.conn.cursor()
-    
-    def test_app_query_1(self):
-        """Test requête applicative #1 - À personnaliser"""
-        # Remplacer par vos requêtes applicatives réelles
-        query = "SELECT 1 + 1 AS result"
-        self.cursor.execute(query)
-        result = self.cursor.fetchone()[0]
-        self.assertEqual(result, 2)
-    
-    def test_app_stored_procedure(self):
-        """Test procédure stockée applicative"""
-        # À adapter avec vos procédures
-        pass
-
-
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
-```
-
-### Script de validation des requêtes
-
-```bash
-#!/bin/bash
-# validate_queries.sh
-# Validation des requêtes applicatives sur MariaDB 11.8
-
-MARIADB_HOST="localhost"
-MARIADB_USER="test_user"
-MARIADB_PASS="test_password"
-MARIADB_DB="test_db"
-QUERY_FILE="application_queries.sql"
-RESULTS_DIR="./validation_results"
-
-mkdir -p $RESULTS_DIR
-
-echo "=== Validation des requêtes applicatives ==="
-echo "Host: $MARIADB_HOST"
-echo "Database: $MARIADB_DB"
-echo ""
-
-# Compteurs
-total=0
-success=0
-failed=0
-
-# Lecture et exécution des requêtes
-while IFS= read -r query || [[ -n "$query" ]]; do
-    # Ignorer les lignes vides et commentaires
-    [[ -z "$query" || "$query" =~ ^[[:space:]]*-- ]] && continue
-    
-    total=$((total + 1))
-    echo -n "[$total] Testing query... "
-    
-    # Exécuter la requête
-    result=$(mariadb -h $MARIADB_HOST -u $MARIADB_USER -p$MARIADB_PASS \
-             $MARIADB_DB -e "$query" 2>&1)
-    exit_code=$?
-    
-    if [ $exit_code -eq 0 ]; then
-        echo "✅ OK"
-        success=$((success + 1))
-    else
-        echo "❌ FAILED"
-        echo "   Query: ${query:0:80}..."
-        echo "   Error: $result"
-        failed=$((failed + 1))
-        
-        # Logger l'erreur
-        echo "Query: $query" >> $RESULTS_DIR/failed_queries.log
-        echo "Error: $result" >> $RESULTS_DIR/failed_queries.log
-        echo "---" >> $RESULTS_DIR/failed_queries.log
-    fi
-done < "$QUERY_FILE"
-
-echo ""
-echo "=== Résumé ==="
-echo "Total: $total"
-echo "Succès: $success"
-echo "Échecs: $failed"
-echo ""
-
-if [ $failed -gt 0 ]; then
-    echo "⚠️ Des requêtes ont échoué. Voir $RESULTS_DIR/failed_queries.log"
-    exit 1
-else
-    echo "✅ Toutes les requêtes ont réussi"
-    exit 0
-fi
-```
+**TLS zéro-configuration** (depuis 11.8, §10.7.3). MariaDB peut désormais négocier le chiffrement TLS sans configuration explicite. Une application qui se connectait en clair peut désormais établir une connexion chiffrée, ce qui est souhaitable, mais il faut vérifier le comportement de validation de certificat côté client (mode `VERIFY_CA` / `VERIFY_IDENTITY`) pour éviter un échec inattendu.
 
 ---
 
-## Scénarios de problèmes courants
+## 19.5.6 Changements de comportement spécifiques à la 12.3 (vs 11.8)
 
-### Scénario 1 : Application PHP legacy
+Pour une application migrée *depuis la 11.8*, plusieurs changements de comportement de la série 12.x doivent être passés en revue. Ils sont récapitulés ici du point de vue applicatif :
 
-**Problème** : Application PHP utilisant l'extension `mysql_*` deprecated.
+- **`innodb_snapshot_isolation`** n'est en réalité **pas** un changement propre au passage `11.8 → 12.3` : le paramètre est **déjà activé par défaut en 11.8** (depuis la 11.6.2). Il ne représente une nouveauté que pour les migrations depuis une version antérieure (MariaDB ≤ 11.4) ou depuis MySQL — voir §19.5.4. À ce titre, il n'a pas sa place dans la liste des deltas spécifiques à la 12.3, mais reste mentionné ici car c'est une confusion fréquente.
+- **Variables système retirées** : `big_tables`, `large_page_size`, `storage_engine` (§11.2.3). Tout script de démarrage, fichier `my.cnf` ou commande `SET` référençant ces variables provoquera désormais une erreur. À auditer dans la configuration *et* dans le code applicatif qui positionnerait des variables de session.
+- **Noms de contraintes de clés étrangères uniques par table seulement** (§18.12), et non plus à l'échelle de la base. Ce changement est globalement *assouplissant*, mais un outil de migration de schéma ou un ORM qui supposait l'unicité à l'échelle de la base peut générer du DDL inadapté.
+- **Nouveau binlog intégré à InnoDB** (§11.5.4), introduit en 12.3 mais **optionnel** : il s'active explicitement via `binlog_storage_engine=innodb` (en plus de `log_bin`) et reste **désactivé par défaut**. Tant qu'on ne l'active pas, rien ne change. Une fois activé, il est transparent pour l'application elle-même, mais impacte les outils externes de lecture du binlog (CDC, Debezium — §20.8) qui doivent prendre en charge le nouveau format.
 
-```php
-// Code legacy (NON fonctionnel avec PHP 7+)
-$conn = mysql_connect("localhost", "user", "password");
-mysql_select_db("mydb", $conn);
-$result = mysql_query("SELECT * FROM users");
-
-// Migration vers PDO (recommandé)
-$pdo = new PDO(
-    'mysql:host=localhost;dbname=mydb;charset=utf8mb4',
-    'user',
-    'password',
-    [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
-);
-$stmt = $pdo->query("SELECT * FROM users");
-$result = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Migration vers mysqli (alternative)
-$mysqli = new mysqli("localhost", "user", "password", "mydb");
-$mysqli->set_charset("utf8mb4");
-$result = $mysqli->query("SELECT * FROM users");
-```
-
-### Scénario 2 : ORM générant des requêtes incompatibles
-
-**Problème** : Hibernate générant des collations MySQL 8.0.
-
-```java
-// Erreur typique
-// org.hibernate.exception.SQLGrammarException: 
-// Unknown collation: 'utf8mb4_0900_ai_ci'
-
-// Solution : Configuration du dialect
-// application.properties
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MariaDB106Dialect
-
-// Ou override du schema generation
-spring.jpa.properties.hibernate.hbm2ddl.auto=none
-// Puis utiliser Flyway/Liquibase avec scripts MariaDB compatibles
-```
-
-### Scénario 3 : Connexions TLS rejetées
-
-**Problème** : MariaDB 11.8 exige TLS par défaut.
-
-```python
-# Erreur typique
-# mariadb.OperationalError: SSL connection error
-
-# Solution 1 : Configurer TLS côté client
-config = {
-    'host': 'localhost',
-    'user': 'app_user',
-    'password': 'password',
-    'database': 'mydb',
-    'ssl': True,
-    'ssl_ca': '/path/to/ca-cert.pem'  # Certificat CA
-}
-
-# Solution 2 : Désactiver l'exigence TLS (non recommandé en production)
-# Sur le serveur MariaDB :
-# SET GLOBAL require_secure_transport = OFF;
-
-# Solution 3 : Connexion avec ssl_mode
-config = {
-    'host': 'localhost',
-    'user': 'app_user',
-    'password': 'password',
-    'database': 'mydb',
-    'ssl': {'ssl_mode': 'PREFERRED'}  # Ou 'DISABLED' si vraiment nécessaire
-}
-```
+> 🔗 La checklist exhaustive et ordonnée des changements de comportement 11.8 → 12.3 fait l'objet d'une section dédiée, §19.10. La présente liste en isole les éléments qui touchent la couche applicative.
 
 ---
 
-## ✅ Points clés à retenir
+## 19.5.7 Compatibilité des ORM et frameworks
 
-- La compatibilité applicative doit être validée à **tous les niveaux** : connecteur, ORM, SQL, application
-- Les **connecteurs MySQL** fonctionnent avec MariaDB, mais les **connecteurs MariaDB** offrent un meilleur support
-- Configurez explicitement le **dialect MariaDB** dans vos ORM (Hibernate, SQLAlchemy, Prisma)
-- MariaDB 11.8 utilise **utf8mb4 par défaut** : vérifiez l'espace disque et les index
-- Le **TLS est activé par défaut** en 11.8 : configurez les certificats ou désactivez si nécessaire
-- Certaines fonctions MySQL 8.0 (`MEMBER OF`, collations `0900`) nécessitent une **réécriture**
-- Mettez en place des **tests de régression automatisés** avant et après migration
-- Testez les **requêtes critiques** de l'application dans l'environnement cible
+Les ORM masquent en partie le SQL, mais ils ne l'éliminent pas : ils *génèrent* du SQL et du DDL spécifiques au moteur ciblé. Leur compatibilité dépend donc de deux choix : le **dialecte** sélectionné et la **version** de l'ORM/connecteur.
 
----
+- **Hibernate (Java)** : utiliser le dialecte `MariaDBDialect` (et sa variante versionnée correspondante) plutôt qu'un dialecte MySQL générique, afin que le SQL généré exploite correctement les fonctionnalités du moteur (§17.3.1).
+- **SQLAlchemy (Python)** : préférer le dialecte `mariadb+pymysql://` (ou `mariadb+mariadbconnector://`) qui reconnaît MariaDB comme moteur distinct (§17.3.2).
+- **Entity Framework Core (.NET)** : le fournisseur Pomelo (`Pomelo.EntityFrameworkCore.MySql`) prend en charge MariaDB ; vérifier la version alignée sur la 12.3 (§17.3.5).
+- **Prisma, Sequelize, Django ORM** : épingler les versions de l'ORM *et* du connecteur sous-jacent, et exécuter la suite de tests d'intégration après migration (§17.3).
 
-## 🔗 Ressources et références
-
-- [📖 MariaDB Connector/J Documentation](https://mariadb.com/kb/en/mariadb-connector-j/)
-- [📖 MariaDB Connector/Python](https://mariadb.com/kb/en/mariadb-connector-python/)
-- [📖 MariaDB Connector/Node.js](https://mariadb.com/kb/en/mariadb-connector-nodejs/)
-- [📖 Hibernate MariaDB Dialect](https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html)
-- [📖 SQLAlchemy MariaDB](https://docs.sqlalchemy.org/en/20/dialects/mysql.html)
-- [📖 Prisma MySQL/MariaDB](https://www.prisma.io/docs/concepts/database-connectors/mysql)
-- [📖 Pomelo Entity Framework Core](https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql)
+Le réflexe de migration côté ORM est triple : **sélectionner le bon dialecte**, **épingler les versions** (ORM + connecteur), puis **regénérer et relire le SQL/DDL** produit, en particulier les migrations de schéma automatiques qui peuvent émettre du DDL légèrement différent selon la version cible.
 
 ---
 
-## ➡️ Section suivante
+## 19.5.8 Démarche d'évaluation de la compatibilité
 
-**[19.6 Tests de compatibilité](./06-tests-compatibilite.md)** : Nous approfondirons les méthodologies de tests de compatibilité : environnements de validation, automatisation des tests de non-régression, benchmarking comparatif, et stratégies de validation en conditions réelles.
+Avant de basculer en production, une évaluation structurée de la compatibilité applicative s'organise autour de quatre temps :
+
+1. **Inventaire** — recenser, pour chaque application : connecteurs et leurs versions, ORM et dialectes, méthode d'authentification, jeu de caractères/collation utilisés, et `sql_mode` attendu. Cet inventaire est la matière première de l'analyse.
+2. **Analyse statique** — comparer le `sql_mode` source/cible, repérer les identifiants entrant en collision avec de nouveaux mots réservés, et identifier les requêtes dépendantes de comportements transactionnels (`REPEATABLE READ` avec écritures concurrentes) ou de collations (comparaisons, `ORDER BY`, contraintes `UNIQUE`).
+3. **Validation dynamique** — exécuter l'application contre une instance 12.3 de pré-production. La fonctionnalité de **capture et rejeu de charge** de MaxScale (Workload Capture/Replay, §14.5) permet de rejouer un trafic de production réel contre la nouvelle version et de comparer les résultats — un outil précieux pour débusquer les incompatibilités silencieuses. La construction des jeux de tests proprement dite est détaillée en §19.6.
+4. **Surveillance post-bascule** — après la mise en production, surveiller les journaux d'erreurs applicatifs et le slow query log pour détecter les erreurs nouvelles (notamment les erreurs de conflit d'instantané) et les éventuelles régressions de performance liées à des plans d'exécution différents.
+
+---
+
+## Points clés à retenir
+
+- La compatibilité applicative est une préoccupation *distincte* du succès technique de la migration ; elle se joue sur plusieurs couches, du protocole jusqu'aux collations.
+- Les incompatibilités **bloquantes** (authentification, dialecte sous `sql_mode` strict) sont gênantes mais visibles ; les incompatibilités **silencieuses** (isolation, collations, conversions implicites) sont les plus dangereuses car elles ne se révèlent qu'en production.
+- Les vrais changements de comportement `11.8 → 12.3` à auditer côté applicatif sont les **variables système retirées** (`big_tables`, `large_page_size`, `storage_engine`), les **noms de contraintes de clés étrangères désormais uniques par table** et le **binlog InnoDB** (optionnel). Attention : `innodb_snapshot_isolation = ON` est **déjà le défaut en 11.8** (depuis la 11.6.2) — ce n'est donc *pas* un delta `11.8 → 12.3`, mais bien un changement pour qui migre depuis MariaDB ≤ 11.4 ou MySQL (erreur `1020`, logique de rejeu).
+- L'ajout de `caching_sha2_password` simplifie nettement la migration des applications conçues pour MySQL 8.
+- Penser à **migrer connecteurs et dialectes ORM en même temps que le serveur**, en épinglant des versions testées.
+- Auditer la configuration et le code pour les **variables retirées** (`big_tables`, `large_page_size`, `storage_engine`).
+
+> 🔗 **Pour aller plus loin** : §19.6 *Tests de compatibilité* (mise en œuvre concrète de la validation), §19.10 *Migration 11.8 → 12.3* (checklist exhaustive des changements de comportement), §6.9 *Snapshot Isolation*, §11.3 *Modes SQL*, et le chapitre 17 *Intégration et Développement* pour le détail des connecteurs et ORM.
 
 ⏭️ [Tests de compatibilité](/19-migration-compatibilite/06-tests-compatibilite.md)
