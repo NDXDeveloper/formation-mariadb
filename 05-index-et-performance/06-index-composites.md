@@ -169,8 +169,8 @@ Il n'y a pas de nombre « idéal », mais des bornes de bon sens : chaque colonn
 ## 🧭 Navigation
 
 - ⬅️ Section précédente : [5.5.3 Index pour ORDER BY et GROUP BY](05.3-index-order-group.md)
-- ➡️ Section suivante : [5.7 Analyse des plans d'exécution (EXPLAIN, EXPLAIN ANALYZE)](07-analyse-plans-execution.md)
+- ➡️ Section suivante : [5.7 Analyse des plans d'exécution (EXPLAIN et ANALYZE)](07-analyse-plans-execution.md)
 - 📂 Chapitre : [5. Index et Performance](README.md)
 - 🏠 [Retour au sommaire](../SOMMAIRE.md)
 
-⏭️ [Analyse des plans d'exécution (EXPLAIN, EXPLAIN ANALYZE)](/05-index-et-performance/07-analyse-plans-execution.md)
+⏭️ [Analyse des plans d'exécution (EXPLAIN et ANALYZE)](/05-index-et-performance/07-analyse-plans-execution.md)

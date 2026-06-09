@@ -1,6 +1,6 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 7.7 Moteur Vector/HNSW : Recherche vectorielle pour l'IA
+# 7.7 Vector/HNSW : recherche vectorielle pour l'IA
 
 > **Chapitre 7 — Moteurs de Stockage** · MariaDB 12.3 LTS  
 > Cette section présente la recherche vectorielle sous l'angle du **stockage**. Le détail complet de la fonctionnalité est traité en §18.10, l'index en §5.3, et les cas d'usage IA/RAG au chapitre 20 (§20.9).

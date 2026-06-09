@@ -128,4 +128,4 @@ La grille de décision complète figure en §7.8.
 - Les **mêmes tables S3 sont partageables** entre serveurs (`s3-slave-ignore-updates=1`).
 - À réserver à l'**archivage froid** : pour le transactionnel, **InnoDB** ; pour l'analytique, **ColumnStore**.
 
-⏭️ [Moteur Vector/HNSW : Recherche vectorielle pour IA](/07-moteurs-de-stockage/07-moteur-vector-hnsw.md)
+⏭️ [Vector/HNSW : recherche vectorielle pour l'IA](/07-moteurs-de-stockage/07-moteur-vector-hnsw.md)

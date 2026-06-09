@@ -111,7 +111,7 @@ Cette transformation s'applique de façon cohérente aux vecteurs stockés **et*
 - **§18.10** MariaDB Vector : recherche vectorielle pour l'IA/RAG (type `VECTOR`, fonctions, index HNSW)
 - **§18.10.7** Optimisations 12.3 (même sujet, sous l'angle fonctionnel) et **§18.10.5** Optimisations SIMD
 - **§5.3** Index VECTOR (HNSW) pour la recherche vectorielle
-- **§7.7** Moteur Vector/HNSW
+- **§7.7** Vector/HNSW
 - **§20.9** Cas d'usage IA : RAG et recherche vectorielle
 
 ⏭️ [Partie 8 : DevOps, Cloud et Automatisation](/partie-08-devops-cloud-automatisation.md)

@@ -100,7 +100,7 @@ Les sous-sections suivantes approfondissent InnoDB sous chacun de ses angles :
 
 Deux comportements d'InnoDB méritent d'être signalés dès maintenant, leur détail relevant d'autres chapitres :
 
-- **Isolation par instantané activée par défaut** (`innodb_snapshot_isolation = ON`), qui renforce le comportement du niveau d'isolation `REPEATABLE READ` (voir §6.9). ⚠️ Ce n'est **pas** une nouveauté de la 12.3 : ce défaut est en place **depuis MariaDB 11.6**, donc déjà en 11.8 LTS comme en 12.3.
+- **Isolation par instantané activée par défaut** (`innodb_snapshot_isolation = ON`), qui renforce le comportement du niveau d'isolation `REPEATABLE READ` (voir §6.9). ⚠️ Ce n'est **pas** une nouveauté de la 12.3 : ce défaut est en place **depuis MariaDB 11.6.2**, donc déjà en 11.8 LTS comme en 12.3.
 - 🆕 **Binary log intégré à InnoDB** (vraie nouveauté de la 12.3) : il supprime la coûteuse synchronisation entre le moteur et le journal binaire — MariaDB le présente comme la plus importante amélioration de performance OLTP de la 12.3. C'est une fonctionnalité **optionnelle**, à activer explicitement (voir §11.5.4).
 
 Pour une migration **11.8 → 12.3**, seul le binary log intégré constitue un véritable changement (l'isolation par instantané étant déjà active en 11.8) ; les changements de comportement sont récapitulés en §19.10.

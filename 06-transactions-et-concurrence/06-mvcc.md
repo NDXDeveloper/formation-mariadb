@@ -80,7 +80,7 @@ On peut surveiller la taille de l'historique via la ligne **`History list length
 
 ## Lien avec l'isolation par instantané
 
-Le MVCC **fournit** l'instantané ; l'**isolation par instantané** activée par défaut (depuis MariaDB 11.6, donc en 11.8 LTS comme en 12.3) vient s'**appuyer** dessus. Avec `innodb_snapshot_isolation = ON`, lorsqu'une transaction tente une lecture courante (verrou/écriture) sur une ligne dont la version a **changé depuis sa vue de lecture**, InnoDB **lève une erreur** au lieu d'effectuer silencieusement la lecture courante — fermant ainsi la porte aux mises à jour perdues. Voir [§6.9](09-snapshot-isolation.md).
+Le MVCC **fournit** l'instantané ; l'**isolation par instantané** activée par défaut (depuis MariaDB 11.6.2, donc en 11.8 LTS comme en 12.3) vient s'**appuyer** dessus. Avec `innodb_snapshot_isolation = ON`, lorsqu'une transaction tente une lecture courante (verrou/écriture) sur une ligne dont la version a **changé depuis sa vue de lecture**, InnoDB **lève une erreur** au lieu d'effectuer silencieusement la lecture courante — fermant ainsi la porte aux mises à jour perdues. Voir [§6.9](09-snapshot-isolation.md).
 
 ## À retenir
 

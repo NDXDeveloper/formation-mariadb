@@ -1,6 +1,6 @@
 🔝 Retour au [Sommaire](/SOMMAIRE.md)
 
-# 5.7 — Analyse des plans d'exécution (EXPLAIN, EXPLAIN ANALYZE)
+# 5.7 — Analyse des plans d'exécution (EXPLAIN et ANALYZE)
 
 > **Chapitre 5 — Index et Performance** · Section 5.7  
 > Version de référence : **MariaDB 12.3 LTS**

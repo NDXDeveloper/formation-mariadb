@@ -152,7 +152,7 @@ La série 12.x, consolidée dans la **12.3 LTS**, a renforcé les performances d
 ## Pour aller plus loin
 
 - **Fonctionnalité complète** (conversion, SIMD, LLMs) : [section 18.10](../18-fonctionnalites-avancees/10-mariadb-vector.md)
-- **Le moteur Vector/HNSW** : [section 7.7](../07-moteurs-de-stockage/07-moteur-vector-hnsw.md)
+- **Vector/HNSW vu sous l'angle du stockage** (fonctionnalité intégrée à InnoDB, non un moteur distinct) : [section 7.7](../07-moteurs-de-stockage/07-moteur-vector-hnsw.md)
 - **Cas d'usage IA (RAG, recommandation, recherche hybride)** : [chapitre 20](../20-cas-usage-architectures/09-use-cases-ia-rag.md)
 - **Recherche par mots-clés** (complémentaire de la recherche sémantique) : [section 5.2.3](02.3-full-text.md)
 

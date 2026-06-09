@@ -58,7 +58,7 @@ On rencontre aussi le sigle **GA** (*General Availability*) : il désigne la pre
 | Version | Type | GA | Support jusqu'à |
 |---------|------|-----|-----------------|
 | 13.1 🧪 | Développement | — | — |
-| 13.0 | Rolling | 2026 | Version rolling suivante |
+| 13.0 | Rolling | RC — GA à venir | Version rolling suivante |
 | **12.3** ⭐ | LTS | Mai 2026 | **Juin 2029** |
 | 12.0 → 12.2 | Rolling | 2025–2026 | Consolidées dans 12.3 |
 | **11.8** | LTS | Juin 2025 | 2028 |

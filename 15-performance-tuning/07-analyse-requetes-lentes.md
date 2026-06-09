@@ -30,7 +30,7 @@ C'est aussi pourquoi un *slow query log* configuré avec un seuil élevé peut i
 L'analyse des requêtes lentes suit un cycle que l'on répète :
 
 1. **Identifier** les requêtes les plus coûteuses (par temps total consommé).
-2. **Analyser** pourquoi elles le sont, notamment via leur plan d'exécution (EXPLAIN / EXPLAIN ANALYZE, cf. §5.7).
+2. **Analyser** pourquoi elles le sont, notamment via leur plan d'exécution (EXPLAIN / ANALYZE, cf. §5.7).
 3. **Optimiser** : ajout ou révision d'un index (cf. §5.5), réécriture de la requête, ou ajustement du schéma.
 4. **Vérifier** en mesurant avant et après.
 
@@ -63,7 +63,7 @@ Plusieurs sources complémentaires permettent de repérer les requêtes coûteus
 
 - **Le Performance Schema et le sys schema** (§15.8, et §9.7.2) offrent une approche en mémoire, sans fichier ni surcoût d'E/S, et qui capture **toutes** les requêtes — y compris les rapides. La table `events_statements_summary_by_digest` agrège les statistiques par empreinte (nombre d'exécutions, temps total/moyen/maximum, temps de verrouillage, lignes examinées et renvoyées…), ce qui en fait l'outil idéal pour un classement par coût agrégé. La vue `sys.statement_analysis` en présente une version directement lisible.
 
-- **`EXPLAIN` et `EXPLAIN ANALYZE`** (§5.7) interviennent une fois la requête fautive identifiée, pour comprendre son plan d'exécution : utilisation des index, type de balayage, ordre des jointures, et écart entre lignes estimées et réelles.
+- **`EXPLAIN` et `ANALYZE`** (§5.7) interviennent une fois la requête fautive identifiée, pour comprendre son plan d'exécution : utilisation des index, type de balayage, ordre des jointures, et écart entre lignes estimées et réelles.
 
 - **Les requêtes en cours** s'observent en temps réel via `SHOW [FULL] PROCESSLIST` ou la table `performance_schema.events_statements_current`, utiles pour repérer une requête bloquée ou anormalement longue à l'instant *t*.
 

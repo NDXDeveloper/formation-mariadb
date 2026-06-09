@@ -46,7 +46,7 @@ Ce module est le cœur de l'optimisation des performances en MariaDB. Vous y dé
 - **Invisible et Progressive indexes** : Tester des index sans impacter la production
 
 #### 📊 Analyse et diagnostic
-- **Plans d'exécution** : Maîtriser `EXPLAIN` et `EXPLAIN ANALYZE` pour comprendre ce que fait réellement MariaDB
+- **Plans d'exécution** : Maîtriser `EXPLAIN` et `ANALYZE` pour comprendre ce que fait réellement MariaDB
 - **Optimisation de requêtes** : Méthodologie systématique pour identifier et corriger les goulots d'étranglement
 - **Index-only scans** : La technique ultime pour la performance maximale
 
@@ -73,7 +73,7 @@ Comprendre le compromis fondamental entre cohérence et performance :
 
 Chaque niveau a ses **cas d'usage spécifiques** et ses implications en production.
 
-- **Snapshot Isolation** : par défaut (`innodb_snapshot_isolation`, activé depuis MariaDB 11.6 — donc en 12.3), `REPEATABLE READ` applique une véritable isolation par instantané qui **protège contre les mises à jour perdues** en signalant les conflits par une erreur plutôt que de les écraser silencieusement
+- **Snapshot Isolation** : par défaut (`innodb_snapshot_isolation`, activé depuis MariaDB 11.6.2 — donc en 12.3), `REPEATABLE READ` applique une véritable isolation par instantané qui **protège contre les mises à jour perdues** en signalant les conflits par une erreur plutôt que de les écraser silencieusement
 
 #### 🔐 Gestion de la concurrence
 - **Verrous** : `LOCK TABLES`, `SELECT FOR UPDATE`, `LOCK IN SHARE MODE` — quand et comment les utiliser
@@ -144,7 +144,7 @@ Cette fonctionnalité positionne MariaDB comme un **choix de premier plan pour l
 - ✅ **Identifier** les requêtes lentes et diagnostiquer leurs causes
 - ✅ **Concevoir** des stratégies d'indexation optimales pour vos tables
 - ✅ **Créer** des index composites dans le bon ordre
-- ✅ **Analyser** les plans d'exécution avec `EXPLAIN` et `EXPLAIN ANALYZE`
+- ✅ **Analyser** les plans d'exécution avec `EXPLAIN` et `ANALYZE`
 - ✅ **Optimiser** les requêtes pour exploiter les index existants
 - ✅ **Implémenter** des index covering pour éliminer l'accès aux données
 - ✅ **Utiliser** les index VECTOR pour la recherche sémantique et l'IA
@@ -249,7 +249,7 @@ CREATE INDEX idx_customer_id ON orders(customer_id);
 -- Transaction B lit balance=1000, calcule 1000-200=800, écrit 800
 -- Résultat : Balance=800 au lieu de 700 (la mise à jour de A est perdue)
 ```
-**Impact** : Incohérence financière, potentiellement réglementaire. Ce conflit n'est évité ni par `READ COMMITTED` ni par `REPEATABLE READ` : la parade est le verrouillage explicite `SELECT … FOR UPDATE` — et depuis MariaDB 11.6 (donc en 12.3), l'isolation par instantané activée par défaut **signale ce conflit par une erreur** au lieu de l'écraser silencieusement (cf. Chapitre 6).
+**Impact** : Incohérence financière, potentiellement réglementaire. Ce conflit n'est évité ni par `READ COMMITTED` ni par `REPEATABLE READ` : la parade est le verrouillage explicite `SELECT … FOR UPDATE` — et depuis MariaDB 11.6.2 (donc en 12.3), l'isolation par instantané activée par défaut **signale ce conflit par une erreur** au lieu de l'écraser silencieusement (cf. Chapitre 6).
 
 #### ✅ Scénario 4 : Recherche sémantique moderne (index VECTOR)
 ```sql
@@ -317,7 +317,7 @@ Maîtriser ces trois piliers vous distingue comme un **professionnel capable de 
 2. **Mesurez systématiquement** : Avant/après chaque changement
    ```sql
    -- Toujours commencer par ça
-   EXPLAIN ANALYZE SELECT ...;
+   ANALYZE SELECT ...;
    ```
 
 3. **Expérimentez avec les niveaux d'isolation** : Ouvrez deux sessions et testez les scénarios de concurrence

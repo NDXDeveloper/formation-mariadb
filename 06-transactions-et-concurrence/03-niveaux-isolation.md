@@ -26,7 +26,7 @@ Au sein d'une même transaction, une **seconde lecture** d'une ligne déjà lue 
 
 Une transaction ré-exécute une requête portant sur un **ensemble de lignes** (par exemple `WHERE montant > 1000`) et constate l'**apparition** (ou la disparition) de lignes — des « fantômes » — insérées ou supprimées puis validées par une autre transaction. La nuance avec la lecture non répétable : celle-ci concerne la **valeur** d'une ligne existante, tandis que la lecture fantôme concerne la **population** de lignes satisfaisant un critère.
 
-> Au-delà de ces trois anomalies « standard », d'autres existent, comme la **mise à jour perdue** (*lost update*), où deux transactions écrasent mutuellement leurs modifications. C'est ce type de problème que combat l'isolation par instantané activée par défaut (depuis MariaDB 11.6, donc en 12.3 ; voir [§6.9](09-snapshot-isolation.md)).
+> Au-delà de ces trois anomalies « standard », d'autres existent, comme la **mise à jour perdue** (*lost update*), où deux transactions écrasent mutuellement leurs modifications. C'est ce type de problème que combat l'isolation par instantané activée par défaut (depuis MariaDB 11.6.2, donc en 12.3 ; voir [§6.9](09-snapshot-isolation.md)).
 
 ## Les quatre niveaux d'isolation standard
 
@@ -52,7 +52,7 @@ Le niveau d'isolation **par défaut** d'InnoDB (donc de MariaDB) est **`REPEATAB
 
 Un point important distingue InnoDB du strict minimum imposé par le standard : à `REPEATABLE READ`, InnoDB **évite en pratique les lectures fantômes** dans la plupart des cas. Les lectures simples (non verrouillantes) s'appuient sur un **instantané cohérent** fourni par le **MVCC** ([§6.6](06-mvcc.md)), tandis que les lectures verrouillantes (`SELECT … FOR UPDATE`) utilisent des **verrous d'intervalle** (*next-key locks*) qui empêchent l'insertion de lignes fantômes ([§6.4](04-verrous.md)). Le `REPEATABLE READ` d'InnoDB est donc **plus fort** que la ligne correspondante du tableau ci-dessus.
 
-> **Isolation par instantané (par défaut).** La variable `innodb_snapshot_isolation` est **activée par défaut** (depuis MariaDB 11.6, donc en 11.8 LTS comme en 12.3), faisant de `REPEATABLE READ` une véritable **isolation par instantané** qui protège contre les mises à jour perdues. Le comportement détaillé est traité en [§6.9](09-snapshot-isolation.md).
+> **Isolation par instantané (par défaut).** La variable `innodb_snapshot_isolation` est **activée par défaut** (depuis MariaDB 11.6.2, donc en 11.8 LTS comme en 12.3), faisant de `REPEATABLE READ` une véritable **isolation par instantané** qui protège contre les mises à jour perdues. Le comportement détaillé est traité en [§6.9](09-snapshot-isolation.md).
 
 ## Définir et consulter le niveau d'isolation
 

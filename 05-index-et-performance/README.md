@@ -25,7 +25,7 @@ Ce chapitre constitue le socle de toute démarche de performance. Il couvre à l
 - **Distinguer** les différents types d'index (B-Tree, Hash, Full-Text, Spatial, VECTOR) et choisir le type adapté à chaque besoin.
 - **Créer, modifier et supprimer** des index, et appliquer des stratégies d'indexation cohérentes (colonnes filtrées, clés étrangères, tri et regroupement).
 - **Concevoir** des index composites en maîtrisant l'importance de l'ordre des colonnes.
-- **Lire et interpréter** un plan d'exécution avec `EXPLAIN` et `EXPLAIN ANALYZE`.
+- **Lire et interpréter** un plan d'exécution avec `EXPLAIN` et `ANALYZE`.
 - **Identifier et corriger** les requêtes mal optimisées, en tirant parti des optimisations récentes de l'optimiseur.
 - **Exploiter** des fonctionnalités avancées comme les index *covering*, les *index-only scans* et les index invisibles pour tester et déployer des changements sans risque.
 
@@ -54,7 +54,7 @@ Le chapitre progresse du fonctionnement interne vers les usages avancés, selon 
 | **5.4** | [Création et gestion des index](04-creation-gestion-index.md) | Syntaxe `CREATE INDEX`, `ALTER TABLE`, suppression et maintenance. |
 | **5.5** | [Stratégies d'indexation](05-strategies-indexation.md) | Où placer les index : colonnes filtrées, clés étrangères, `ORDER BY` / `GROUP BY`. |
 | **5.6** | [Index composites et ordre des colonnes](06-index-composites.md) | Le principe du *left-most prefix* et son impact décisif. |
-| **5.7** | [Analyse des plans d'exécution](07-analyse-plans-execution.md) | `EXPLAIN` et `EXPLAIN ANALYZE`, l'outil de diagnostic central. |
+| **5.7** | [Analyse des plans d'exécution](07-analyse-plans-execution.md) | `EXPLAIN` et `ANALYZE`, l'outil de diagnostic central. |
 | **5.8** | [Optimisation des requêtes](08-optimisation-requetes.md) | Techniques d'optimisation, incluant les nouveautés sur les scans inversés. |
 | **5.9** | [Index *covering* et *index-only scans*](09-index-covering.md) | Répondre à une requête sans jamais accéder à la table. |
 | **5.10** | [Invisible indexes et Progressive indexes](10-invisible-progressive-indexes.md) | Tester l'impact d'un index avant de l'adopter ou de le retirer. |

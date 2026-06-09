@@ -58,7 +58,7 @@ Le critère pertinent n'est pas le temps d'une requête prise isolément, mais s
 
 La mesure repose sur une boîte à outils que les sections suivantes détaillent. À ce stade, il suffit d'en connaître le rôle :
 
-- **`EXPLAIN` (plan estimé) et `EXPLAIN ANALYZE` / l'instruction `ANALYZE` (plan réel)** — révèlent le chemin d'exécution choisi et, pour `ANALYZE`, confrontent les estimations de l'optimiseur aux lignes réellement traitées. Le format `FORMAT=JSON` fournit le détail le plus complet (voir [§5.7](../05-index-et-performance/07-analyse-plans-execution.md)).
+- **`EXPLAIN` (plan estimé) et l'instruction `ANALYZE` (plan réel — l'équivalent MariaDB de l'« `EXPLAIN ANALYZE` » de MySQL)** — révèlent le chemin d'exécution choisi et, pour `ANALYZE`, confrontent les estimations de l'optimiseur aux lignes réellement traitées. Le format `FORMAT=JSON` fournit le détail le plus complet (voir [§5.7](../05-index-et-performance/07-analyse-plans-execution.md)).
 - **`optimizer_trace`** — explique *pourquoi* l'optimiseur a retenu tel plan, en exposant son raisonnement de coût.
 - **Slow query log** — capture les requêtes dépassant un seuil de durée (`long_query_time`) ou n'utilisant pas d'index ; c'est la base de l'analyse des requêtes lentes ([§15.7](07-analyse-requetes-lentes.md)).
 - **Performance Schema et sys schema** — instrumentation fine de l'activité interne : attentes, verrous, E/S, mémoire ([§15.8](08-performance-schema-sys.md)).

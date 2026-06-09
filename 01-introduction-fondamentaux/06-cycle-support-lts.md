@@ -83,4 +83,4 @@ Le **support** d'une version garantit des **corrections et correctifs de sécuri
 
 **Navigation** : [⬆️ Chapitre 1 — Introduction et Fondamentaux](README.md) · Section précédente : [1.5 Politique de versions : LTS vs Rolling releases](05-politique-versions-lts-rolling.md) · Section suivante → [1.7 Roadmap : 12.3 LTS → série 13.x](07-roadmap-serie-13.md)
 
-⏭️ [Roadmap : 12.3 LTS (socle actuel) → série 13.x (13.0 rolling, 13.1 dev)](/01-introduction-fondamentaux/07-roadmap-serie-13.md)
+⏭️ [Roadmap : 12.3 LTS (socle actuel) → série 13.x (13.0 en préversion/RC, 13.1 dev)](/01-introduction-fondamentaux/07-roadmap-serie-13.md)

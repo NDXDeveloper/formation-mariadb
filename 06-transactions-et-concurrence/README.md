@@ -24,7 +24,7 @@ Ce chapitre constitue le socle conceptuel et pratique sur lequel reposent la fia
 - expliquer le fonctionnement du **MVCC** d'InnoDB et son intérêt pour la concurrence en lecture ;
 - utiliser les **savepoints** pour réaliser des annulations partielles ;
 - situer les **transactions distribuées (XA)** et leur cas d'usage ;
-- comprendre l'**isolation par instantané** (*snapshot*) que MariaDB applique par défaut à `REPEATABLE READ` (`innodb_snapshot_isolation`, activée par défaut depuis la 11.6 — donc en 11.8 LTS comme en 12.3) et savoir gérer l'erreur de conflit qu'elle introduit.
+- comprendre l'**isolation par instantané** (*snapshot*) que MariaDB applique par défaut à `REPEATABLE READ` (`innodb_snapshot_isolation`, activée par défaut depuis la 11.6.2 — donc en 11.8 LTS comme en 12.3) et savoir gérer l'erreur de conflit qu'elle introduit.
 
 ## Prérequis
 
@@ -42,11 +42,11 @@ Ce chapitre constitue le socle conceptuel et pratique sur lequel reposent la fia
 - **6.6 — [MVCC (Multi-Version Concurrency Control)](06-mvcc.md)** : le contrôle de concurrence multi-versions qui permet des lectures cohérentes sans blocage.
 - **6.7 — [Savepoints : points de sauvegarde](07-savepoints.md)** : poser des points de reprise pour annuler partiellement une transaction.
 - **6.8 — [Transactions distribuées (XA)](08-transactions-distribuees-xa.md)** : coordonner une transaction sur plusieurs ressources via le protocole de validation en deux phases (*two-phase commit*).
-- **6.9 — [Snapshot Isolation](09-snapshot-isolation.md)** : `innodb_snapshot_isolation` (activé par défaut depuis la 11.6, donc en 11.8 LTS et 12.3) et son impact sur le comportement de `REPEATABLE READ`.
+- **6.9 — [Snapshot Isolation](09-snapshot-isolation.md)** : `innodb_snapshot_isolation` (activé par défaut depuis la 11.6.2, donc en 11.8 LTS et 12.3) et son impact sur le comportement de `REPEATABLE READ`.
 
 ## À noter : l'isolation par instantané activée par défaut
 
-Un **comportement par défaut important** d'InnoDB mérite d'être signalé d'emblée : la variable `innodb_snapshot_isolation` est **activée par défaut** en MariaDB 12.3. ⚠️ Ce n'est **pas** une nouveauté de la 12.3 — ce défaut est en place **depuis MariaDB 11.6** (donc déjà en 11.8 LTS) —, mais il change profondément le comportement de `REPEATABLE READ` par rapport aux versions plus anciennes et à de nombreux autres SGBD.
+Un **comportement par défaut important** d'InnoDB mérite d'être signalé d'emblée : la variable `innodb_snapshot_isolation` est **activée par défaut** en MariaDB 12.3. ⚠️ Ce n'est **pas** une nouveauté de la 12.3 — ce défaut est en place **depuis MariaDB 11.6.2** (donc déjà en 11.8 LTS) —, mais il change profondément le comportement de `REPEATABLE READ` par rapport aux versions plus anciennes et à de nombreux autres SGBD.
 
 Concrètement, le niveau `REPEATABLE READ` d'InnoDB applique une véritable isolation par instantané (*snapshot*) : si une ligne lue par la transaction a été modifiée entre-temps par une autre transaction validée, une tentative de la verrouiller ou de la modifier déclenche une **erreur** (`ER_CHECKREAD`) plutôt qu'une mise à jour silencieuse. Ce comportement renforce la protection contre les **mises à jour perdues**, mais peut faire apparaître des erreurs à gérer dans des applications conçues pour des versions antérieures (≤ 11.4 LTS / 10.x), où la variable était à `OFF`.
 

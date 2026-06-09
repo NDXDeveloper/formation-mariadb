@@ -58,7 +58,7 @@ L'**isolation** garantit que des transactions exécutées **simultanément** ne 
 
 L'isolation est la propriété la plus **nuancée** des quatre, car elle est **réglable**. MariaDB propose plusieurs **niveaux d'isolation** (du plus permissif au plus strict) qui arbitrent entre la rigueur des garanties et la performance en concurrence. Un niveau plus faible autorise certaines **anomalies** (lecture sale, lecture non répétable, lecture fantôme) en échange d'un meilleur débit ; un niveau plus fort les écarte au prix d'un surcoût.
 
-> Les niveaux d'isolation et leurs anomalies font l'objet de la [§6.3](03-niveaux-isolation.md) ; le niveau par défaut d'InnoDB est `REPEATABLE READ`. Le mécanisme qui rend l'isolation efficace sans bloquer les lectures, le **MVCC**, est détaillé en [§6.6](06-mvcc.md). Enfin, MariaDB applique par défaut (depuis la 11.6, donc en 12.3) une **isolation par instantané** qui renforce le comportement de `REPEATABLE READ` (voir [§6.9](09-snapshot-isolation.md)).
+> Les niveaux d'isolation et leurs anomalies font l'objet de la [§6.3](03-niveaux-isolation.md) ; le niveau par défaut d'InnoDB est `REPEATABLE READ`. Le mécanisme qui rend l'isolation efficace sans bloquer les lectures, le **MVCC**, est détaillé en [§6.6](06-mvcc.md). Enfin, MariaDB applique par défaut (depuis la 11.6.2, donc en 12.3) une **isolation par instantané** qui renforce le comportement de `REPEATABLE READ` (voir [§6.9](09-snapshot-isolation.md)).
 
 ### D — Durabilité (*Durability*)
 

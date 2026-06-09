@@ -20,7 +20,7 @@ Ce chapitre dresse le panorama des principaux moteurs disponibles. Il part d'Inn
 - expliquer le rôle d'un moteur de stockage et le principe de l'architecture enfichable de MariaDB ;
 - décrire les caractéristiques d'InnoDB (ACID, clés étrangères, verrouillage au niveau ligne, gestion mémoire, journalisation) et le configurer ;
 - situer MyISAM et son successeur Aria, et comprendre dans quels contextes ils interviennent encore ;
-- identifier les moteurs orientés analytique (ColumnStore), archivage cloud (S3) et recherche vectorielle (Vector/HNSW) ;
+- identifier les moteurs orientés analytique (ColumnStore) et archivage cloud (S3), ainsi que la recherche vectorielle (Vector/HNSW), fonctionnalité intégrée plutôt que moteur distinct ;
 - comparer les moteurs et choisir celui qui convient à un cas d'usage donné ;
 - convertir une table d'un moteur à un autre en connaissant les précautions associées ;
 - reconnaître les moteurs spécialisés (Memory, Archive, Spider, CONNECT) et leurs usages typiques.
@@ -47,7 +47,7 @@ Ce chapitre fait partie d'un cycle avancé. Il suppose acquis :
   - 7.4.1 — [Segmented key cache (`aria_pagecache_segments`)](04.1-aria-segmented-key-cache.md) 🆕
 - **7.5 — [ColumnStore : Analytique et OLAP](05-columnstore.md)** — stockage en colonnes pour l'entrepôt de données et les agrégations massives.
 - **7.6 — [Moteur S3 : Archivage de données froides](06-moteur-s3.md)** — tables en lecture seule déportées sur stockage objet (AWS S3, MinIO).
-- **7.7 — [Moteur Vector/HNSW : Recherche vectorielle pour l'IA](07-moteur-vector-hnsw.md)** — support des vecteurs et de l'index HNSW pour la recherche sémantique et le RAG.
+- **7.7 — [Vector/HNSW : recherche vectorielle pour l'IA](07-moteur-vector-hnsw.md)** — le type `VECTOR` et l'index HNSW pour la recherche sémantique et le RAG (une fonctionnalité intégrée à InnoDB, **non un moteur distinct**).
 - **7.8 — [Comparaison et choix du moteur approprié](08-comparaison-choix-moteur.md)** — grille de décision selon la charge de travail.
 - **7.9 — [Conversion entre moteurs (`ALTER TABLE … ENGINE`)](09-conversion-entre-moteurs.md)** — migrer une table d'un moteur à un autre et précautions associées.
 - **7.10 — [Moteurs spécialisés](10-moteurs-specialises.md)**
@@ -58,7 +58,7 @@ Ce chapitre fait partie d'un cycle avancé. Il suppose acquis :
 
 ## À noter pour MariaDB 12.3 LTS 🆕
 
-Dans ce chapitre, la nouveauté de la série 12.x à signaler concerne **Aria** : le *segmented key cache* (`aria_pagecache_segments`), détaillé en §7.4.1, qui segmente le page cache d'Aria afin de réduire la contention sous forte concurrence. Les autres moteurs présentés (InnoDB, ColumnStore, S3, Vector/HNSW, etc.) constituent désormais du contenu standard, plusieurs d'entre eux ayant été introduits ou stabilisés au fil des versions précédentes (jusqu'à la 11.8 LTS).
+Dans ce chapitre, la nouveauté de la série 12.x à signaler concerne **Aria** : le *segmented key cache* (`aria_pagecache_segments`), détaillé en §7.4.1, qui segmente le page cache d'Aria afin de réduire la contention sous forte concurrence. Les autres moteurs présentés (InnoDB, ColumnStore, S3…) — ainsi que la recherche vectorielle Vector/HNSW (fonctionnalité intégrée, non un moteur) — constituent désormais du contenu standard, plusieurs d'entre eux ayant été introduits ou stabilisés au fil des versions précédentes (jusqu'à la 11.8 LTS).
 
 ## Liens avec d'autres chapitres
 

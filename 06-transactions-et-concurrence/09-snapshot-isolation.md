@@ -2,9 +2,9 @@
 
 # 6.9 Snapshot Isolation
 
-> **Comportement par défaut d'InnoDB en MariaDB 12.3** — `innodb_snapshot_isolation` est **activé par défaut**. ⚠️ Ce n'est **pas** une nouveauté de la 12.3 : ce défaut est en place **depuis MariaDB 11.6**, donc déjà actif en **11.8 LTS** (voir la précision de version plus bas).
+> **Comportement par défaut d'InnoDB en MariaDB 12.3** — `innodb_snapshot_isolation` est **activé par défaut**. ⚠️ Ce n'est **pas** une nouveauté de la 12.3 : ce défaut est en place **depuis MariaDB 11.6.2**, donc déjà actif en **11.8 LTS** (voir la précision de version plus bas).
 
-C'est l'aboutissement de plusieurs points laissés ouverts dans ce chapitre. Nous avons vu en [§6.3.3](03.3-repeatable-read.md) que, à `REPEATABLE READ`, un `SELECT` simple lit l'**instantané** tandis qu'une écriture effectue une **lecture courante** sur la dernière version validée — un écart mécaniquement expliqué par le MVCC ([§6.6](06-mvcc.md)) et susceptible de provoquer une **mise à jour perdue**. La variable `innodb_snapshot_isolation`, **activée par défaut** (depuis MariaDB 11.6, donc en 11.8 LTS comme en 12.3), ferme précisément cette faille en transformant `REPEATABLE READ` en une véritable **isolation par instantané** (*snapshot isolation*).
+C'est l'aboutissement de plusieurs points laissés ouverts dans ce chapitre. Nous avons vu en [§6.3.3](03.3-repeatable-read.md) que, à `REPEATABLE READ`, un `SELECT` simple lit l'**instantané** tandis qu'une écriture effectue une **lecture courante** sur la dernière version validée — un écart mécaniquement expliqué par le MVCC ([§6.6](06-mvcc.md)) et susceptible de provoquer une **mise à jour perdue**. La variable `innodb_snapshot_isolation`, **activée par défaut** (depuis MariaDB 11.6.2, donc en 11.8 LTS comme en 12.3), ferme précisément cette faille en transformant `REPEATABLE READ` en une véritable **isolation par instantané** (*snapshot isolation*).
 
 ## Le problème : la mise à jour perdue à `REPEATABLE READ`
 
@@ -39,7 +39,7 @@ Le comportement à l'étape ③ **diffère** selon la valeur de la variable :
 | `innodb_snapshot_isolation` | Comportement à l'étape ③ |
 |---|---|
 | **`OFF`** (défaut ≤ 11.4 LTS et 10.x) | l'`UPDATE` écrit `900`, **écrasant** le `1500` validé par B → le crédit de B est **perdu** (on attendrait `1400`) : **mise à jour perdue** |
-| **`ON`** (défaut depuis 11.6, donc en 11.8 LTS et 12.3) | **erreur** « *Record has changed since last read* » : la ligne a changé depuis l'instantané de A → A doit **rejouer** |
+| **`ON`** (défaut depuis 11.6.2, donc en 11.8 LTS et 12.3) | **erreur** « *Record has changed since last read* » : la ligne a changé depuis l'instantané de A → A doit **rejouer** |
 
 Au rejeu (cas `ON`), la session A reconstitue un instantané frais (lisant `1500`), recalcule sa cible (`1400`) et écrit la valeur correcte.
 
@@ -62,7 +62,7 @@ Une application portée depuis ces moteurs y retrouvera donc un comportement att
 `innodb_snapshot_isolation` est une variable système, modifiable au niveau **global** comme **session** :
 
 ```sql
-SELECT @@innodb_snapshot_isolation;            -- 1 (activé) par défaut depuis 11.6 (donc en 11.8 LTS et 12.3)
+SELECT @@innodb_snapshot_isolation;            -- 1 (activé) par défaut depuis 11.6.2 (donc en 11.8 LTS et 12.3)
 
 SET SESSION innodb_snapshot_isolation = OFF;   -- comportement antérieur, pour la session
 SET GLOBAL  innodb_snapshot_isolation = OFF;   -- pour les nouvelles sessions
@@ -77,7 +77,7 @@ innodb_snapshot_isolation = ON
 
 ## Précision de version et impact sur une migration
 
-⚠️ **Cette isolation par instantané n'est pas une nouveauté de la 12.3.** La variable `innodb_snapshot_isolation` existe depuis **MariaDB 10.6.18** (alors à `OFF`), et son **défaut est passé à `ON` en MariaDB 11.6**. Elle est donc déjà active **par défaut en 11.8 LTS** : entre **11.8 et 12.3, ce comportement est inchangé** (`ON` dans les deux cas).
+⚠️ **Cette isolation par instantané n'est pas une nouveauté de la 12.3.** La variable `innodb_snapshot_isolation` existe depuis **MariaDB 10.6.18** (alors à `OFF`), et son **défaut est passé à `ON` en MariaDB 11.6.2**. Elle est donc déjà active **par défaut en 11.8 LTS** : entre **11.8 et 12.3, ce comportement est inchangé** (`ON` dans les deux cas).
 
 Le **changement de comportement** (`OFF` → `ON`) concerne donc une montée depuis une version **antérieure** où la variable était encore à `OFF` — typiquement **MariaDB 11.4 LTS** ou une version **10.x** (10.6, 10.11) :
 
@@ -96,12 +96,12 @@ Le **changement de comportement** (`OFF` → `ON`) concerne donc une montée dep
 
 ## À retenir
 
-- En **12.3** — comme depuis MariaDB **11.6**, donc déjà en **11.8 LTS** — `innodb_snapshot_isolation` est **`ON` par défaut** : `REPEATABLE READ` est une véritable **isolation par instantané**. (Ce n'est **pas** une nouveauté 12.3.)
+- En **12.3** — comme depuis MariaDB **11.6.2**, donc déjà en **11.8 LTS** — `innodb_snapshot_isolation` est **`ON` par défaut** : `REPEATABLE READ` est une véritable **isolation par instantané**. (Ce n'est **pas** une nouveauté 12.3.)
 - Une tentative de **verrouiller/modifier** une ligne **changée et validée depuis l'instantané** lève l'erreur **« *Record has changed since last read* »** (ER_CHECKREAD) au lieu d'une lecture courante silencieuse → **fin des mises à jour perdues** silencieuses.
 - À gérer **comme un deadlock** : par un **rejeu** de la transaction ([§6.5](05-deadlocks-resolution.md)).
 - ⚠️ Écarte les mises à jour perdues, **pas** l'écriture biaisée (*write skew*) — qui relève toujours de `SERIALIZABLE`.
 - Rapproche MariaDB du `REPEATABLE READ` de PostgreSQL et du `SERIALIZABLE` d'Oracle.
-- **Migration** : le passage `OFF` → `ON` date de la **11.6** — c'est un changement à anticiper en venant de **11.4 LTS / 10.x** (et **non** de 11.8, déjà `ON`) ; ajouter le rejeu ou, en transition, `SET … innodb_snapshot_isolation = OFF` (cf. [Chapitre 19](../19-migration-compatibilite/README.md)).
+- **Migration** : le passage `OFF` → `ON` date de la **11.6.2** — c'est un changement à anticiper en venant de **11.4 LTS / 10.x** (et **non** de 11.8, déjà `ON`) ; ajouter le rejeu ou, en transition, `SET … innodb_snapshot_isolation = OFF` (cf. [Chapitre 19](../19-migration-compatibilite/README.md)).
 
 ---
 
