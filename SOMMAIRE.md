@@ -1,5 +1,7 @@
-# 📚 Sommaire - Formation MariaDB 11.8 LTS
+# 📚 Sommaire - Formation MariaDB 12.3 LTS
 **Un guide progressif pour découvrir et approfondir MariaDB — Développeurs & DevOps**
+
+> 🆕 = nouveauté apparue dans la série 12.x (depuis la 11.8) ·  
 
 ---
 
@@ -15,16 +17,20 @@
 
 ---
 
-## **[Partie 1 : Introduction et Fondamentaux (Débutant)](/partie-01-introduction-fondamentaux.md)**
+> 🔔 **Note de version (juin 2026)** : cette formation est centrée sur **MariaDB 12.3 LTS**, dernière version Long Term Support (GA = 12.3.2, fin mai 2026, supportée jusqu'en **juin 2029**). La 12.3 consolide les nouveautés de la série rolling 12.0 → 12.2. La **11.8 LTS** (juin 2025, support jusqu'en 2028) reste la *LTS précédente* : largement déployée, elle sert ici de point de comparaison pour la migration. La série **13.x** ouvre le cycle suivant (13.0 en préversion puis *release candidate*, GA non encore parue ; 13.1 en développement). Voir l'[Annexe G](annexes/g-versions-reference/README.md) pour le positionnement des versions.
+
+---
+
+## **[Partie 1 : Introduction et Fondamentaux (Débutant)](partie-01-introduction-fondamentaux.md)**
 
 ### 1. [Introduction et Fondamentaux](01-introduction-fondamentaux/README.md)
 - 1.1 [Qu'est-ce que MariaDB ?](01-introduction-fondamentaux/01-quest-ce-que-mariadb.md)
 - 1.2 [Histoire et différences avec MySQL](01-introduction-fondamentaux/02-histoire-et-differences-mysql.md)
 - 1.3 [Cas d'usage et écosystème](01-introduction-fondamentaux/03-cas-usage-et-ecosysteme.md)
 - 1.4 [Architecture générale d'un SGBD relationnel](01-introduction-fondamentaux/04-architecture-generale-sgbd.md)
-- 1.5 [Politique de versions : LTS (11.4, 11.8) vs Rolling releases](01-introduction-fondamentaux/05-politique-versions-lts-rolling.md) 🔄
-- **1.6 [Cycle de support : 3 ans LTS (depuis 11.4), rolling trimestriel](01-introduction-fondamentaux/06-cycle-support-lts.md)** 🆕
-- **1.7 [Roadmap : série 12.x (12.0→12.2 rolling, 12.3 LTS prévu Q2 2026)](01-introduction-fondamentaux/07-roadmap-serie-12.md)** 🆕
+- 1.5 [Politique de versions : LTS (11.4, 11.8, 12.3) vs Rolling releases (12.x, 13.0)](01-introduction-fondamentaux/05-politique-versions-lts-rolling.md)  
+- 1.6 [Cycle de support : 3 ans LTS (depuis 11.8), rolling trimestriel](01-introduction-fondamentaux/06-cycle-support-lts.md)  
+- 1.7 [Roadmap : 12.3 LTS (socle actuel) → série 13.x (13.0 en préversion/RC, 13.1 dev)](01-introduction-fondamentaux/07-roadmap-serie-13.md)  
 - 1.8 [Installation et configuration initiale](01-introduction-fondamentaux/08-installation-configuration.md)
 - 1.9 [Outils d'administration (CLI, HeidiSQL, DBeaver, phpMyAdmin)](01-introduction-fondamentaux/09-outils-administration.md)
 
@@ -35,7 +41,8 @@
     - 2.2.2 [Texte (VARCHAR, TEXT, CHAR, ENUM, SET)](02-bases-du-sql/02.2-types-texte.md)
     - 2.2.3 [Temporels (DATE, DATETIME, TIMESTAMP, TIME, YEAR)](02-bases-du-sql/02.3-types-temporels.md)
     - 2.2.4 [Binaires (BLOB, BINARY, VARBINARY)](02-bases-du-sql/02.4-types-binaires.md)
-    - 2.2.5 [Spécifiques MariaDB (JSON, UUID, INET6)](02-bases-du-sql/02.5-types-specifiques-mariadb.md)
+    - 2.2.5 [Spécifiques MariaDB (JSON, UUID, INET6, VECTOR)](02-bases-du-sql/02.5-types-specifiques-mariadb.md)  
+    - **2.2.6 [Type XML basique (compatibilité Oracle)](02-bases-du-sql/02.6-type-xml.md)** 🆕
 - 2.3 [Création et gestion des bases de données](02-bases-du-sql/03-creation-gestion-bases.md)
 - 2.4 [Création et modification de tables (CREATE, ALTER, DROP)](02-bases-du-sql/04-creation-modification-tables.md)
 - 2.5 [Contraintes (PRIMARY KEY, FOREIGN KEY, UNIQUE, NOT NULL, DEFAULT)](02-bases-du-sql/05-contraintes.md)
@@ -45,7 +52,7 @@
 
 ---
 
-## **[Partie 2 : Requêtes SQL Intermédiaires et Avancées (Intermédiaire)](/partie-02-requetes-sql-intermediaires-avancees.md)**
+## **[Partie 2 : Requêtes SQL Intermédiaires et Avancées (Intermédiaire)](partie-02-requetes-sql-intermediaires-avancees.md)**
 
 ### 3. [Requêtes SQL Intermédiaires](03-requetes-sql-intermediaires/README.md)
 - 3.1 [Fonctions d'agrégation (COUNT, SUM, AVG, MIN, MAX)](03-requetes-sql-intermediaires/01-fonctions-agregation.md)
@@ -55,10 +62,12 @@
     - 3.3.2 [LEFT/RIGHT JOIN : Jointures externes](03-requetes-sql-intermediaires/03.2-left-right-join.md)
     - 3.3.3 [CROSS JOIN : Produit cartésien](03-requetes-sql-intermediaires/03.3-cross-join.md)
     - 3.3.4 [Self-Join : Joindre une table à elle-même](03-requetes-sql-intermediaires/03.4-self-join.md)
+    - **3.3.5 [Syntaxe ( + ) pour jointures externes en mode Oracle](03-requetes-sql-intermediaires/03.5-oracle-outer-join.md)** 🆕
 - 3.4 [Sous-requêtes et requêtes imbriquées](03-requetes-sql-intermediaires/04-sous-requetes.md)
 - 3.5 [Opérateurs ensemblistes (UNION, INTERSECT, EXCEPT)](03-requetes-sql-intermediaires/05-operateurs-ensemblistes.md)
 - 3.6 [Fonctions de chaînes de caractères](03-requetes-sql-intermediaires/06-fonctions-chaines.md)
 - 3.7 [Fonctions de dates et heures](03-requetes-sql-intermediaires/07-fonctions-dates-heures.md)
+    - **3.7.1 [Fonctions de compatibilité Oracle (TO_DATE, TRUNC, TO_NUMBER en 12.x ; TO_CHAR depuis 10.6, format FM)](03-requetes-sql-intermediaires/07.1-fonctions-oracle.md)** 🆕
 - 3.8 [Expressions conditionnelles (CASE, IF, IFNULL, COALESCE, NULLIF)](03-requetes-sql-intermediaires/08-expressions-conditionnelles.md)
 
 ### 4. [Concepts Avancés SQL](04-concepts-avances-sql/README.md)
@@ -70,20 +79,22 @@
     - 4.2.4 [Cas d'usage : Top N, moyenne mobile, cumuls](04-concepts-avances-sql/02.4-cas-usage-window.md)
 - 4.3 [Requêtes pivotées et transformations](04-concepts-avances-sql/03-requetes-pivotees.md)
 - 4.4 [Expressions de table communes (CTE)](04-concepts-avances-sql/04-expressions-table-communes.md)
+    - **4.4.1 [UPDATE / DELETE lisant une CTE](04-concepts-avances-sql/04.1-update-delete-from-cte.md)** 🆕
 - 4.5 [Requêtes complexes multi-tables](04-concepts-avances-sql/05-requetes-complexes-multi-tables.md)
 - 4.6 [Gestion des valeurs NULL : Logique ternaire](04-concepts-avances-sql/06-gestion-valeurs-null.md)
 - 4.7 [JSON dans MariaDB](04-concepts-avances-sql/07-json-mariadb.md)
     - 4.7.1 [Stockage et type de données JSON](04-concepts-avances-sql/07.1-stockage-type-json.md)
     - 4.7.2 [Fonctions JSON (JSON_EXTRACT, JSON_SET, JSON_ARRAY, etc.)](04-concepts-avances-sql/07.2-fonctions-json.md)
     - 4.7.3 [Opérateur raccourci (->>)](04-concepts-avances-sql/07.3-operateur-raccourci-json.md)
-- **4.8 [JSON Path Expressions avancées](04-concepts-avances-sql/08-json-path-expressions.md)** 🆕
-- **4.9 [JSON Schema Validation](04-concepts-avances-sql/09-json-schema-validation.md)** 🆕
+    - **4.7.4 [Prédicat IS JSON (standard SQL) + suppression de la limite de profondeur](04-concepts-avances-sql/07.4-is-json-predicate.md)** 🆕
+- 4.8 [JSON Path Expressions avancées](04-concepts-avances-sql/08-json-path-expressions.md)
+- 4.9 [JSON Schema Validation](04-concepts-avances-sql/09-json-schema-validation.md)
 - 4.10 [Indexation de colonnes virtuelles extraites du JSON](04-concepts-avances-sql/10-indexation-colonnes-virtuelles-json.md)
 - 4.11 [Expressions régulières (REGEXP, REGEXP_REPLACE, REGEXP_SUBSTR)](04-concepts-avances-sql/11-expressions-regulieres.md)
 
 ---
 
-## **[Partie 3 : Index, Transactions et Performance (Intermédiaire)](/partie-03-index-transactions-performance.md)**
+## **[Partie 3 : Index, Transactions et Performance (Intermédiaire)](partie-03-index-transactions-performance.md)**
 
 ### 5. [Index et Performance](05-index-et-performance/README.md)
 - 5.1 [Fonctionnement des index : Structure B-Tree](05-index-et-performance/01-fonctionnement-index.md)
@@ -92,15 +103,16 @@
     - 5.2.2 [Hash : Égalité stricte](05-index-et-performance/02.2-hash.md)
     - 5.2.3 [Full-Text : Recherche textuelle](05-index-et-performance/02.3-full-text.md)
     - 5.2.4 [Spatial : Données géographiques](05-index-et-performance/02.4-spatial.md)
-- **5.3 [Index VECTOR (HNSW) pour la recherche vectorielle](05-index-et-performance/03-index-vector-hnsw.md)** 🆕
+- 5.3 [Index VECTOR (HNSW) pour la recherche vectorielle](05-index-et-performance/03-index-vector-hnsw.md)
 - 5.4 [Création et gestion des index](05-index-et-performance/04-creation-gestion-index.md)
 - 5.5 [Stratégies d'indexation](05-index-et-performance/05-strategies-indexation.md)
     - 5.5.1 [Index sur colonnes fréquemment filtrées](05-index-et-performance/05.1-index-colonnes-filtrees.md)
     - 5.5.2 [Index sur clés étrangères](05-index-et-performance/05.2-index-cles-etrangeres.md)
     - 5.5.3 [Index pour ORDER BY et GROUP BY](05-index-et-performance/05.3-index-order-group.md)
 - 5.6 [Index composites et ordre des colonnes](05-index-et-performance/06-index-composites.md)
-- 5.7 [Analyse des plans d'exécution (EXPLAIN, EXPLAIN ANALYZE)](05-index-et-performance/07-analyse-plans-execution.md)
+- 5.7 [Analyse des plans d'exécution (EXPLAIN ; ANALYZE pour les mesures réelles — pas `EXPLAIN ANALYZE`, propre à MySQL)](05-index-et-performance/07-analyse-plans-execution.md)
 - 5.8 [Optimisation des requêtes](05-index-et-performance/08-optimisation-requetes.md)
+    - **5.8.1 [Optimisations sur scans inversés (Rowid Filtering, Index Condition Pushdown, Loose Index Scan sur clés DESC)](05-index-et-performance/08.1-optimisations-scans-inverses.md)** 🆕
 - 5.9 [Index covering et index-only scans](05-index-et-performance/09-index-covering.md)
 - 5.10 [Invisible indexes et Progressive indexes](05-index-et-performance/10-invisible-progressive-indexes.md)
 
@@ -112,15 +124,16 @@
     - 6.3.2 [READ COMMITTED : Lectures cohérentes](06-transactions-et-concurrence/03.2-read-committed.md)
     - 6.3.3 [REPEATABLE READ : Default InnoDB](06-transactions-et-concurrence/03.3-repeatable-read.md)
     - 6.3.4 [SERIALIZABLE : Isolation maximale](06-transactions-et-concurrence/03.4-serializable.md)
-- 6.4 [Verrous (LOCK TABLES, SELECT FOR UPDATE, SELECT FOR SHARE)](06-transactions-et-concurrence/04-verrous.md)
+- 6.4 [Verrous (LOCK TABLES, SELECT FOR UPDATE, LOCK IN SHARE MODE)](06-transactions-et-concurrence/04-verrous.md)
 - 6.5 [Deadlocks : Détection et résolution](06-transactions-et-concurrence/05-deadlocks-resolution.md)
 - 6.6 [MVCC (Multi-Version Concurrency Control)](06-transactions-et-concurrence/06-mvcc.md)
 - 6.7 [Savepoints : Points de sauvegarde](06-transactions-et-concurrence/07-savepoints.md)
 - 6.8 [Transactions distribuées (XA)](06-transactions-et-concurrence/08-transactions-distribuees-xa.md)
+- **6.9 [Snapshot Isolation : innodb_snapshot_isolation = ON par défaut (impact REPEATABLE READ)](06-transactions-et-concurrence/09-snapshot-isolation.md)** 
 
 ---
 
-## **[Partie 4 : Moteurs de Stockage et Programmation Serveur (Avancé)](/partie-04-moteurs-stockage-programmation.md)**
+## **[Partie 4 : Moteurs de Stockage et Programmation Serveur (Avancé)](partie-04-moteurs-stockage-programmation.md)**
 
 ### 7. [Moteurs de Stockage](07-moteurs-de-stockage/README.md)
 - 7.1 [Vue d'ensemble : Architecture Pluggable Storage Engine](07-moteurs-de-stockage/01-vue-ensemble-architecture.md)
@@ -130,10 +143,11 @@
     - 7.2.3 [Redo Log et Undo Log](07-moteurs-de-stockage/02.3-innodb-redo-undo-log.md)
     - 7.2.4 [Configuration avancée](07-moteurs-de-stockage/02.4-innodb-configuration.md)
 - 7.3 [MyISAM : Moteur legacy](07-moteurs-de-stockage/03-myisam.md)
-- 7.4 [Aria : Le successeur de MyISAM](07-moteurs-de-stockage/04-aria.md)
+- 7.4 [Aria : Le successeur de MyISAM](07-moteurs-de-stockage/04-aria.md)  
+    - **7.4.1 [Segmented key cache (aria_pagecache_segments)](07-moteurs-de-stockage/04.1-aria-segmented-key-cache.md)** 🆕
 - 7.5 [ColumnStore : Analytique et OLAP](07-moteurs-de-stockage/05-columnstore.md)
 - 7.6 [Moteur S3 : Archivage données froides sur AWS S3/MinIO](07-moteurs-de-stockage/06-moteur-s3.md)
-- **7.7 [Moteur Vector/HNSW : Recherche vectorielle pour IA](07-moteurs-de-stockage/07-moteur-vector-hnsw.md)** 🆕
+- 7.7 [Vector/HNSW : recherche vectorielle pour l'IA (type `VECTOR` + index HNSW dans InnoDB, non un moteur distinct)](07-moteurs-de-stockage/07-moteur-vector-hnsw.md)  
 - 7.8 [Comparaison et choix du moteur approprié](07-moteurs-de-stockage/08-comparaison-choix-moteur.md)
 - 7.9 [Conversion entre moteurs (ALTER TABLE ENGINE)](07-moteurs-de-stockage/09-conversion-entre-moteurs.md)
 - 7.10 [Moteurs spécialisés](07-moteurs-de-stockage/10-moteurs-specialises.md)
@@ -147,6 +161,7 @@
     - 8.1.1 [Syntaxe CREATE PROCEDURE](08-programmation-cote-serveur/01.1-syntaxe-create-procedure.md)
     - 8.1.2 [Paramètres IN, OUT, INOUT](08-programmation-cote-serveur/01.2-parametres-in-out-inout.md)
     - 8.1.3 [Appel avec CALL](08-programmation-cote-serveur/01.3-appel-call.md)
+    - **8.1.4 [Tableaux associatifs Oracle (DECLARE TYPE … TABLE OF … INDEX BY)](08-programmation-cote-serveur/01.4-tableaux-associatifs.md)** 🆕
 - 8.2 [Fonctions stockées](08-programmation-cote-serveur/02-fonctions-stockees.md)
     - 8.2.1 [Syntaxe CREATE FUNCTION](08-programmation-cote-serveur/02.1-syntaxe-create-function.md)
     - 8.2.2 [Caractéristiques (DETERMINISTIC, NO SQL, etc.)](08-programmation-cote-serveur/02.2-caracteristiques-fonction.md)
@@ -154,10 +169,13 @@
     - 8.3.1 [BEFORE et AFTER](08-programmation-cote-serveur/03.1-before-after.md)
     - 8.3.2 [INSERT, UPDATE, DELETE triggers](08-programmation-cote-serveur/03.2-insert-update-delete-triggers.md)
     - 8.3.3 [Variables OLD et NEW](08-programmation-cote-serveur/03.3-variables-old-new.md)
+    - **8.3.4 [Triggers multi-événements : un seul trigger sur INSERT/UPDATE/DELETE](08-programmation-cote-serveur/03.4-triggers-multi-evenements.md)** 🆕
 - 8.4 [Events (tâches planifiées)](08-programmation-cote-serveur/04-events.md)
     - 8.4.1 [CREATE EVENT et planification](08-programmation-cote-serveur/04.1-create-event.md)
     - 8.4.2 [Event Scheduler](08-programmation-cote-serveur/04.2-event-scheduler.md)
-- 8.5 [Curseurs](08-programmation-cote-serveur/05-curseurs.md)
+- 8.5 [Curseurs](08-programmation-cote-serveur/05-curseurs.md)  
+    - **8.5.1 [Curseurs sur prepared statements](08-programmation-cote-serveur/05.1-curseurs-prepared-statements.md)** 🆕
+    - **8.5.2 [SYS_REFCURSOR (REF CURSOR faible) et max_open_cursors](08-programmation-cote-serveur/05.2-sys-refcursor.md)** 🆕
 - 8.6 [Gestion des erreurs et exceptions (DECLARE HANDLER)](08-programmation-cote-serveur/06-gestion-erreurs-exceptions.md)
 - 8.7 [Variables et flow control (IF, CASE, LOOP, WHILE, REPEAT)](08-programmation-cote-serveur/07-variables-flow-control.md)
 - 8.8 [Bonnes pratiques de programmation](08-programmation-cote-serveur/08-bonnes-pratiques.md)
@@ -176,11 +194,12 @@
 
 ---
 
-## **[Partie 5 : Sécurité et Administration (DBA)](/partie-05-securite-administration.md)**
+## **[Partie 5 : Sécurité et Administration (DBA)](partie-05-securite-administration.md)**
 
 ### 10. [Sécurité et Gestion des Utilisateurs](10-securite-gestion-utilisateurs/README.md)
 - 10.1 [Modèle de sécurité MariaDB](10-securite-gestion-utilisateurs/01-modele-securite.md)
-- 10.2 [Création et gestion des utilisateurs (CREATE USER, ALTER USER, DROP USER)](10-securite-gestion-utilisateurs/02-creation-gestion-utilisateurs.md)
+- 10.2 [Création et gestion des utilisateurs (CREATE USER, ALTER USER, DROP USER)](10-securite-gestion-utilisateurs/02-creation-gestion-utilisateurs.md)  
+    - **10.2.1 [DROP USER : avertissement si sessions actives (échec en mode Oracle)](10-securite-gestion-utilisateurs/02.1-drop-user-sessions-actives.md)** 🆕
 - 10.3 [Système de privilèges](10-securite-gestion-utilisateurs/03-systeme-privileges.md)
     - 10.3.1 [GRANT : Attribution de privilèges](10-securite-gestion-utilisateurs/03.1-grant.md)
     - 10.3.2 [REVOKE : Révocation de privilèges](10-securite-gestion-utilisateurs/03.2-revoke.md)
@@ -191,56 +210,62 @@
     - 10.5.2 [ed25519 : Authentification moderne](10-securite-gestion-utilisateurs/05.2-ed25519.md)
     - 10.5.3 [PAM et LDAP](10-securite-gestion-utilisateurs/05.3-pam-ldap.md)
     - 10.5.4 [GSSAPI/Kerberos](10-securite-gestion-utilisateurs/05.4-gssapi-kerberos.md)
-- **10.6 [Plugin d'authentification PARSEC](10-securite-gestion-utilisateurs/06-plugin-parsec.md)** 🆕
-- 10.7 [Chiffrement des connexions (SSL/TLS)](10-securite-gestion-utilisateurs/07-chiffrement-ssl-tls.md) 🔄
+    - **10.5.5 [caching_sha2_password : compatibilité d'authentification MySQL 8](10-securite-gestion-utilisateurs/05.5-caching-sha2-password.md)** 🆕
+- 10.6 [Plugin d'authentification PARSEC](10-securite-gestion-utilisateurs/06-plugin-parsec.md)
+- 10.7 [Chiffrement des connexions (SSL/TLS)](10-securite-gestion-utilisateurs/07-chiffrement-ssl-tls.md)
     - 10.7.1 [Configuration serveur SSL](10-securite-gestion-utilisateurs/07.1-configuration-serveur-ssl.md)
     - 10.7.2 [Certificats et CA](10-securite-gestion-utilisateurs/07.2-certificats-ca.md)
-    - **10.7.3 [TLS par défaut depuis 11.8](10-securite-gestion-utilisateurs/07.3-tls-defaut-11-8.md)** 🆕
-- 10.8 [Audit et logging](10-securite-gestion-utilisateurs/08-audit-logging.md)
+    - 10.7.3 [TLS zéro-configuration (depuis 11.8)](10-securite-gestion-utilisateurs/07.3-tls-zero-configuration.md)
+    - **10.7.4 [Clés SSL protégées par passphrase (ssl_passphrase)](10-securite-gestion-utilisateurs/07.4-cles-ssl-passphrase.md)** 🆕
+- 10.8 [Audit et logging](10-securite-gestion-utilisateurs/08-audit-logging.md)  
     - 10.8.1 [Server Audit Plugin](10-securite-gestion-utilisateurs/08.1-server-audit-plugin.md)
     - 10.8.2 [Audit de connexions et requêtes](10-securite-gestion-utilisateurs/08.2-audit-connexions-requetes.md)
+    - **10.8.3 [Logging bufferisé (server_audit_file_buffer_size), HOST:PORT et tls_version](10-securite-gestion-utilisateurs/08.3-audit-bufferise.md)** 🆕
 - 10.9 [Sécurité au niveau application](10-securite-gestion-utilisateurs/09-securite-niveau-application.md)
 - 10.10 [Password validation plugins et politiques](10-securite-gestion-utilisateurs/10-password-validation.md)
-- **10.11 [Privilèges granulaires (nouvelles options 11.8)](10-securite-gestion-utilisateurs/11-privileges-granulaires.md)** 🆕
+- 10.11 [Privilèges granulaires (options 11.8)](10-securite-gestion-utilisateurs/11-privileges-granulaires.md)
+- **10.12 [SET SESSION AUTHORIZATION : exécuter des actions en tant qu'un autre utilisateur](10-securite-gestion-utilisateurs/12-set-session-authorization.md)** 🆕
 
 ### 11. [Administration et Configuration](11-administration-configuration/README.md)
 - 11.1 [Fichiers de configuration](11-administration-configuration/01-fichiers-configuration.md)
     - 11.1.1 [my.cnf / my.ini : Structure et sections](11-administration-configuration/01.1-structure-mycnf.md)
     - 11.1.2 [Ordre de lecture des fichiers](11-administration-configuration/01.2-ordre-lecture.md)
     - 11.1.3 [Include et configuration modulaire](11-administration-configuration/01.3-include-modulaire.md)
-- 11.2 [Variables système et de session](11-administration-configuration/02-variables-systeme-session.md)
+- 11.2 [Variables système et de session](11-administration-configuration/02-variables-systeme-session.md)  
     - 11.2.1 [SHOW VARIABLES et SET](11-administration-configuration/02.1-show-variables-set.md)
     - 11.2.2 [Variables dynamiques vs statiques](11-administration-configuration/02.2-dynamiques-statiques.md)
+    - **11.2.3 [Variables retirées en 12.x (big_tables, large_page_size, storage_engine)](11-administration-configuration/02.3-variables-retirees.md)** 🆕
 - 11.3 [Modes SQL (sql_mode)](11-administration-configuration/03-modes-sql.md)
 - 11.4 [Gestion des logs](11-administration-configuration/04-gestion-logs.md)
     - 11.4.1 [Error log](11-administration-configuration/04.1-error-log.md)
     - 11.4.2 [Slow query log](11-administration-configuration/04.2-slow-query-log.md)
     - 11.4.3 [General log](11-administration-configuration/04.3-general-log.md)
-- 11.5 [Binary logs et logs de transactions](11-administration-configuration/05-binary-logs.md)
+- 11.5 [Binary logs et logs de transactions](11-administration-configuration/05-binary-logs.md)  
     - 11.5.1 [Configuration binlog](11-administration-configuration/05.1-configuration-binlog.md)
     - 11.5.2 [Formats : STATEMENT, ROW, MIXED](11-administration-configuration/05.2-formats-binlog.md)
     - 11.5.3 [Purge et rotation](11-administration-configuration/05.3-purge-rotation.md)
+    - **11.5.4 [Nouveau binlog intégré à InnoDB : suppression de la synchro, ~4× en écriture](11-administration-configuration/05.4-binlog-innodb-performance.md)** 🆕
 - 11.6 [Maintenance des tables](11-administration-configuration/06-maintenance-tables.md)
     - 11.6.1 [OPTIMIZE TABLE](11-administration-configuration/06.1-optimize-table.md)
     - 11.6.2 [ANALYZE TABLE](11-administration-configuration/06.2-analyze-table.md)
-    - 11.6.3 [CHECK TABLE et REPAIR TABLE](11-administration-configuration/06.3-check-repair-table.md)
+    - 11.6.3 [CHECK TABLE et REPAIR TABLE (support SEQUENCE)](11-administration-configuration/06.3-check-repair-table.md)  
 - 11.7 [Gestion de l'espace disque](11-administration-configuration/07-gestion-espace-disque.md)
-- **11.8 [Contrôle espace temporaire (max_tmp_space_usage, max_total_tmp_space_usage)](11-administration-configuration/08-controle-espace-temporaire.md)** 🆕
+- 11.8 [Contrôle espace temporaire (max_tmp_space_usage, max_total_tmp_space_usage)](11-administration-configuration/08-controle-espace-temporaire.md)
 - 11.9 [Monitoring et métriques importantes](11-administration-configuration/09-monitoring-metriques.md)
 - 11.10 [Thread Pool et gestion de la concurrence](11-administration-configuration/10-thread-pool.md)
-- **11.11 [Charset par défaut : utf8mb4 avec collations UCA 14.0.0 (depuis 11.8)](11-administration-configuration/11-charset-utf8mb4-uca14.md)** 🆕
-- **11.12 [Extension TIMESTAMP 2038→2106 (problème Y2038 résolu)](11-administration-configuration/12-extension-timestamp-2106.md)** 🆕
+- 11.11 [Charset par défaut : utf8mb4 avec collations UCA 14.0.0 (depuis 11.8)](11-administration-configuration/11-charset-utf8mb4-uca14.md)
+- 11.12 [Extension TIMESTAMP 2038→2106 (problème Y2038 résolu, depuis 11.8)](11-administration-configuration/12-extension-timestamp-2106.md)
 
 ### 12. [Sauvegarde et Restauration](12-sauvegarde-restauration/README.md)
 - 12.1 [Stratégies de sauvegarde : Full, Incrémentale, Différentielle](12-sauvegarde-restauration/01-strategies-sauvegarde.md)
 - 12.2 [Sauvegarde logique](12-sauvegarde-restauration/02-sauvegarde-logique.md)
-    - 12.2.1 [mysqldump / mariadb-dump](12-sauvegarde-restauration/02.1-mysqldump-mariadb-dump.md)
+    - 12.2.1 [mysqldump / mariadb-dump (support des wildcards -L)](12-sauvegarde-restauration/02.1-mysqldump-mariadb-dump.md)  
     - 12.2.2 [Options essentielles (--single-transaction, --routines, etc.)](12-sauvegarde-restauration/02.2-options-essentielles.md)
     - 12.2.3 [mydumper/myloader : Parallélisme](12-sauvegarde-restauration/02.3-mydumper-myloader.md)
-- 12.3 [Sauvegarde physique (Mariabackup)](12-sauvegarde-restauration/03-sauvegarde-physique-mariabackup.md) 🔄
+- 12.3 [Sauvegarde physique (Mariabackup)](12-sauvegarde-restauration/03-sauvegarde-physique-mariabackup.md)
     - 12.3.1 [Full backup](12-sauvegarde-restauration/03.1-full-backup.md)
     - 12.3.2 [Incremental backup](12-sauvegarde-restauration/03.2-incremental-backup.md)
-    - **12.3.3 [Support BACKUP STAGE](12-sauvegarde-restauration/03.3-backup-stage.md)** 🆕
+    - 12.3.3 [Support BACKUP STAGE](12-sauvegarde-restauration/03.3-backup-stage.md)
 - 12.4 [Sauvegarde incrémentale avec binary logs](12-sauvegarde-restauration/04-sauvegarde-incrementale-binlog.md)
 - 12.5 [Restauration](12-sauvegarde-restauration/05-restauration.md)
     - 12.5.1 [Restauration complète](12-sauvegarde-restauration/05.1-restauration-complete.md)
@@ -253,14 +278,14 @@
 
 ---
 
-## **[Partie 6 : Réplication et Haute Disponibilité (DBA/DevOps)](/partie-06-replication-haute-disponibilite.md)**
+## **[Partie 6 : Réplication et Haute Disponibilité (DBA/DevOps)](partie-06-replication-haute-disponibilite.md)**
 
 ### 13. [Réplication](13-replication/README.md)
 - 13.1 [Concepts de réplication : Asynchrone vs Semi-synchrone](13-replication/01-concepts-replication.md)
 - 13.2 [Réplication Master-Slave (Source-Replica)](13-replication/02-replication-master-slave.md)
     - 13.2.1 [Configuration du Primary (binlog)](13-replication/02.1-configuration-primary.md)
     - 13.2.2 [Configuration du Replica](13-replication/02.2-configuration-replica.md)
-    - 13.2.3 [CHANGE MASTER TO / CHANGE REPLICATION SOURCE](13-replication/02.3-change-master-to.md)
+    - 13.2.3 [CHANGE MASTER TO / CHANGE REPLICATION SOURCE (défauts MASTER_SSL_* configurables)](13-replication/02.3-change-master-to.md)  
 - 13.3 [Réplication basée sur les positions (binlog coordinates)](13-replication/03-replication-positions.md)
 - 13.4 [GTID (Global Transaction Identifier)](13-replication/04-gtid.md)
     - 13.4.1 [Configuration GTID](13-replication/04.1-configuration-gtid.md)
@@ -273,22 +298,26 @@
     - 13.7.3 [Erreurs courantes et résolution](13-replication/07.3-erreurs-courantes.md)
 - 13.8 [Failover et switchover](13-replication/08-failover-switchover.md)
 - 13.9 [Réplication semi-synchrone](13-replication/09-replication-semi-synchrone.md)
-- **13.10 [Optimistic ALTER TABLE pour réduction du lag](13-replication/10-optimistic-alter-table.md)** 🆕
+- 13.10 [Optimistic ALTER TABLE pour réduction du lag](13-replication/10-optimistic-alter-table.md)
+- **13.11 [Réplication parallèle entre clusters Galera (slave_parallel_threads)](13-replication/11-replication-parallele-galera.md)** 🆕
+- **13.12 [Tables temporaires en réplication : prévisibilité (create_tmp_table_binlog_formats)](13-replication/12-tables-temporaires-replication.md)** 🆕
 
 ### 14. [Haute Disponibilité](14-haute-disponibilite/README.md)
 - 14.1 [Architectures haute disponibilité : Concepts](14-haute-disponibilite/01-architectures-ha-concepts.md)
-- 14.2 [MariaDB Galera Cluster](14-haute-disponibilite/02-galera-cluster.md)
+- 14.2 [MariaDB Galera Cluster](14-haute-disponibilite/02-galera-cluster.md)  
     - 14.2.1 [Architecture synchrone multi-master](14-haute-disponibilite/02.1-architecture-synchrone.md)
     - 14.2.2 [Certification-based replication](14-haute-disponibilite/02.2-certification-based.md)
     - 14.2.3 [Configuration et déploiement](14-haute-disponibilite/02.3-configuration-deploiement.md)
     - 14.2.4 [State transfers (SST, IST)](14-haute-disponibilite/02.4-state-transfers.md)
+    - **14.2.5 [Packaging Galera en 12.3 : paquet mariadb-server-galera séparé (dépendance retirée du serveur)](14-haute-disponibilite/02.5-packaging-galera.md)** 🆕
+    - **14.2.6 [Retry des write sets (wsrep_applier_retry_count)](14-haute-disponibilite/02.6-retry-write-sets.md)** 🆕
 - 14.3 [Split-brain et quorum](14-haute-disponibilite/03-split-brain-quorum.md)
-- 14.4 [MaxScale](14-haute-disponibilite/04-maxscale.md) 🔄
+- 14.4 [MaxScale](14-haute-disponibilite/04-maxscale.md)
     - 14.4.1 [Load Balancing](14-haute-disponibilite/04.1-load-balancing.md)
     - 14.4.2 [Read/Write Split](14-haute-disponibilite/04.2-read-write-split.md)
     - 14.4.3 [Query Routing](14-haute-disponibilite/04.3-query-routing.md)
     - 14.4.4 [Database Firewall](14-haute-disponibilite/04.4-database-firewall.md)
-- **14.5 [MaxScale 25.01 : Nouvelles fonctionnalités](14-haute-disponibilite/05-maxscale-25-nouveautes.md)** 🆕
+- 14.5 [MaxScale : fonctionnalités récentes (Workload Capture/Replay, Diff Router)](14-haute-disponibilite/05-maxscale-nouveautes.md)
     - 14.5.1 [Workload Capture](14-haute-disponibilite/05.1-workload-capture.md)
     - 14.5.2 [Workload Replay](14-haute-disponibilite/05.2-workload-replay.md)
     - 14.5.3 [Diff Router](14-haute-disponibilite/05.3-diff-router.md)
@@ -296,11 +325,11 @@
 - 14.7 [Virtual IP et keepalived](14-haute-disponibilite/07-virtual-ip-keepalived.md)
 - 14.8 [Stratégies de récupération après incident](14-haute-disponibilite/08-strategies-recuperation.md)
 - 14.9 [Alternatives : ProxySQL et HAProxy](14-haute-disponibilite/09-proxysql-haproxy.md)
-- **14.10 [Transaction Replay et Connection Migration](14-haute-disponibilite/10-transaction-replay-connection-migration.md)** 🆕
+- 14.10 [Transaction Replay et Connection Migration](14-haute-disponibilite/10-transaction-replay-connection-migration.md)
 
 ---
 
-## **[Partie 7 : Performance et Tuning (DBA Avancé)](/partie-07-performance-tuning.md)**
+## **[Partie 7 : Performance et Tuning (DBA Avancé)](partie-07-performance-tuning.md)**
 
 ### 15. [Performance et Tuning](15-performance-tuning/README.md)
 - 15.1 [Méthodologie d'optimisation](15-performance-tuning/01-methodologie-optimisation.md)
@@ -309,12 +338,12 @@
     - 15.2.2 [Buffer Pool instances](15-performance-tuning/02.2-buffer-pool-instances.md)
     - 15.2.3 [Key buffer (MyISAM)](15-performance-tuning/02.3-key-buffer.md)
 - 15.3 [Query Cache : Pourquoi il est déprécié](15-performance-tuning/03-query-cache-deprecie.md)
-- 15.4 [Configuration I/O et disques](15-performance-tuning/04-configuration-io-disques.md) 🔄
+- 15.4 [Configuration I/O et disques](15-performance-tuning/04-configuration-io-disques.md)
     - 15.4.1 [innodb_io_capacity](15-performance-tuning/04.1-innodb-io-capacity.md)
     - 15.4.2 [innodb_flush_method](15-performance-tuning/04.2-innodb-flush-method.md)
     - 15.4.3 [Optimisations SSD modernes](15-performance-tuning/04.3-optimisations-ssd.md)
 - 15.5 [Optimisation du moteur InnoDB](15-performance-tuning/05-optimisation-innodb.md)
-- **15.6 [innodb_alter_copy_bulk : Construction d'index efficace](15-performance-tuning/06-innodb-alter-copy-bulk.md)** 🆕
+- 15.6 [innodb_alter_copy_bulk : Construction d'index efficace](15-performance-tuning/06-innodb-alter-copy-bulk.md)
 - 15.7 [Analyse des requêtes lentes](15-performance-tuning/07-analyse-requetes-lentes.md)
     - 15.7.1 [Slow query log](15-performance-tuning/07.1-slow-query-log.md)
     - 15.7.2 [pt-query-digest (Percona Toolkit)](15-performance-tuning/07.2-pt-query-digest.md)
@@ -322,38 +351,45 @@
 - 15.9 [Partitionnement de tables](15-performance-tuning/09-partitionnement-tables.md)
     - 15.9.1 [RANGE partitioning](15-performance-tuning/09.1-range-partitioning.md)
     - 15.9.2 [LIST partitioning](15-performance-tuning/09.2-list-partitioning.md)
-    - 15.9.3 [HASH partitioning](15-performance-tuning/09.3-hash-partitioning.md)
+    - 15.9.3 [HASH partitioning (nouveaux algorithmes pour PARTITION BY KEY)](15-performance-tuning/09.3-hash-partitioning.md)  
     - 15.9.4 [Partition pruning](15-performance-tuning/09.4-partition-pruning.md)
-- **15.10 [Gestion avancée des partitions (conversion partition↔table)](15-performance-tuning/10-gestion-avancee-partitions.md)** 🆕
+- 15.10 [Gestion avancée des partitions (conversion partition↔table)](15-performance-tuning/10-gestion-avancee-partitions.md)
 - 15.11 [Sharding et distribution horizontale](15-performance-tuning/11-sharding-distribution.md)
 - 15.12 [Benchmarking](15-performance-tuning/12-benchmarking.md)
     - 15.12.1 [sysbench](15-performance-tuning/12.1-sysbench.md)
     - 15.12.2 [mysqlslap](15-performance-tuning/12.2-mysqlslap.md)
 - 15.13 [Adaptive Hash Index et Buffer Pool optimizations](15-performance-tuning/13-adaptive-hash-index.md)
-- **15.14 [Cost-based optimizer amélioré (prise en compte SSD)](15-performance-tuning/14-cost-based-optimizer-ssd.md)** 🆕
+- 15.14 [Cost-based optimizer amélioré (prise en compte SSD)](15-performance-tuning/14-cost-based-optimizer-ssd.md)
+- **15.15 [Optimizer Hints : contrôle fin du plan d'exécution](15-performance-tuning/15-optimizer-hints.md)** 🆕
+    - **15.15.1 [Nommage des blocs de requête (QB_NAME) et noms implicites](15-performance-tuning/15.1-qb-name.md)** 🆕
+    - **15.15.2 [Hints de table et d'index (NO_ICP, MRR, BKA, BNL, [NO_]INDEX, JOIN_INDEX, GROUP_INDEX, ORDER_INDEX)](15-performance-tuning/15.2-hints-table-index.md)** 🆕
+    - **15.15.3 [Hints d'ordre de jointure (JOIN_FIXED_ORDER, JOIN_ORDER, JOIN_PREFIX, JOIN_SUFFIX)](15-performance-tuning/15.3-hints-ordre-jointure.md)** 🆕
+    - **15.15.4 [Hints de sous-requête (SEMIJOIN, SUBQUERY, SPLIT_MATERIALIZED, MERGE, DERIVED_CONDITION_PUSHDOWN)](15-performance-tuning/15.4-hints-sous-requete.md)** 🆕
+    - **15.15.5 [MAX_EXECUTION_TIME et limitation du temps de requête](15-performance-tuning/15.5-max-execution-time.md)** 🆕
+- **15.16 [Vector : optimisations 12.3 (distance par extrapolation, calcul dans le moteur de stockage)](15-performance-tuning/16-vector-optimisations.md)** 🆕
 
 ---
 
-## **[Partie 8 : DevOps, Cloud et Automatisation](/partie-08-devops-cloud-automatisation.md)**
+## **[Partie 8 : DevOps, Cloud et Automatisation](partie-08-devops-cloud-automatisation.md)**
 
 ### 16. [DevOps et Automatisation](16-devops-automatisation/README.md)
 - 16.1 [Infrastructure as Code pour MariaDB](16-devops-automatisation/01-infrastructure-as-code.md)
 - 16.2 [Déploiement avec Ansible/Terraform](16-devops-automatisation/02-deploiement-ansible-terraform.md)
     - 16.2.1 [Ansible : Playbooks MariaDB](16-devops-automatisation/02.1-ansible-playbooks.md)
     - 16.2.2 [Terraform : Providers cloud](16-devops-automatisation/02.2-terraform-providers.md)
-- 16.3 [Conteneurisation avec Docker](16-devops-automatisation/03-conteneurisation-docker.md)
-    - 16.3.1 [Images officielles MariaDB](16-devops-automatisation/03.1-images-officielles.md)
+- 16.3 [Conteneurisation avec Docker](16-devops-automatisation/03-conteneurisation-docker.md)  
+    - 16.3.1 [Images officielles MariaDB (impact du packaging Galera 12.3)](16-devops-automatisation/03.1-images-officielles.md)  
     - 16.3.2 [Docker Compose pour développement](16-devops-automatisation/03.2-docker-compose.md)
     - 16.3.3 [Volumes et persistance](16-devops-automatisation/03.3-volumes-persistance.md)
 - 16.4 [Orchestration avec Kubernetes](16-devops-automatisation/04-orchestration-kubernetes.md)
     - 16.4.1 [StatefulSets pour MariaDB](16-devops-automatisation/04.1-statefulsets.md)
     - 16.4.2 [PersistentVolumes et StorageClasses](16-devops-automatisation/04.2-persistentvolumes.md)
-- 16.5 [mariadb-operator pour Kubernetes](16-devops-automatisation/05-mariadb-operator.md) 🔄
+- 16.5 [mariadb-operator pour Kubernetes](16-devops-automatisation/05-mariadb-operator.md)
     - 16.5.1 [Installation et CRDs](16-devops-automatisation/05.1-installation-crds.md)
-    - 16.5.2 [Déploiement Galera avec operator](16-devops-automatisation/05.2-deploiement-galera.md)
+    - 16.5.2 [Déploiement Galera avec operator (paquet mariadb-server-galera)](16-devops-automatisation/05.2-deploiement-galera.md)  
     - 16.5.3 [Réplication avec operator](16-devops-automatisation/05.3-replication-operator.md)
     - 16.5.4 [Backups automatisés](16-devops-automatisation/05.4-backups-automatises.md)
-- **16.6 [MariaDB Enterprise Operator](16-devops-automatisation/06-mariadb-enterprise-operator.md)** 🆕
+- 16.6 [MariaDB Enterprise Operator](16-devops-automatisation/06-mariadb-enterprise-operator.md)
 - 16.7 [CI/CD pour bases de données](16-devops-automatisation/07-cicd-bases-donnees.md)
 - 16.8 [Gestion des migrations](16-devops-automatisation/08-gestion-migrations.md)
     - 16.8.1 [Flyway](16-devops-automatisation/08.1-flyway.md)
@@ -368,7 +404,7 @@
 
 ---
 
-## **[Partie 9 : Intégration, Développement et Fonctionnalités Avancées](/partie-09-integration-fonctionnalites-avancees.md)**
+## **[Partie 9 : Intégration, Développement et Fonctionnalités Avancées](partie-09-integration-fonctionnalites-avancees.md)**
 
 ### 17. [Intégration et Développement](17-integration-developpement/README.md)
 - 17.1 [Connexion depuis différents langages](17-integration-developpement/01-connexion-langages.md)
@@ -377,7 +413,7 @@
     - 17.1.3 [Java : JDBC, MariaDB Connector/J](17-integration-developpement/01.3-java-jdbc.md)
     - 17.1.4 [Node.js : mysql2, mariadb](17-integration-developpement/01.4-nodejs-connectors.md)
     - 17.1.5 [Go : go-sql-driver/mysql](17-integration-developpement/01.5-go-connector.md)
-    - 17.1.6 [.NET : MySqlConnector, MariaDB.Data, ADO.NET](17-integration-developpement/01.6-dotnet-connectors.md)
+    - 17.1.6 [.NET : MySqlConnector, MySql.Data, ADO.NET](17-integration-developpement/01.6-dotnet-connectors.md)
 - 17.2 [Connection pooling](17-integration-developpement/02-connection-pooling.md)
     - 17.2.1 [Pool côté application](17-integration-developpement/02.1-pool-application.md)
     - 17.2.2 [ProxySQL comme pooler](17-integration-developpement/02.2-proxysql-pooler.md)
@@ -392,56 +428,59 @@
 - 17.6 [Tests de bases de données](17-integration-developpement/06-tests-bases-donnees.md)
 - 17.7 [Environnements de développement](17-integration-developpement/07-environnements-developpement.md)
 - 17.8 [Prévention des injections SQL](17-integration-developpement/08-prevention-injections-sql.md)
-- 17.9 [Prepared statements et parameterized queries](17-integration-developpement/09-prepared-statements.md)
+- 17.9 [Prepared statements et parameterized queries (curseurs sur prepared statements)](17-integration-developpement/09-prepared-statements.md)  
 
 ### 18. [Fonctionnalités Avancées](18-fonctionnalites-avancees/README.md)
 - 18.1 [Sequences (CREATE SEQUENCE)](18-fonctionnalites-avancees/01-sequences.md)
-- 18.2 [Tables temporelles (System-Versioned Tables)](18-fonctionnalites-avancees/02-system-versioned-tables.md) 🔄
+- 18.2 [Tables temporelles (System-Versioned Tables)](18-fonctionnalites-avancees/02-system-versioned-tables.md)
     - 18.2.1 [Création et configuration](18-fonctionnalites-avancees/02.1-creation-configuration.md)
     - 18.2.2 [Requêtes temporelles (AS OF, BETWEEN, FROM...TO)](18-fonctionnalites-avancees/02.2-requetes-temporelles.md)
     - 18.2.3 [Partitionnement des données historiques](18-fonctionnalites-avancees/02.3-partitionnement-historique.md)
-- **18.3 [Application Time Period Tables](18-fonctionnalites-avancees/03-application-time-period-tables.md)** 🆕
+- 18.3 [Application Time Period Tables](18-fonctionnalites-avancees/03-application-time-period-tables.md)
 - 18.4 [Colonnes virtuelles et générées](18-fonctionnalites-avancees/04-virtual-generated-columns.md)
     - 18.4.1 [VIRTUAL vs STORED](18-fonctionnalites-avancees/04.1-virtual-vs-stored.md)
-    - 18.4.2 [Indexation de colonnes générées](18-fonctionnalites-avancees/04.2-indexation-colonnes-generees.md)
+    - 18.4.2 [Indexation de colonnes générées (utilisables pour GROUP/ORDER BY)](18-fonctionnalites-avancees/04.2-indexation-colonnes-generees.md)  
 - 18.5 [Invisible columns](18-fonctionnalites-avancees/05-invisible-columns.md)
 - 18.6 [Compression de tables](18-fonctionnalites-avancees/06-compression-tables.md)
-- 18.7 [Encryption at rest](18-fonctionnalites-avancees/07-encryption-at-rest.md)
+- 18.7 [Encryption at rest](18-fonctionnalites-avancees/07-encryption-at-rest.md)  
     - 18.7.1 [Data at Rest Encryption](18-fonctionnalites-avancees/07.1-data-at-rest-encryption.md)
-    - 18.7.2 [Key management](18-fonctionnalites-avancees/07.2-key-management.md)
+    - 18.7.2 [Key management (SHA2 pour file_key_management, cache flush Hashicorp)](18-fonctionnalites-avancees/07.2-key-management.md)  
 - 18.8 [Thread Pool avancé](18-fonctionnalites-avancees/08-thread-pool-avance.md)
 - 18.9 [Dynamic columns](18-fonctionnalites-avancees/09-dynamic-columns.md)
-- **18.10 [MariaDB Vector : Recherche vectorielle pour l'IA/RAG](18-fonctionnalites-avancees/10-mariadb-vector.md)** 🆕
+- 18.10 [MariaDB Vector : Recherche vectorielle pour l'IA/RAG](18-fonctionnalites-avancees/10-mariadb-vector.md)  
     - 18.10.1 [Type de données VECTOR](18-fonctionnalites-avancees/10.1-type-donnees-vector.md)
     - 18.10.2 [Index HNSW (Hierarchical Navigable Small Worlds)](18-fonctionnalites-avancees/10.2-index-hnsw.md)
     - 18.10.3 [Fonctions de distance (VEC_DISTANCE_EUCLIDEAN, VEC_DISTANCE_COSINE)](18-fonctionnalites-avancees/10.3-fonctions-distance.md)
     - 18.10.4 [Fonctions de conversion (VEC_FromText, VEC_ToText)](18-fonctionnalites-avancees/10.4-fonctions-conversion.md)
     - 18.10.5 [Optimisations SIMD (AVX2, AVX512, ARM, IBM Power10)](18-fonctionnalites-avancees/10.5-optimisations-simd.md)
     - 18.10.6 [Intégration avec LLMs (OpenAI, Claude, LLaMA)](18-fonctionnalites-avancees/10.6-integration-llms.md)
-- **18.11 [Online Schema Change (ALTER TABLE non-bloquant)](18-fonctionnalites-avancees/11-online-schema-change.md)** 🆕
+    - **18.10.7 [Optimisations 12.3 : distance par extrapolation, calcul au niveau moteur](18-fonctionnalites-avancees/10.7-optimisations-12-3.md)** 🆕
+- 18.11 [Online Schema Change (ALTER TABLE non-bloquant)](18-fonctionnalites-avancees/11-online-schema-change.md)
+- **18.12 [Contraintes FK : noms uniques par table seulement (plus par base)](18-fonctionnalites-avancees/12-fk-constraint-names.md)** 🆕
 
 ---
 
-## **[Partie 10 : Migration, Compatibilité et Architectures](/partie-10-migration-architectures.md)**
+## **[Partie 10 : Migration, Compatibilité et Architectures](partie-10-migration-architectures.md)**
 
 ### 19. [Migration et Compatibilité](19-migration-compatibilite/README.md)
-- 19.1 [Migration depuis MySQL](19-migration-compatibilite/01-migration-depuis-mysql.md)
-    - 19.1.1 [Compatibilité MySQL/MariaDB](19-migration-compatibilite/01.1-compatibilite-mysql-mariadb.md)
+- 19.1 [Migration depuis MySQL](19-migration-compatibilite/01-migration-depuis-mysql.md)  
+    - 19.1.1 [Compatibilité MySQL/MariaDB (caching_sha2_password, nouvelles fonctions GIS MySQL 8)](19-migration-compatibilite/01.1-compatibilite-mysql-mariadb.md)  
     - 19.1.2 [Points d'attention et différences](19-migration-compatibilite/01.2-points-attention.md)
     - 19.1.3 [Outils de migration](19-migration-compatibilite/01.3-outils-migration.md)
 - 19.2 [Migration depuis d'autres SGBD](19-migration-compatibilite/02-migration-autres-sgbd.md)
-    - 19.2.1 [Depuis Oracle](19-migration-compatibilite/02.1-depuis-oracle.md)
+    - 19.2.1 [Depuis Oracle (TO_DATE/TO_NUMBER/TRUNC, ( + ), tableaux associatifs, SYS_REFCURSOR, SET PATH)](19-migration-compatibilite/02.1-depuis-oracle.md)  
     - 19.2.2 [Depuis SQL Server](19-migration-compatibilite/02.2-depuis-sql-server.md)
     - 19.2.3 [Depuis PostgreSQL](19-migration-compatibilite/02.3-depuis-postgresql.md)
-- 19.3 [Gestion des versions : Stratégie LTS vs Rolling](19-migration-compatibilite/03-gestion-versions-lts-rolling.md) 🔄
+- 19.3 [Gestion des versions : Stratégie LTS vs Rolling](19-migration-compatibilite/03-gestion-versions-lts-rolling.md)  
 - 19.4 [Stratégies de mise à jour et upgrade paths](19-migration-compatibilite/04-strategies-mise-a-jour.md)
     - 19.4.1 [mariadb-upgrade](19-migration-compatibilite/04.1-mariadb-upgrade.md)
-    - 19.4.2 [Upgrade in-place vs logical](19-migration-compatibilite/04.2-upgrade-inplace-logical.md)
+    - 19.4.2 [Mise à jour en place vs logique](19-migration-compatibilite/04.2-upgrade-inplace-logical.md)
 - 19.5 [Compatibilité des applications](19-migration-compatibilite/05-compatibilite-applications.md)
 - 19.6 [Tests de compatibilité](19-migration-compatibilite/06-tests-compatibilite.md)
 - 19.7 [Rollback et contingence](19-migration-compatibilite/07-rollback-contingence.md)
 - 19.8 [Zero-downtime migrations](19-migration-compatibilite/08-zero-downtime-migrations.md)
-- **19.9 [Migration System-Versioned Tables (changement format timestamp 11.8)](19-migration-compatibilite/09-migration-system-versioned-tables.md)** 🆕
+- 19.9 [Migration System-Versioned Tables (format timestamp, héritage 11.8)](19-migration-compatibilite/09-migration-system-versioned-tables.md)
+- **19.10 [Migration 11.8 → 12.3 : changements de comportement (variables retirées, scope des noms de contraintes FK, packaging Galera, binlog InnoDB optionnel)](19-migration-compatibilite/10-migration-11-8-vers-12-3.md)** 🆕
 
 ### 20. [Cas d'Usage et Architectures](20-cas-usage-architectures/README.md)
 - 20.1 [OLTP vs OLAP](20-cas-usage-architectures/01-oltp-vs-olap.md)
@@ -460,67 +499,88 @@
     - 20.8.1 [CDC (Change Data Capture)](20-cas-usage-architectures/08.1-cdc.md)
     - 20.8.2 [Integration avec Kafka](20-cas-usage-architectures/08.2-integration-kafka.md)
     - 20.8.3 [Debezium connector](20-cas-usage-architectures/08.3-debezium.md)
-- **20.9 [Use cases IA : RAG et recherche vectorielle](20-cas-usage-architectures/09-use-cases-ia-rag.md)** 🆕
+- 20.9 [Use cases IA : RAG et recherche vectorielle](20-cas-usage-architectures/09-use-cases-ia-rag.md)
     - 20.9.1 [Semantic Search](20-cas-usage-architectures/09.1-semantic-search.md)
     - 20.9.2 [Recommendation Engines](20-cas-usage-architectures/09.2-recommendation-engines.md)
     - 20.9.3 [Anomaly Detection](20-cas-usage-architectures/09.3-anomaly-detection.md)
     - 20.9.4 [Hybrid Search (vecteurs + SQL relationnel)](20-cas-usage-architectures/09.4-hybrid-search.md)
-- **20.10 [MariaDB MCP Server pour intégration IA](20-cas-usage-architectures/10-mcp-server-integration-ia.md)** 🆕
-- **20.11 [Intégrations frameworks IA (LangChain, LlamaIndex, etc.)](20-cas-usage-architectures/11-integrations-frameworks-ia.md)** 🆕
+- 20.10 [MariaDB MCP Server pour intégration IA](20-cas-usage-architectures/10-mcp-server-integration-ia.md)
+- 20.11 [Intégrations frameworks IA (LangChain, LlamaIndex, etc.)](20-cas-usage-architectures/11-integrations-frameworks-ia.md)
 - 20.12 [Études de cas réels](20-cas-usage-architectures/12-etudes-cas-reels.md)
 
 ---
 
 ## **Annexes**
 
-### A. [Glossaire des Termes Techniques](annexes/glossaire/README.md)
-- A.1 [Termes MariaDB essentiels (ACID, MVCC, InnoDB, Galera, etc.)](annexes/glossaire/01-termes-mariadb-essentiels.md)
-- A.2 [Acronymes courants (FK, PK, CTE, GTID, SST, IST, etc.)](annexes/glossaire/02-acronymes-courants.md)
+### A. [Glossaire des Termes Techniques](annexes/a-glossaire/README.md)
+- A.1 [Termes MariaDB essentiels (ACID, MVCC, InnoDB, Galera, etc.)](annexes/a-glossaire/01-termes-mariadb-essentiels.md)
+- A.2 [Acronymes courants (FK, PK, CTE, GTID, SST, IST, etc.)](annexes/a-glossaire/02-acronymes-courants.md)
 
-### B. [Commandes mariadb CLI Essentielles](annexes/commandes-cli/README.md)
-- B.1 [Connexion et navigation (\s, \u, SHOW DATABASES, SHOW TABLES)](annexes/commandes-cli/01-connexion-navigation.md)
-- B.2 [Informations système (STATUS, SHOW PROCESSLIST, SHOW ENGINE)](annexes/commandes-cli/02-informations-systeme.md)
-- B.3 [Export/Import (SOURCE, TEE, mariadb-dump)](annexes/commandes-cli/03-export-import.md)
+### B. [Commandes mariadb CLI Essentielles](annexes/b-commandes-cli/README.md)
+- B.1 [Connexion et navigation (\s, \u, SHOW DATABASES, SHOW TABLES)](annexes/b-commandes-cli/01-connexion-navigation.md)
+- B.2 [Informations système (STATUS, SHOW PROCESSLIST, SHOW ENGINE)](annexes/b-commandes-cli/02-informations-systeme.md)
+- B.3 [Export/Import (SOURCE avec --script-dir, TEE, mariadb-dump)](annexes/b-commandes-cli/03-export-import.md)  
 
-### C. [Requêtes SQL de Référence](annexes/requetes-sql-reference/README.md)
-- C.1 [Requêtes d'administration (locks, processlist, table sizes)](annexes/requetes-sql-reference/01-requetes-administration.md)
-- C.2 [Requêtes de monitoring (buffer pool, slow queries, replication)](annexes/requetes-sql-reference/02-requetes-monitoring.md)
-- C.3 [Requêtes d'analyse (statistiques, index usage)](annexes/requetes-sql-reference/03-requetes-analyse.md)
+### C. [Requêtes SQL de Référence](annexes/c-requetes-sql-reference/README.md)
+- C.1 [Requêtes d'administration (locks, processlist, table sizes)](annexes/c-requetes-sql-reference/01-requetes-administration.md)
+- C.2 [Requêtes de monitoring (buffer pool, slow queries, replication)](annexes/c-requetes-sql-reference/02-requetes-monitoring.md)
+- C.3 [Requêtes d'analyse (statistiques, index usage)](annexes/c-requetes-sql-reference/03-requetes-analyse.md)
 
-### D. [Configuration de Référence par Cas d'Usage](annexes/configuration-reference/README.md)
-- D.1 [OLTP (High concurrency, low latency)](annexes/configuration-reference/01-configuration-oltp.md)
-- D.2 [OLAP (Data warehouse, analytics)](annexes/configuration-reference/02-configuration-olap.md)
-- D.3 [Mixed workload](annexes/configuration-reference/03-configuration-mixed-workload.md)
-- D.4 [Développement local](annexes/configuration-reference/04-configuration-developpement-local.md)
+### D. [Configuration de Référence par Cas d'Usage](annexes/d-configuration-reference/README.md)
+- D.1 [OLTP (High concurrency, low latency)](annexes/d-configuration-reference/01-configuration-oltp.md)
+- D.2 [OLAP (Data warehouse, analytics)](annexes/d-configuration-reference/02-configuration-olap.md)
+- D.3 [Mixed workload](annexes/d-configuration-reference/03-configuration-mixed-workload.md)
+- D.4 [Développement local](annexes/d-configuration-reference/04-configuration-developpement-local.md)
 
-### E. [Checklist de Performance](annexes/checklist-performance/README.md)
-- E.1 [Audit de configuration](annexes/checklist-performance/01-audit-configuration.md)
-- E.2 [Audit d'indexation](annexes/checklist-performance/02-audit-indexation.md)
-- E.3 [Audit de requêtes](annexes/checklist-performance/03-audit-requetes.md)
-- E.4 [Audit de schéma](annexes/checklist-performance/04-audit-schema.md)
+### E. [Checklist de Performance](annexes/e-checklist-performance/README.md)
+- E.1 [Audit de configuration](annexes/e-checklist-performance/01-audit-configuration.md)
+- E.2 [Audit d'indexation](annexes/e-checklist-performance/02-audit-indexation.md)
+- E.3 [Audit de requêtes (usage des optimizer hints)](annexes/e-checklist-performance/03-audit-requetes.md)  
+- E.4 [Audit de schéma](annexes/e-checklist-performance/04-audit-schema.md)
 
-### F. [Nouveautés MariaDB 11.8 LTS en un Coup d'Œil](annexes/nouveautes-11-8/README.md) 🆕
-- F.1 [Tableau récapitulatif des features majeures](annexes/nouveautes-11-8/01-tableau-recapitulatif.md)
-- F.2 [MariaDB Vector : La fonctionnalité phare](annexes/nouveautes-11-8/02-mariadb-vector.md)
-- F.3 [Impact sur migration et compatibilité](annexes/nouveautes-11-8/03-impact-migration-compatibilite.md)
-- F.4 [Recommandations d'adoption](annexes/nouveautes-11-8/04-recommandations-adoption.md)
+### F. [Nouveautés MariaDB 12.3 LTS en un Coup d'Œil](annexes/f-nouveautes-12-3/README.md) 🆕
+- F.1 [Tableau récapitulatif des features majeures (12.0 → 12.3)](annexes/f-nouveautes-12-3/01-tableau-recapitulatif.md)
+- F.2 [Les features phares : binlog réécrit (~4× écriture) et Optimizer Hints](annexes/f-nouveautes-12-3/02-features-phares.md)
+- F.3 [Compatibilité renforcée Oracle & MySQL](annexes/f-nouveautes-12-3/03-compatibilite-oracle-mysql.md)
+- F.4 [Impact sur migration et compatibilité (changements de comportement)](annexes/f-nouveautes-12-3/04-impact-migration-compatibilite.md)
+- F.5 [Recommandations d'adoption](annexes/f-nouveautes-12-3/05-recommandations-adoption.md)
 
-### G. [Versions de Référence](annexes/versions-reference/README.md)
+### G. [Versions de Référence](annexes/g-versions-reference/README.md)
 
 | Version | Type | Date GA | Support jusqu'à |
 |---------|------|---------|-----------------|
+| 13.1 🧪 | Développement | — | — |
+| 13.0 | Rolling | RC — GA à venir | Version rolling suivante |
+| **12.3** ⭐ | LTS | Mai 2026 | Juin 2029 |
 | **11.8** | LTS | Juin 2025 | 2028 |
-| **11.4** | LTS | Mai 2024 | 2027 |
+| **11.4** | LTS | Mai 2024 | 2029 |
 | 10.11 | LTS | Fév 2023 | 2028 |
 | 10.6 | LTS | Juil 2021 | 2026 |
 
-### H. [Ressources et Documentation](annexes/ressources-documentation/README.md)
-- H.1 [Documentation officielle](annexes/ressources-documentation/01-documentation-officielle.md)
-- H.2 [Communautés et forums](annexes/ressources-documentation/02-communautes-forums.md)
-- H.3 [Blogs techniques recommandés](annexes/ressources-documentation/03-blogs-techniques.md)
-- H.4 [Conférences et événements](annexes/ressources-documentation/04-conferences-evenements.md)
+> **Version cible de cette formation : 12.3 LTS** (GA = 12.3.2, fin mai 2026 — la 12.3.1 était une RC). Supportée jusqu'en **juin 2029**, elle consolide la série rolling 12.0 → 12.2. La **11.8** reste un socle largement déployé (support 2028) et sert de référence pour la migration. La série **13.x** ouvre le cycle suivant : la 13.0 est en préversion (mars 2026) puis *release candidate* (13.0.1, mai 2026) — sa GA n'est pas encore parue — et la 13.1 en développement.  
+> Rappel du cycle : **LTS** annuelle, supportée 3 ans (depuis la 11.8 ; les LTS antérieures, dont la 11.4, conservaient 5 ans) ; **rolling** trimestrielles, supportées jusqu'à la version suivante.
 
-### I. [Changelog de la Formation](annexes/changelog/README.md)
+### H. [Ressources et Documentation](annexes/h-ressources-documentation/README.md)
+- H.1 [Documentation officielle](annexes/h-ressources-documentation/01-documentation-officielle.md)
+- H.2 [Communautés et forums](annexes/h-ressources-documentation/02-communautes-forums.md)
+- H.3 [Blogs techniques recommandés](annexes/h-ressources-documentation/03-blogs-techniques.md)
+- H.4 [Conférences et événements](annexes/h-ressources-documentation/04-conferences-evenements.md)
+
+### I. [Changelog de la Formation](annexes/i-changelog/README.md)
+
+**Juin 2026 (v2.0) — Bascule vers MariaDB 12.3 LTS :**
+- **Version de référence : 12.3 LTS** (au lieu de 11.8). 11.8 devient la « LTS précédente » de référence pour la migration.
+- Inversion du positionnement des versions (note de version, Annexe G, roadmap §1.7 réorientée vers la série 13.x).
+- Réattribution des marqueurs 🆕 : ils désignent désormais les **nouveautés 12.x** (depuis 11.8). Les anciennes features 11.8 (PARSEC, TLS zéro-config, utf8mb4/UCA14, TIMESTAMP 2106, privilèges granulaires, espace temporaire, BACKUP STAGE, Online Schema Change, Application Time Period, MariaDB Vector, MCP Server…) deviennent du contenu standard.
+- Ajout des features phares 12.x : **binlog réécrit intégré à InnoDB (~4× en écriture, §11.5.4)** et **moteur d'Optimizer Hints (§15.15)**.
+- Compatibilité Oracle/MySQL : caching_sha2_password (§10.5.5), TO_DATE/TO_NUMBER/TRUNC (§3.7.1), ( + ) outer join (§3.3.5), tableaux associatifs (§8.1.4), SYS_REFCURSOR et curseurs sur prepared statements (§8.5), type XML `XMLTYPE` (§2.2.6).
+- SQL standard : IS JSON (§4.7.4), SET PATH (§19.2.1), UPDATE/DELETE depuis CTE (§4.4.1).
+- Triggers multi-événements (§8.3.4) ; snapshot isolation ON par défaut **depuis la 11.6.2** (déjà en 11.8, pas un changement 11.8 → 12.3 ; §6.9) ; contraintes FK uniques par table (§18.12).
+- Sécurité : SET SESSION AUTHORIZATION (§10.12), clés SSL avec passphrase (§10.7.4), audit bufferisé (§10.8.3), SHA2 pour file_key_management (§18.7.2).
+- Galera : packaging séparé mariadb-server-galera (§14.2.5, §16.x), réplication parallèle inter-clusters (§13.11), retry des write sets (§14.2.6).
+- Optimiseur : optimisations sur scans inversés (§5.8.1), nouveaux algorithmes PARTITION BY KEY (§15.9.3).
+- Migration dédiée 11.8 → 12.3 (§19.10) et Annexe F reconstruite pour 12.3.
+- Variables retirées : big_tables, large_page_size, storage_engine (§11.2.3).
 
 **Novembre 2025 :**
 - Ajout MariaDB 11.8 LTS comme version de référence principale
@@ -539,17 +599,16 @@
 
 - ✅ **Progressive** : Parcours structuré du débutant à l'expert
 - ✅ **Complète** : 20 chapitres couvrant tous les aspects
-- ✅ **À jour** : Intégration complète des nouveautés MariaDB 11.8 LTS 🆕
+- ✅ **À jour** : Intégration complète des nouveautés MariaDB 12.3 LTS 🆕
 - ✅ **Professionnelle** : Production, monitoring, HA, architectures modernes
 - ✅ **Moderne** : Cloud, Kubernetes, IA, architectures distribuées
 - ✅ **Pratique** : Annexes et références techniques détaillées
 
-**Durée estimée** : 35-50 heures de formation théorique
-**Public** : Développeurs, DevOps, DBAs débutants à avancés
-**Prérequis** : Bases en SQL et systèmes Unix/Linux
+**Durée estimée** : 35-50 heures de contenu théorique (soit environ 15-20 jours en rythme d'auto-formation)  
+**Public** : Développeurs, DevOps, DBAs débutants à avancés  
+**Prérequis** : Bases en SQL et systèmes Unix/Linux  
 
 ---
 
-**Version** : 1.0 - Novembre 2025
-**MariaDB** : Version 11.8 LTS (Juin 2025)
-**Licence** : Creative Commons BY-NC-SA 4.0
+**MariaDB** : Version 12.3 LTS (GA fin mai 2026, support jusqu'en juin 2029) — LTS précédente : 11.8 (juin 2025)
+

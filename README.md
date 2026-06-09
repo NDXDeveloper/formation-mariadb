@@ -1,9 +1,9 @@
-# 🐬 Formation MariaDB 11.8 LTS
+# 🐬 Formation MariaDB 12.3 LTS
 
-![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)
-![MariaDB Version](https://img.shields.io/badge/MariaDB-11.8%20LTS-orange.svg)
-![Modules](https://img.shields.io/badge/Modules-20-green.svg)
-![Language](https://img.shields.io/badge/Langue-Français-blue.svg)
+![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)  
+![MariaDB Version](https://img.shields.io/badge/MariaDB-12.3%20LTS-orange.svg)  
+![Modules](https://img.shields.io/badge/Modules-20-green.svg)  
+![Language](https://img.shields.io/badge/Langue-Français-blue.svg)  
 ![Status](https://img.shields.io/badge/Status-En%20cours-yellow.svg)
 
 **Un guide progressif pour découvrir et approfondir MariaDB — Du débutant à l'expert**
@@ -38,7 +38,7 @@ Cette formation tente de rassembler en un seul endroit tout ce qu'il faut savoir
 **✨ Ce que vous y trouverez :**
 
 - 📚 **20 modules progressifs** — Du SQL de base aux architectures distribuées
-- 🆕 **MariaDB 11.8 LTS** — Version de référence (Juin 2025) avec toutes les nouveautés
+- 🆕 **MariaDB 12.3 LTS** — Version de référence (mai 2026), supportée jusqu'en juin 2029
 - 🤖 **MariaDB Vector** — Recherche vectorielle, IA, RAG, intégration LLMs
 - 🏗️ **Production-ready** — HA, monitoring, backup, Kubernetes, DevOps
 - 🔧 **Pratique** — 200+ exemples SQL, configurations, checklists
@@ -53,7 +53,7 @@ Cette formation tente de rassembler en un seul endroit tout ce qu'il faut savoir
 
 - ✅ **Progressive** — Parcours structuré du débutant à l'expert
 - ✅ **Complète** — 20 chapitres, 200+ sous-sections
-- ✅ **À jour** — Intégration complète de MariaDB 11.8 LTS et ses nouveautés
+- ✅ **À jour** — Intégration complète de MariaDB 12.3 LTS et ses nouveautés
 - ✅ **Professionnelle** — Production, monitoring, HA, architectures modernes
 - ✅ **Moderne** — Cloud, Kubernetes, IA, architectures distribuées
 - ✅ **Pratique** — Annexes et références techniques détaillées
@@ -88,22 +88,24 @@ Cette formation s'adresse à différents profils. Choisissez votre parcours :
 | **6** | Réplication et Haute Disponibilité | [📄](/partie-06-replication-haute-disponibilite.md) | 13-14 | 🌳 Avancé | Master-Slave, GTID, Galera, MaxScale |
 | **7** | Performance et Tuning | [📄](/partie-07-performance-tuning.md) | 15 | 🌳 Avancé | Buffer pool, slow queries, partitionnement |
 | **8** | DevOps, Cloud et Automatisation | [📄](/partie-08-devops-cloud-automatisation.md) | 16 | 🌳 Avancé | Docker, Kubernetes, Ansible, CI/CD, monitoring |
-| **9** | Intégration et Fonctionnalités Avancées | [📄](/partie-09-integration-fonctionnalites-avancees.md) | 17-18 | 🌳 Avancé | APIs, ORM, encryption, **MariaDB Vector** 🆕 |
+| **9** | Intégration et Fonctionnalités Avancées | [📄](/partie-09-integration-fonctionnalites-avancees.md) | 17-18 | 🌳 Avancé | APIs, ORM, encryption, **MariaDB Vector** |
 | **10** | Migration, Compatibilité et Architectures | [📄](/partie-10-migration-architectures.md) | 19-20 | 🌳 Avancé | Migration MySQL, microservices, RAG |
 
 > 💡 **Note** : Chaque partie dispose d'une **page d'introduction** (📄) présentant les objectifs, prérequis, durée estimée, et compétences acquises. Consultez-les avant de plonger dans les modules détaillés !
 
-### 🆕 Nouveautés MariaDB 11.8 LTS
+### 🆕 Nouveautés MariaDB 12.3 LTS
 
-Cette formation couvre en détail les nouveautés majeures de MariaDB 11.8 LTS :
+Cette formation est centrée sur **MariaDB 12.3 LTS** (GA 12.3.2, mai 2026, support jusqu'en juin 2029), qui consolide la série *rolling* 12.0 → 12.2. Les apports majeurs :
 
-- 🤖 **MariaDB Vector** — Type VECTOR, Index HNSW, recherche de similarité pour IA/RAG
-- 🔐 **Sécurité** — Plugin PARSEC, TLS par défaut, privilèges granulaires
-- 🌍 **Unicode** — utf8mb4 par défaut, collations UCA 14.0.0
-- ⏰ **TIMESTAMP** — Extension jusqu'en 2106 (résolution Y2038)
-- 📊 **MaxScale 25.01** — Workload Capture, Replay, Diff Router
-- 🚀 **Performance** — Cost-based optimizer amélioré, innodb_alter_copy_bulk
-- 🔄 **Application Time Period Tables** — Gestion avancée des périodes temporelles
+- ⚡ **Binlog intégré à InnoDB** — journal binaire réécrit (*opt-in*), suppression de la synchronisation redondante binlog↔redo
+- 🎛️ **Optimizer Hints** — contrôle fin du plan d'exécution via les commentaires `/*+ … */`
+- 🟠 **Compatibilité Oracle** — `TO_DATE`, `TO_NUMBER`, `TRUNC`, jointures `( + )`, tableaux associatifs, `SYS_REFCURSOR`, type `XML`, `SET PATH`
+- 🔵 **Compatibilité MySQL 8** — `caching_sha2_password`, nouvelles fonctions GIS
+- 📐 **Standard SQL** — prédicat `IS JSON`, `UPDATE`/`DELETE` depuis une CTE
+- 🔐 **Sécurité** — `SET SESSION AUTHORIZATION`, clés SSL avec *passphrase*, audit bufferisé
+- 🟢 **Galera** — *packaging* séparé (`mariadb-server-galera`), réplication parallèle inter-clusters
+
+> Les fonctionnalités de la **11.8 LTS** (MariaDB Vector, PARSEC, `utf8mb4` par défaut/UCA 14.0.0, extension `TIMESTAMP` 2106, MaxScale 25.01…) sont désormais traitées comme **contenu standard** de la formation.
 
 ### 📎 Les 9 Annexes
 
@@ -112,8 +114,8 @@ Cette formation couvre en détail les nouveautés majeures de MariaDB 11.8 LTS :
 - **C.** Requêtes SQL de référence (admin, monitoring, analyse)
 - **D.** Configurations par cas d'usage (OLTP, OLAP, dev...)
 - **E.** Checklist de performance (audit config, index, requêtes)
-- **F.** Nouveautés 11.8 en un coup d'œil
-- **G.** Versions de référence (11.8, 11.4, 10.11, 10.6)
+- **F.** Nouveautés 12.3 en un coup d'œil
+- **G.** Versions de référence (12.3, 11.8, 11.4, 10.11, 10.6)
 - **H.** Ressources et documentation
 - **I.** Changelog de la formation
 
@@ -129,7 +131,7 @@ Cette formation couvre en détail les nouveautés majeures de MariaDB 11.8 LTS :
 # Vérifier si MariaDB est installé
 mariadb --version
 
-# Installer MariaDB 11.8 LTS
+# Installer MariaDB 12.3 LTS
 # Documentation : https://mariadb.com/downloads/
 # Windows : https://mariadb.com/downloads/community/
 # macOS   : brew install mariadb
@@ -147,12 +149,12 @@ CREATE USER 'dev'@'localhost' IDENTIFIED BY 'password';
 GRANT ALL PRIVILEGES ON *.* TO 'dev'@'localhost';
 
 -- Créer une base de test
-CREATE DATABASE formation_mariadb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE formation_mariadb CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci;
 USE formation_mariadb;
 
 -- Vérifier la version
 SELECT VERSION();
--- ➜ 11.8.x-MariaDB
+-- ➜ 12.3.x-MariaDB
 
 -- ✅ Vous êtes prêt !
 ```
@@ -190,12 +192,12 @@ formation-mariadb/
 ├── 📂 02-bases-du-sql/
 ├── 📂 03-requetes-sql-intermediaires/
 ├── 📂 04-concepts-avances-sql/
-├── 📂 05-index-performance/
-├── 📂 06-transactions-mvcc/
-├── 📂 07-moteurs-stockage/
-├── 📂 08-types-donnees-json/
-├── 📂 09-programmation-serveur/
-├── 📂 10-securite-utilisateurs/
+├── 📂 05-index-et-performance/
+├── 📂 06-transactions-et-concurrence/
+├── 📂 07-moteurs-de-stockage/
+├── 📂 08-programmation-cote-serveur/
+├── 📂 09-vues-et-donnees-virtuelles/
+├── 📂 10-securite-gestion-utilisateurs/
 ├── 📂 11-administration-configuration/
 ├── 📂 12-sauvegarde-restauration/
 ├── 📂 13-replication/
@@ -208,15 +210,15 @@ formation-mariadb/
 ├── 📂 20-cas-usage-architectures/
 │
 ├── 📂 annexes/
-│   ├── glossaire/
-│   ├── commandes-cli/
-│   ├── requetes-sql-reference/
-│   ├── configuration-reference/
-│   ├── checklist-performance/
-│   ├── nouveautes-11-8/
-│   ├── versions-reference/
-│   ├── ressources-documentation/
-│   └── changelog/
+│   ├── a-glossaire/
+│   ├── b-commandes-cli/
+│   ├── c-requetes-sql-reference/
+│   ├── d-configuration-reference/
+│   ├── e-checklist-performance/
+│   ├── f-nouveautes-12-3/
+│   ├── g-versions-reference/
+│   ├── h-ressources-documentation/
+│   └── i-changelog/
 │
 └── 📂 assets/
 ```
@@ -229,16 +231,16 @@ formation-mariadb/
 👉 Commencez par la [Partie 1 : Introduction et Fondamentaux](/partie-01-introduction-fondamentaux.md) et suivez l'ordre
 
 ### Développeur
-👉 Parties 1-6, 8-9, 17-18 — Focus SQL, intégration apps, MariaDB Vector
+👉 Modules 1-6, 8-9, 17-18 — Focus SQL, intégration apps, MariaDB Vector
 
 ### DBA / Administrateur
-👉 Parties 1, 7, 10-15, 19 — Administration, sécurité, backup, HA
+👉 Modules 1, 7, 10-15, 19 — Administration, sécurité, backup, HA
 
 ### DevOps / Cloud
-👉 Parties 1, 11-12, 14, 16, 20 — Kubernetes, Docker, monitoring, architectures
+👉 Modules 1, 11-12, 14, 16, 20 — Kubernetes, Docker, monitoring, architectures
 
 ### IA / ML Engineer
-👉 Parties 1, 4 (JSON/Vector), 17-18, 20 — MariaDB Vector, RAG, semantic search
+👉 Modules 1, 4 (JSON/Vector), 17-18, 20 — MariaDB Vector, RAG, semantic search
 
 ### Besoin d'une référence rapide
 👉 Consultez les [Annexes](/annexes/) (glossaire, commandes, configurations)
@@ -291,7 +293,7 @@ USE test_mariadb;
 
 | Ressource | Lien |
 |-----------|------|
-| 📖 Documentation MariaDB | [mariadb.com/kb](https://mariadb.com/kb) |
+| 📖 Documentation MariaDB | [mariadb.com/docs](https://mariadb.com/docs/) |
 | 🏠 MariaDB Foundation | [mariadb.org](https://mariadb.org) |
 | 🤖 MariaDB Vector | [mariadb.org/projects/mariadb-vector](https://mariadb.org/projects/mariadb-vector) |
 | ⚙️ MaxScale | [mariadb.com/products/maxscale](https://mariadb.com/products/maxscale) |
@@ -307,7 +309,7 @@ USE test_mariadb;
 > Oui si vous débutez. Sinon, choisissez votre parcours selon votre profil dans la section [Pour qui ?](#-pour-qui-).
 
 **Q : Quelle version de MariaDB utiliser ?**
-> MariaDB 11.8 LTS (recommandée). La 11.4 LTS fonctionne aussi pour 95% du contenu.
+> MariaDB 12.3 LTS (recommandée, supportée jusqu'en juin 2029). La 11.8 LTS, très proche, convient aussi.
 
 **Q : Cette formation remplace-t-elle la documentation officielle ?**
 > Non, elle la complète. C'est un guide d'apprentissage progressif, pas une référence exhaustive.
@@ -385,10 +387,10 @@ Merci à :
 [![Star on GitHub](https://img.shields.io/github/stars/NDXDeveloper/formation-mariadb?style=social)](https://github.com/NDXDeveloper/formation-mariadb)
 [![Follow](https://img.shields.io/github/followers/NDXDeveloper?style=social)](https://github.com/NDXDeveloper)
 
-**[⬆ Retour en haut](#-formation-mariadb-118-lts)**
+**[⬆ Retour en haut](#-formation-mariadb-123-lts)**
 
 ![Made with](https://img.shields.io/badge/Made%20with-☕%20and%20❤️-blue)
 
-*Dernière mise à jour : Décembre 2025*
+*Dernière mise à jour : Juin 2026*
 
 </div>
